@@ -1,0 +1,439 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/seo/module.json ───────────────────────────────────────────────────
+files['modules/seo/module.json'] = """{
+    "name": "seo",
+    "label": "SEO",
+    "version": "1.0.0",
+    "description": "Sitemaps, robots.txt, redirect manager, meta tags.",
+    "author": "VeloCMS",
+    "dependencies": []
+}
+"""
+
+# ── modules/seo/SeoModule.php ─────────────────────────────────────────────────
+files['modules/seo/SeoModule.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Seo;
+
+use VeloCMS\Core\Module;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Seo\Controllers\SitemapController;
+use VeloCMS\Modules\Seo\Controllers\RobotsController;
+use VeloCMS\Modules\Seo\Controllers\RedirectController;
+
+class SeoModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/sitemap.xml', [SitemapController::class, 'index']);
+        $router->get('/robots.txt',  [RobotsController::class,  'index']);
+    }
+}
+"""
+
+# ── modules/seo/models/Redirect.php ──────────────────────────────────────────
+files['modules/seo/models/Redirect.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Seo\Models;
+
+class Redirect
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query(
+            'SELECT * FROM redirects ORDER BY created_at DESC'
+        )->fetchAll();
+    }
+
+    public function findByPath(string $path): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM redirects WHERE from_path = ? LIMIT 1');
+        $stmt->execute([$path]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(string $from, string $to, int $code): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO redirects (from_path, to_url, code) VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE to_url = VALUES(to_url), code = VALUES(code)'
+        )->execute([$from, $to, $code]);
+    }
+
+    public function delete(int $id): void
+    {
+        $this->pdo->prepare('DELETE FROM redirects WHERE id = ?')->execute([$id]);
+    }
+}
+"""
+
+# ── modules/seo/controllers/SitemapController.php ────────────────────────────
+files['modules/seo/controllers/SitemapController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Seo\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class SitemapController
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function index(Request $request, array $params): Response
+    {
+        $db  = $this->app->make(Database::class)->core();
+        $xml = new \SimpleXMLElement(
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"/>'
+        );
+
+        $baseUrl = rtrim($request->header('X-Forwarded-Proto', 'http')
+            . '://' . $request->host(), '/');
+
+        // Published pages
+        $pages = $db->query(
+            "SELECT slug, updated_at FROM pages WHERE status='published' AND deleted_at IS NULL"
+        )->fetchAll();
+        foreach ($pages as $page) {
+            $url = $xml->addChild('url');
+            $url->addChild('loc', e($baseUrl . '/' . $page['slug']));
+            $url->addChild('lastmod', substr($page['updated_at'], 0, 10));
+            $url->addChild('changefreq', 'weekly');
+            $url->addChild('priority', '0.8');
+        }
+
+        // Published posts
+        $posts = $db->query(
+            "SELECT slug, updated_at FROM posts WHERE status='published' AND deleted_at IS NULL"
+        )->fetchAll();
+        foreach ($posts as $post) {
+            $url = $xml->addChild('url');
+            $url->addChild('loc', e($baseUrl . '/blog/' . $post['slug']));
+            $url->addChild('lastmod', substr($post['updated_at'], 0, 10));
+            $url->addChild('changefreq', 'monthly');
+            $url->addChild('priority', '0.6');
+        }
+
+        return (new Response())
+            ->withHeader('Content-Type', 'application/xml; charset=UTF-8')
+            ->html($xml->asXML() ?: '');
+    }
+}
+"""
+
+# ── modules/seo/controllers/RobotsController.php ─────────────────────────────
+files['modules/seo/controllers/RobotsController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Seo\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class RobotsController
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function index(Request $request, array $params): Response
+    {
+        $host    = $request->host();
+        $proto   = $request->header('X-Forwarded-Proto', 'http');
+        $baseUrl = $proto . '://' . $host;
+
+        $content = "User-agent: *\nAllow: /\n\nSitemap: {$baseUrl}/sitemap.xml\n";
+
+        return (new Response())
+            ->withHeader('Content-Type', 'text/plain; charset=UTF-8')
+            ->html($content);
+    }
+}
+"""
+
+# ── modules/seo/admin/controllers/RedirectAdminController.php ────────────────
+files['modules/seo/admin/controllers/RedirectAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Seo\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Seo\Models\Redirect;
+
+class RedirectAdminController extends BaseController
+{
+    private function model(): Redirect
+    {
+        return new Redirect($this->app->make(Database::class)->core());
+    }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        return $this->layout('seo/index.php', [
+            'user'      => $this->auth()->user(),
+            'page'      => 'seo',
+            'csrf'      => $this->auth()->csrfToken(),
+            'redirects' => $this->model()->all(),
+            'error'     => null,
+        ]);
+    }
+
+    public function store(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/seo');
+        $from = trim($req->post('from_path', ''));
+        $to   = trim($req->post('to_url', ''));
+        $code = (int) $req->post('code', '301');
+        if ($from !== '' && $to !== '') {
+            $this->model()->create($from, $to, in_array($code, [301, 302]) ? $code : 301);
+        }
+        return $this->redirect('/admin/seo');
+    }
+
+    public function delete(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/seo');
+        $this->model()->delete((int) $params['id']);
+        return $this->redirect('/admin/seo');
+    }
+}
+"""
+
+# ── admin/views/seo/index.php ─────────────────────────────────────────────────
+files['admin/views/seo/index.php'] = r"""<div class="vcms-section-header">
+    <h3>SEO &amp; Redirects</h3>
+</div>
+
+<div style="display:grid;grid-template-columns:350px 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem">Add Redirect</h4>
+<form method="post" action="/admin/seo" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label>From Path</label>
+        <input type="text" name="from_path" placeholder="/old-page" required>
+    </div>
+    <div class="vcms-form-group">
+        <label>To URL</label>
+        <input type="text" name="to_url" placeholder="/new-page or https://..." required>
+    </div>
+    <div class="vcms-form-group">
+        <label>Type</label>
+        <select name="code">
+            <option value="301">301 Permanent</option>
+            <option value="302">302 Temporary</option>
+        </select>
+    </div>
+    <button type="submit" class="vcms-btn">Add Redirect</button>
+</form>
+
+<div style="margin-top:2rem">
+<h4>Quick Links</h4>
+<p><a href="/sitemap.xml" target="_blank">View sitemap.xml</a></p>
+<p><a href="/robots.txt" target="_blank">View robots.txt</a></p>
+</div>
+</div>
+
+<div>
+<?php if (empty($redirects)): ?>
+    <p class="vcms-empty">No redirects configured.</p>
+<?php else: ?>
+<table class="vcms-table">
+    <thead>
+        <tr><th>From</th><th>To</th><th>Type</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($redirects as $r): ?>
+    <tr>
+        <td><code><?= e($r['from_path']) ?></code></td>
+        <td><?= e($r['to_url']) ?></td>
+        <td><span class="vcms-badge"><?= $r['code'] ?></span></td>
+        <td><?= e(substr($r['created_at'], 0, 10)) ?></td>
+        <td>
+            <form method="post" action="/admin/seo/<?= $r['id'] ?>/delete" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('Delete this redirect?')">Delete</button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+<?php endif; ?>
+</div>
+
+</div>
+"""
+
+# ── Update themes/default/layouts/main.php — add OG + JSON-LD + canonical ────
+main_layout_path = base + '/themes/default/layouts/main.php'
+old_main = open(main_layout_path).read()
+
+old_head = """    <title><?= e($metaTitle ?? $title ?? 'VeloCMS') ?></title>
+    <?php if (!empty($metaDesc)): ?>
+    <meta name="description" content="<?= e($metaDesc) ?>">
+    <?php endif; ?>
+    <link rel="stylesheet" href="/assets/theme/style.css">"""
+
+new_head = r"""    <title><?= e($metaTitle ?? $title ?? 'VeloCMS') ?></title>
+    <?php if (!empty($metaDesc)): ?>
+    <meta name="description" content="<?= e($metaDesc) ?>">
+    <?php endif; ?>
+    <!-- Open Graph -->
+    <meta property="og:title"       content="<?= e($metaTitle ?? $title ?? '') ?>">
+    <meta property="og:description" content="<?= e($metaDesc ?? '') ?>">
+    <meta property="og:type"        content="<?= e($ogType ?? 'website') ?>">
+    <?php if (!empty($ogImage)): ?>
+    <meta property="og:image"       content="<?= e($ogImage) ?>">
+    <?php endif; ?>
+    <!-- Canonical -->
+    <?php if (!empty($canonical)): ?>
+    <link rel="canonical" href="<?= e($canonical) ?>">
+    <?php endif; ?>
+    <?php if (!empty($jsonLd)): ?>
+    <script type="application/ld+json"><?= $jsonLd ?></script>
+    <?php endif; ?>
+    <link rel="stylesheet" href="/assets/theme/style.css">"""
+
+if 'og:title' not in old_main:
+    new_main = old_main.replace(old_head, new_head)
+    with open(main_layout_path, 'w') as f:
+        f.write(new_main)
+    print('OK  themes/default/layouts/main.php (OG + canonical added)')
+else:
+    print('OK  themes/default/layouts/main.php (already updated, skipped)')
+
+# ── Update themes/default/layouts/page.php — add JSON-LD breadcrumb ──────────
+page_layout_path = base + '/themes/default/layouts/page.php'
+new_page_layout = r"""<?php
+$bodyContent = '<article class="page-content"><h1>' . e($page['title']) . '</h1>'
+             . ($page['body'] ?? '')
+             . '</article>';
+
+$jsonLd = json_encode([
+    '@context' => 'https://schema.org',
+    '@type'    => 'WebPage',
+    'name'     => $page['title'],
+    'url'      => $canonical ?? '',
+]);
+
+require __DIR__ . '/main.php';
+"""
+with open(page_layout_path, 'w') as f:
+    f.write(new_page_layout.lstrip('\n'))
+print('OK  themes/default/layouts/page.php (JSON-LD added)')
+
+# ── Update themes/default/layouts/blog-post.php — add JSON-LD Article ────────
+post_layout_path = base + '/themes/default/layouts/blog-post.php'
+new_post_layout = r"""<?php
+ob_start(); ?>
+<article class="blog-post" itemscope itemtype="https://schema.org/Article">
+    <h1 itemprop="headline"><?= e($post['title']) ?></h1>
+    <p class="post-meta">
+        By <span itemprop="author"><?= e($post['author_name'] ?? 'Unknown') ?></span>
+        &middot; <time itemprop="datePublished"
+                       datetime="<?= e($post['published_at'] ?? $post['created_at']) ?>">
+                   <?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>
+                 </time>
+    </p>
+    <div class="post-body" itemprop="articleBody"><?= $post['body'] ?></div>
+</article>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $post['title'];
+$ogType      = 'article';
+$jsonLd = json_encode([
+    '@context'      => 'https://schema.org',
+    '@type'         => 'Article',
+    'headline'      => $post['title'],
+    'author'        => ['@type' => 'Person', 'name' => $post['author_name'] ?? ''],
+    'datePublished' => $post['published_at'] ?? $post['created_at'],
+]);
+require __DIR__ . '/main.php';
+"""
+with open(post_layout_path, 'w') as f:
+    f.write(new_post_layout.lstrip('\n'))
+print('OK  themes/default/layouts/blog-post.php (JSON-LD Article added)')
+
+# ── Update PageController to add canonical + redirect check ───────────────────
+page_ctrl_path = base + '/modules/pages/controllers/PageController.php'
+page_ctrl = open(page_ctrl_path).read()
+
+old_show = r"""    public function show(Request $request, array $params): Response
+    {
+        $slug = $params['slug'] ?? '';
+        $db   = $this->app->make(Database::class);
+        $page = (new Page($db->core()))->findBySlug($slug);
+        if (!$page) {
+            return (new Response())->html($this->themeView('404.php', ['title' => 'Page Not Found']), 404);
+        }
+        return $this->renderPage($page);
+    }"""
+
+new_show = r"""    public function show(Request $request, array $params): Response
+    {
+        $slug = $params['slug'] ?? '';
+        $db   = $this->app->make(Database::class);
+        $page = (new Page($db->core()))->findBySlug($slug);
+        if (!$page) {
+            // Check redirect table before 404
+            $stmt = $db->core()->prepare('SELECT to_url, code FROM redirects WHERE from_path = ? LIMIT 1');
+            $stmt->execute(['/' . $slug]);
+            $redirect = $stmt->fetch();
+            if ($redirect) {
+                return (new Response())->redirect($redirect['to_url'], (int) $redirect['code']);
+            }
+            return (new Response())->html($this->themeView('404.php', ['title' => 'Page Not Found']), 404);
+        }
+        return $this->renderPage($page);
+    }"""
+
+if 'redirect table' not in page_ctrl:
+    page_ctrl = page_ctrl.replace(old_show, new_show)
+
+old_render = r"""    private function renderPage(array $page): Response
+    {
+        $html = $this->themeView('page.php', [
+            'title'     => $page['title'],
+            'page'      => $page,
+            'metaTitle' => $page['meta_title'] ?: $page['title'],
+            'metaDesc'  => $page['meta_desc'],
+        ]);
+        return (new Response())->html($html);
+    }"""
+
+new_render = r"""    private function renderPage(array $page): Response
+    {
+        $html = $this->themeView('page.php', [
+            'title'     => $page['title'],
+            'page'      => $page,
+            'metaTitle' => $page['meta_title'] ?: $page['title'],
+            'metaDesc'  => $page['meta_desc'],
+            'canonical' => '//' . ($_SERVER['HTTP_HOST'] ?? '') . '/' . $page['slug'],
+        ]);
+        return (new Response())->html($html);
+    }"""
+
+if 'canonical' not in page_ctrl:
+    page_ctrl = page_ctrl.replace(old_render, new_render)
+
+with open(page_ctrl_path, 'w') as f:
+    f.write(page_ctrl)
+print('OK  modules/pages/controllers/PageController.php (redirect check + canonical)')
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 4b done — SEO module written.')

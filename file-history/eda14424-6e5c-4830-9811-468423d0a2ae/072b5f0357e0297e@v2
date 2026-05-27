@@ -1,0 +1,80 @@
+import os
+import subprocess
+import secrets
+import string
+
+# ── Read DB credentials from .env (never hardcode) ───────────────────────────
+env = {}
+with open('/var/www/velocms/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+
+db_host = env.get('CORE_DB_HOST', '127.0.0.1')
+db_name = env.get('CORE_DB_NAME', 'velocms_core')
+db_user = env.get('CORE_DB_USER', 'velocms')
+db_pass = env.get('CORE_DB_PASS', '')
+
+# ── Generate a strong random password ────────────────────────────────────────
+alphabet = string.ascii_letters + string.digits + '!@#$%&*'
+password = ''.join(secrets.choice(alphabet) for _ in range(24))
+
+# ── Hash it with PHP (bcrypt via password_hash) ───────────────────────────────
+php_hash = subprocess.run(
+    ['php', '-r', f"echo password_hash('{password}', PASSWORD_DEFAULT);"],
+    capture_output=True, text=True
+)
+if php_hash.returncode != 0:
+    print('ERROR: PHP hashing failed:', php_hash.stderr)
+    exit(1)
+pw_hash = php_hash.stdout.strip()
+
+# ── Update the DB via PHP PDO (keeps DB pass out of shell args) ───────────────
+php_update = f"""<?php
+$pdo = new PDO(
+    'mysql:host={db_host};dbname={db_name};charset=utf8mb4',
+    '{db_user}',
+    '{db_pass}'
+);
+$stmt = $pdo->prepare('UPDATE users SET password_hash = ? WHERE role = ? ORDER BY id ASC LIMIT 1');
+$stmt->execute(['{pw_hash}', 'superadmin']);
+$rows = $stmt->rowCount();
+if ($rows === 0) {{
+    // fallback: update any admin user
+    $stmt2 = $pdo->prepare('UPDATE users SET password_hash = ? WHERE deleted_at IS NULL ORDER BY id ASC LIMIT 1');
+    $stmt2->execute(['{pw_hash}']);
+    $rows = $stmt2->rowCount();
+}}
+// fetch the email we just updated
+$row = $pdo->query("SELECT email, role FROM users WHERE deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetch();
+echo $row['email'] . '|' . $row['role'] . '|' . $rows;
+"""
+
+tmp_php = '/tmp/velocms_pwreset.php'
+with open(tmp_php, 'w') as f:
+    f.write(php_update)
+
+result = subprocess.run(['php', tmp_php], capture_output=True, text=True)
+os.unlink(tmp_php)
+
+if result.returncode != 0:
+    print('ERROR: DB update failed:', result.stderr)
+    exit(1)
+
+parts = result.stdout.strip().split('|')
+email    = parts[0] if len(parts) > 0 else '?'
+role     = parts[1] if len(parts) > 1 else '?'
+affected = parts[2] if len(parts) > 2 else '0'
+
+if affected == '0':
+    print('ERROR: No rows updated — no admin user found.')
+    exit(1)
+
+print('PASSWORD RESET SUCCESSFUL')
+print(f'  Email    : {email}')
+print(f'  Password : {password}')
+print(f'  Role     : {role}')
+print(f'  URL      : https://webzite-newmedia.com/admin')

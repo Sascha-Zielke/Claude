@@ -1,0 +1,119 @@
+import re
+
+base = '/var/www/velocms'
+fixed = []
+
+def patch(path, old, new, label):
+    full = base + '/' + path
+    content = open(full).read()
+    if old not in content:
+        print(f'  SKIP {path}: pattern not found ({label})')
+        return
+    content = content.replace(old, new, 1)
+    open(full, 'w').write(content)
+    fixed.append((path, label))
+    print(f'  FIXED {path}: {label}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== FIX 1: XSS — $val unescaped in theme form.php ===')
+
+# textarea value
+patch(
+    'themes/default/layouts/form.php',
+    '              rows="5" <?= $req ? \'required\' : \'\' ?>><?= $val ?></textarea>',
+    '              rows="5" <?= $req ? \'required\' : \'\' ?>><?= e($val) ?></textarea>',
+    '$val escaped in textarea'
+)
+
+# input value
+patch(
+    'themes/default/layouts/form.php',
+    '                           name="<?= e($name) ?>" value="<?= $val ?>"',
+    '                           name="<?= e($name) ?>" value="<?= e($val) ?>"',
+    '$val escaped in text input'
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== FIX 2: Use $request->get() instead of $_GET in AuthController ===')
+
+patch(
+    'admin/controllers/AuthController.php',
+    "            'error' => \$_GET['error'] ?? null,\n            'email' => \$_GET['email'] ?? '',",
+    "            'error' => \$request->get('error'),\n            'email' => \$request->get('email', ''),",
+    '$_GET replaced with $request->get()'
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== FIX 3: Settings view — $activeTab from $_GET, add e() to echoes ===')
+
+# Replace $_GET tab read with a controller-passed $activeTab, defaulting in view
+# The settings view already validates $activeTab against $tabs keys — just add e()
+patch(
+    'admin/views/settings/index.php',
+    '$activeTab = $_GET[\'tab\'] ?? \'site\';\nif (!isset($tabs[$activeTab])) $activeTab = \'site\';',
+    '$activeTab = isset($tabs[$_GET[\'tab\'] ?? \'\']) ? $_GET[\'tab\'] : \'site\';',
+    'settings tab validated in one expression (no change in safety, cleaner)'
+)
+
+patch(
+    'admin/views/settings/index.php',
+    "        <a href=\"/admin/settings?tab=<?= \$key ?>\"\n           class=\"vcms-tab <?= \$activeTab === \$key ? 'active' : '' ?>\">\n            <?= \$label ?>\n        </a>",
+    "        <a href=\"/admin/settings?tab=<?= e(\$key) ?>\"\n           class=\"vcms-tab <?= \$activeTab === \$key ? 'active' : '' ?>\">\n            <?= e(\$label) ?>\n        </a>",
+    'e() added to $key and $label in tab links'
+)
+
+patch(
+    'admin/views/settings/index.php',
+    '<form method="post" action="/admin/settings/<?= $module ?>">',
+    '<form method="post" action="/admin/settings/<?= e($module) ?>">',
+    'e() added to $module in form action'
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== FIX 4: SiteCreateCommand — validate dbName against injection ===')
+
+content = open(base + '/cli/commands/SiteCreateCommand.php').read()
+old_exec = '        $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbName}`\n                    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");'
+new_exec = '''        if (!preg_match('/^[a-zA-Z0-9_]+$/', $dbName)) {
+            fwrite(STDERR, "Error: database name must be alphanumeric + underscore only.\\n");
+            return 1;
+        }
+        $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbName}`
+                    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");'''
+
+if old_exec in content:
+    content = content.replace(old_exec, new_exec, 1)
+    open(base + '/cli/commands/SiteCreateCommand.php', 'w').write(content)
+    fixed.append(('cli/commands/SiteCreateCommand.php', 'dbName validated before CREATE DATABASE'))
+    print('  FIXED cli/commands/SiteCreateCommand.php: dbName validated before CREATE DATABASE')
+else:
+    print('  SKIP SiteCreateCommand.php: pattern not found (may already be patched)')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== FIX 5: Pagination integers — wrap $i in (int) cast in audit and forms views ===')
+
+# audit/index.php — $i pagination: cast to int in URL to prevent tampering
+patch(
+    'admin/views/audit/index.php',
+    '<a href="?p=<?= $i ?>&action=<?= e($filters[\'action\']) ?>"',
+    '<a href="?p=<?= (int)$i ?>&action=<?= e($filters[\'action\']) ?>"',
+    'pagination $i cast to int in audit view'
+)
+patch(
+    'admin/views/audit/index.php',
+    'class="vcms-page-link <?= $i === $curPage ? \'active\' : \'\' ?>"><?= $i ?></a>',
+    'class="vcms-page-link <?= $i === $curPage ? \'active\' : \'\' ?>"><?= (int)$i ?></a>',
+    'pagination $i cast to int in audit display'
+)
+patch(
+    'admin/views/forms/submissions.php',
+    '<a href="?p=<?= $i ?>"',
+    '<a href="?p=<?= (int)$i ?>"',
+    'pagination $i cast to int in forms submissions view'
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print(f'Done. {len(fixed)} fixes applied:')
+for path, label in fixed:
+    print(f'  ✓ {path}: {label}')

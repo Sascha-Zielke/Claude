@@ -1,0 +1,27 @@
+---
+tags: [velo-solutions, dashboard, plattform]
+status: aktiv
+---
+
+# Dashboard-Plattform
+
+Zentrale Verwaltungsplattform für veloSolutions — alle Kundeninteraktionen, Finanzen, Marketing und Sicherheit an einem Ort.
+
+## Module
+
+- [[veloCMS/veloCMS|🔧 veloCMS]] — Content Management System für Kundenseiten
+- [[Finanzen, Steuern, Buchhaltung/_index|💼 Finanzen & Buchhaltung]] — Finanz-Management
+- [[Marketing/_index|📢 Marketing]] — Marketing-Tools & Kampagnen
+- [[Sicherheit/_index|🔒 Sicherheit]] — Sicherheitsrichtlinien & Standards
+- [[Kundenbetreuung/_index|👥 Kundenbetreuung]] — Support & CRM
+
+## Features
+
+- Zentrales Dashboard für alle Funktionen
+- Benutzerrolle-Management
+- Audit-Logs & Monitoring
+- API-Integration
+
+## Übergeordnet
+
+← [[../_index|veloSolutions]] | [[../../Life OS|Life OS]]

@@ -1,0 +1,31 @@
+CRITICAL: https://webzite-newmedia.com returns 
+ERR_EMPTY_RESPONSE — the site is down.
+
+1. Check Nginx status and error logs immediately:
+   sudo systemctl status nginx
+   sudo tail -50 /var/log/nginx/error.log
+   sudo tail -50 /var/log/php8.5-fpm/error.log
+
+2. Fix whatever is causing the empty response and 
+   bring the site back online.
+
+3. After site is restored, fix the translation 
+   system to auto-translate ALL content — not just 
+   navigation menu. This includes:
+   - All page content (titles, body text)
+   - Blog posts (title, excerpt, body)
+   - Booking details and labels
+   - All form labels and error messages
+   - Button texts and headings
+   - Footer text
+   The t() function must capture and translate 
+   every string rendered in both frontend and 
+   backend views.
+
+4. The monitoring table in Admin → Translations 
+   can stay — it is useful for admins to see 
+   translation status. But it should only show 
+   keys that actually exist in the codebase, 
+   not allow manual additions.
+
+Fix the site first — report back immediately.

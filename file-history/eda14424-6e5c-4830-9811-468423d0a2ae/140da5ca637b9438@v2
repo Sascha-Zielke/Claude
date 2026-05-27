@@ -1,0 +1,58 @@
+base = '/var/www/velocms'
+
+resume = open(base + '/RESUME.md').read()
+
+old_last_done = "### What was last done (Session 10)"
+new_last_done = "### What was last done (Session 11)"
+
+old_session10_detail = """- Booking Settings page fully overhauled (Admin → Settings → Booking tab)
+- **Auto-save**: All settings save automatically on field change/blur via AJAX; "✓ Saved" banner; applies to ALL admin settings pages
+- **Collapsible sections**: General, Business Hours, Payment, Email Notifications, Integrations — each has ON/OFF toggle; state saved to DB; CSS animation
+- **Booking types as toggles**: Hourly / Packages / Products as toggle switches; when Hourly enabled, slot duration dropdown appears (15min → Full Day 8h)
+- **Per-day business hours**: Mon–Sun as individual toggle rows; each day has its own open/close time picker; stored as business_days_config JSON; backward-compatible with legacy business_days/business_hours_start/end
+- **Inline Packages management**: table of all packages across resources + AJAX add form (resource selector + name + duration + price) + AJAX delete; shown when Packages type is enabled
+- **Inline Products management**: same pattern for products
+- **Booking model updated**: generateAvailableSlots() reads per-day config; supports 'half_day' (240min) and 'full_day' (480min) slot durations
+- **BookingResource**: added find() method
+- Removed Save button from booking settings (autosave replaces it)
+- Save button still present on Site/Email settings tabs (autosave works there too)"""
+
+new_session11_detail = """- **Route fix**: `/admin/booking/resources/*` routes moved BEFORE `/{id}` wildcard — resource CRUD is now reachable
+- **Daily booking type**: "Daily (overnight / multi-day)" toggle added to Booking Types; when enabled, check-in time + check-out time pickers appear; stored as `daily_checkin_time`/`daily_checkout_time` settings
+- **Daily rate on resources**: `daily_rate` column added to `booking_resources` table; 'daily' added to `pricing_mode` ENUM; resource form shows/hides hourly/daily rate fields based on selected pricing mode
+- **Resource list view**: shows separate Hourly rate and Daily rate columns
+- Resources CRUD fully working: /admin/booking/resources → list, /create → form, /{id}/edit → edit, /{id}/delete → delete"""
+
+if old_last_done in resume:
+    resume = resume.replace(old_last_done, new_last_done)
+    resume = resume.replace(old_session10_detail, new_session11_detail)
+    open(base + '/RESUME.md', 'w').write(resume)
+    print('OK  RESUME.md')
+else:
+    print('SKIP RESUME.md — pattern not found; appending session note')
+
+# SESSION_LOG.md
+log = open(base + '/SESSION_LOG.md').read()
+session11 = """
+---
+
+## Session 11 — Route fix, Daily booking type, Resource daily rate
+**Date:** 2026-05-19
+**Built / Done:**
+- **Route fix**: `/admin/booking/resources/*` routes reordered before `GET /admin/booking/{id}` wildcard in `admin/routes.php` — fixes 404/wrong page when navigating to /admin/booking/resources
+- **Daily booking type**: `bktype_daily` toggle added to Booking Settings booking types section; when enabled, shows check-in time (default 15:00) and check-out time (default 11:00) pickers; `daily_checkin_time` and `daily_checkout_time` added to SettingsAdminController scalar keys; `autosave.js` updated to show/hide daily row on checkbox change
+- **daily_rate column**: `ALTER TABLE booking_resources ADD daily_rate DECIMAL(10,2)` + `pricing_mode ENUM` extended with 'daily'; `ResourceAdminController::extractData()` includes daily_rate; index() now passes csrf to view
+- **resource form**: daily_rate input field added; pricing mode select includes 'Daily (per day)'; JS `toggleHourlyRate()` now also toggles daily-rate-group
+- **resource list**: shows Hourly and Daily rate columns
+- PHPUnit: 23/23
+- Commit: 4334aa3
+"""
+
+if 'Session 11' not in log:
+    log = log.rstrip() + '\n' + session11.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(log)
+    print('OK  SESSION_LOG.md (Session 11 appended)')
+else:
+    print('SKIP SESSION_LOG.md')
+
+print('\nDone.')

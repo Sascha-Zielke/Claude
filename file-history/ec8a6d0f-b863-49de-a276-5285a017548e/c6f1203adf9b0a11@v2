@@ -1,0 +1,69 @@
+---
+tags: [übersicht, navigation]
+---
+
+# 🗂️ Vault-Übersicht
+
+Schnelle Navigation durch alle Hauptbereiche deines Vaults.
+
+---
+
+<div class="vault-box vault-kontext">
+<strong>📋 00 Kontext</strong><br>
+<em>Persönliches Profil, Schreibstil, Zielgruppe — zentrale Referenz für alle Aufgaben</em>
+</div>
+
+<div class="vault-box vault-inbox">
+<strong>📥 01 Inbox</strong><br>
+<em>Schnelle Gedanken & unverarbeitete Notizen — alles was noch keinen festen Platz hat</em>
+</div>
+
+<div class="vault-box vault-projekte">
+<strong>🎯 02 Projekte</strong><br>
+<em>Aktive Projekte mit konkretem Ziel und Enddatum — was wird entwickelt?</em>
+</div>
+
+<div class="vault-box vault-bereiche">
+<strong>📚 03 Bereiche</strong><br>
+<em>Laufende Verantwortungsbereiche ohne Enddatum — Wissen in den jeweiligen Bereichen</em>
+</div>
+
+<div class="vault-box vault-ressourcen">
+<strong>🔍 04 Ressourcen</strong><br>
+<em>Referenzmaterial, Wissen, gesammelte Informationen — sortiert nach Themen</em>
+</div>
+
+<div class="vault-box vault-daily">
+<strong>📅 05 Daily Notes</strong><br>
+<em>Tägliches Logbuch — Format: YYYY-MM-DD.md</em>
+</div>
+
+<div class="vault-box vault-archiv">
+<strong>📦 06 Archiv</strong><br>
+<em>Abgeschlossene Projekte und inaktive Bereiche</em>
+</div>
+
+<div class="vault-box vault-anhaenge">
+<strong>🖼️ 07 Anhänge</strong><br>
+<em>Bilder, PDFs, Medien — alle Assets des Vaults</em>
+</div>
+
+---
+
+## 🚀 Life OS — Aktuelle Projekte & Bereiche
+
+<div class="vault-box vault-lifeos">
+<strong>🏗️ Life OS</strong><br>
+<em>Integriertes System — Geschäftsplattform, Lernplattform, persönliches Dashboard</em><br><br>
+→ [[02 Projekte/Life OS/Life OS|Projekte]]: Was wird gebaut?<br>
+→ [[03 Bereiche/Life OS/Life OS|Bereiche]]: Was wissen wir?
+</div>
+
+---
+
+## 💡 Schnelle Links
+
+- [[00 Kontext/Über mich|👤 Über mich]]
+- [[01 Inbox|📥 Inbox aufräumen]]
+- [[02 Projekte/Life OS/Life OS|🏗️ Life OS Projektübersicht]]
+- [[05 Daily Notes|📅 Heute's Daily Note]]

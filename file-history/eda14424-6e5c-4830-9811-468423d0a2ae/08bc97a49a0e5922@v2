@@ -1,0 +1,168 @@
+"""vcms_s14a_model_detail.py
+Fix 1 — Booking detail view daily display:
+  - Booking::findById() adds r.daily_rate AS resource_daily_rate
+  - Booking::update() new method
+  - detail.php: daily-aware Date/Time/Duration rows + zero-rate warning
+Fix 2 (partial) — detail.php: Edit + Cancel buttons
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. Booking::findById() — add resource_daily_rate ─────────────────────────
+model_path = BASE + '/modules/booking/models/Booking.php'
+model = open(model_path).read()
+
+old_find_by_id = (
+    "            'SELECT b.*, r.name AS resource_name, r.slug AS resource_slug,\n"
+    "                    pkg.name AS package_name, pkg.duration_mins AS package_duration,\n"
+    "                    prd.name AS product_name\n"
+)
+new_find_by_id = (
+    "            'SELECT b.*, r.name AS resource_name, r.slug AS resource_slug,\n"
+    "                    r.daily_rate AS resource_daily_rate,\n"
+    "                    pkg.name AS package_name, pkg.duration_mins AS package_duration,\n"
+    "                    prd.name AS product_name\n"
+)
+
+if 'resource_daily_rate' not in model:
+    if old_find_by_id in model:
+        model = model.replace(old_find_by_id, new_find_by_id)
+        print('OK  Booking::findById() — added resource_daily_rate')
+    else:
+        print('ERR Booking::findById() — pattern not found')
+else:
+    print('SKIP Booking::findById() — already updated')
+
+# ── 2. Booking::update() — new method ────────────────────────────────────────
+if 'public function update(' not in model:
+    old_count_by_status = (
+        "    public function countByStatus(): array\n"
+        "    {"
+    )
+    new_update_then_count = (
+        "    public function update(int $id, array $data): void\n"
+        "    {\n"
+        "        $this->pdo->prepare(\n"
+        "            'UPDATE bookings\n"
+        "             SET resource_id    = ?, booking_date  = ?, end_date      = ?, nights       = ?,\n"
+        "                 start_time     = ?, end_time      = ?, duration_mins = ?,\n"
+        "                 pricing_type   = ?, subtotal      = ?, total_amount  = ?,\n"
+        "                 booking_status = ?, admin_notes   = ?, updated_at    = NOW()\n"
+        "             WHERE id = ?'\n"
+        "        )->execute([\n"
+        "            (int) $data['resource_id'],\n"
+        "            $data['booking_date'],\n"
+        "            $data['end_date'] ?? null,\n"
+        "            isset($data['nights']) ? (int) $data['nights'] : null,\n"
+        "            $data['start_time'],\n"
+        "            $data['end_time'],\n"
+        "            (int) $data['duration_mins'],\n"
+        "            $data['pricing_type'],\n"
+        "            (float) $data['subtotal'],\n"
+        "            (float) $data['total_amount'],\n"
+        "            $data['booking_status'],\n"
+        "            $data['admin_notes'] ?? '',\n"
+        "            $id,\n"
+        "        ]);\n"
+        "    }\n"
+        "\n"
+        "    public function countByStatus(): array\n"
+        "    {"
+    )
+    if old_count_by_status in model:
+        model = model.replace(old_count_by_status, new_update_then_count)
+        print('OK  Booking::update() added')
+    else:
+        print('ERR Booking — countByStatus anchor not found')
+else:
+    print('SKIP Booking::update() — already present')
+
+with open(model_path, 'w') as f: f.write(model)
+php_lint(model_path, 'Booking.php')
+
+# ── 3. detail.php — daily-aware rows + warning + Edit/Cancel buttons ─────────
+detail_path = BASE + '/admin/views/booking/detail.php'
+detail = open(detail_path).read()
+
+# a) Replace Date / Time / Duration rows
+old_rows = (
+    "                <tr><th>Date</th><td><?= e($booking['booking_date'] ?? '') ?></td></tr>\n"
+    "                <tr><th>Time</th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>\n"
+    "                <tr><th>Duration</th><td><?= (int)($booking['duration_mins'] ?? 0) ?> min</td></tr>"
+)
+new_rows = (
+    "                <tr>\n"
+    "                    <th><?= ($booking['pricing_type'] ?? '') === 'daily' ? 'Dates' : 'Date' ?></th>\n"
+    "                    <td><?php if (($booking['pricing_type'] ?? '') === 'daily' && !empty($booking['end_date'])): ?>\n"
+    "                        <?= date('d M Y', strtotime($booking['booking_date'])) ?> &rarr; <?= date('d M Y', strtotime($booking['end_date'])) ?>\n"
+    "                    <?php else: ?><?= e($booking['booking_date'] ?? '') ?><?php endif ?></td>\n"
+    "                </tr>\n"
+    "                <?php if (($booking['pricing_type'] ?? '') !== 'daily'): ?>\n"
+    "                <tr><th>Time</th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>\n"
+    "                <?php endif ?>\n"
+    "                <tr>\n"
+    "                    <th>Duration</th>\n"
+    "                    <td><?php if (($booking['pricing_type'] ?? '') === 'daily' && !empty($booking['nights'])): ?>\n"
+    "                        <?= (int)$booking['nights'] ?> <?= (int)$booking['nights'] === 1 ? 'night' : 'nights' ?>\n"
+    "                    <?php else: ?><?= (int)($booking['duration_mins'] ?? 0) ?> min<?php endif ?></td>\n"
+    "                </tr>\n"
+    "                <?php if (($booking['pricing_type'] ?? '') === 'daily' && !($booking['resource_daily_rate'] ?? 0)): ?>\n"
+    "                <tr><td colspan=\"2\" style=\"padding:.5rem 0\"><div style=\"color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:.375rem;padding:.4rem .75rem;font-size:.85rem\">Warning: no daily rate set on this resource — total shown may be &euro;0.00.</div></td></tr>\n"
+    "                <?php endif ?>"
+)
+
+if 'resource_daily_rate' not in detail:
+    if old_rows in detail:
+        detail = detail.replace(old_rows, new_rows)
+        print('OK  detail.php — daily-aware Date/Time/Duration rows')
+    else:
+        print('ERR detail.php — rows pattern not found')
+else:
+    print('SKIP detail.php — rows already updated')
+
+# b) Add Edit + Cancel action buttons before the status card
+old_status_card_start = (
+    "    <!-- Right: status panel -->\n"
+    "    <div>\n"
+    "        <div class=\"vcms-card\">\n"
+    "            <h4 style=\"margin:0 0 1rem\">Status</h4>"
+)
+new_with_actions = (
+    "    <!-- Right: status panel -->\n"
+    "    <div>\n"
+    "        <div class=\"vcms-card\" style=\"margin-bottom:1rem\">\n"
+    "            <h4 style=\"margin:0 0 1rem\">Actions</h4>\n"
+    "            <a href=\"/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/edit\"\n"
+    "               class=\"vcms-btn\" style=\"width:100%;display:block;text-align:center;box-sizing:border-box;margin-bottom:.5rem\">Edit Booking</a>\n"
+    "            <?php if (($booking['booking_status'] ?? '') !== 'cancelled'): ?>\n"
+    "            <form method=\"post\" action=\"/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/cancel\"\n"
+    "                  onsubmit=\"return confirm('Cancel this booking and notify the customer by email?')\">\n"
+    "                <input type=\"hidden\" name=\"_csrf\" value=\"<?= e($csrf) ?>\">\n"
+    "                <button type=\"submit\" class=\"vcms-btn vcms-btn--danger\" style=\"width:100%\">Cancel Booking</button>\n"
+    "            </form>\n"
+    "            <?php else: ?>\n"
+    "            <p style=\"text-align:center;color:#6b7280;font-size:.875rem;margin:0\">Booking already cancelled</p>\n"
+    "            <?php endif ?>\n"
+    "        </div>\n"
+    "        <div class=\"vcms-card\">\n"
+    "            <h4 style=\"margin:0 0 1rem\">Status</h4>"
+)
+
+if 'Actions' not in detail:
+    if old_status_card_start in detail:
+        detail = detail.replace(old_status_card_start, new_with_actions)
+        print('OK  detail.php — Edit/Cancel action buttons added')
+    else:
+        print('ERR detail.php — status card anchor not found')
+else:
+    print('SKIP detail.php — actions already present')
+
+with open(detail_path, 'w') as f: f.write(detail)
+php_lint(detail_path, 'admin/views/booking/detail.php')
+
+print('\nDone.')

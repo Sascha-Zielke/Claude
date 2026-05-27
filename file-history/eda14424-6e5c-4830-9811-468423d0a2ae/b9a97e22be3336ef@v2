@@ -1,0 +1,166 @@
+"""
+vcms_booking_db.py — Create booking tables and seed default settings.
+Run as: python3 /tmp/vcms_booking_db.py
+"""
+import subprocess, os, json
+
+env = {}
+with open('/var/www/velocms/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+
+sql = """
+-- ── Booking Resources (rooms/studios) ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS booking_resources (
+    id                    INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name                  VARCHAR(200)  NOT NULL,
+    slug                  VARCHAR(200)  NOT NULL UNIQUE,
+    description           TEXT,
+    image                 VARCHAR(500),
+    active                TINYINT(1)   NOT NULL DEFAULT 1,
+    pricing_mode          ENUM('hourly','package','product','combined') NOT NULL DEFAULT 'hourly',
+    hourly_rate           DECIMAL(10,2) DEFAULT NULL,
+    min_duration_mins     INT UNSIGNED NOT NULL DEFAULT 60,
+    max_duration_mins     INT UNSIGNED NOT NULL DEFAULT 480,
+    advance_booking_hours INT UNSIGNED NOT NULL DEFAULT 24,
+    sort_order            INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at            DATETIME DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Booking Packages (fixed-duration, fixed-price blocks) ───────────────────
+CREATE TABLE IF NOT EXISTS booking_packages (
+    id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    resource_id   INT UNSIGNED NOT NULL,
+    name          VARCHAR(200)  NOT NULL,
+    description   TEXT,
+    duration_mins INT UNSIGNED  NOT NULL DEFAULT 60,
+    price         DECIMAL(10,2) NOT NULL,
+    active        TINYINT(1)   NOT NULL DEFAULT 1,
+    sort_order    INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at    DATETIME DEFAULT NULL,
+    INDEX idx_resource (resource_id),
+    FOREIGN KEY (resource_id) REFERENCES booking_resources(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Booking Products (add-on services like mixing, mastering) ───────────────
+CREATE TABLE IF NOT EXISTS booking_products (
+    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    resource_id INT UNSIGNED NOT NULL,
+    name        VARCHAR(200)  NOT NULL,
+    description TEXT,
+    price       DECIMAL(10,2) NOT NULL,
+    active      TINYINT(1)   NOT NULL DEFAULT 1,
+    sort_order  INT UNSIGNED NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at  DATETIME DEFAULT NULL,
+    INDEX idx_resource (resource_id),
+    FOREIGN KEY (resource_id) REFERENCES booking_resources(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Bookings ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS bookings (
+    id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    reference       VARCHAR(20)   NOT NULL UNIQUE,
+    resource_id     INT UNSIGNED  NOT NULL,
+    package_id      INT UNSIGNED  DEFAULT NULL,
+    product_id      INT UNSIGNED  DEFAULT NULL,
+    customer_name   VARCHAR(200)  NOT NULL,
+    customer_email  VARCHAR(300)  NOT NULL,
+    customer_phone  VARCHAR(50)   DEFAULT NULL,
+    booking_date    DATE          NOT NULL,
+    start_time      TIME          NOT NULL,
+    end_time        TIME          NOT NULL,
+    duration_mins   INT UNSIGNED  NOT NULL,
+    pricing_type    ENUM('hourly','package','product') NOT NULL DEFAULT 'hourly',
+    subtotal        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    deposit_amount  DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    total_amount    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    payment_status  ENUM('none','deposit_paid','paid') NOT NULL DEFAULT 'none',
+    booking_status  ENUM('pending','confirmed','cancelled') NOT NULL DEFAULT 'pending',
+    notes           TEXT,
+    admin_notes     TEXT,
+    ip_address      VARCHAR(45)   DEFAULT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at      DATETIME DEFAULT NULL,
+    INDEX idx_resource_date (resource_id, booking_date),
+    INDEX idx_status        (booking_status),
+    INDEX idx_email         (customer_email(50)),
+    INDEX idx_date          (booking_date),
+    FOREIGN KEY (resource_id) REFERENCES booking_resources(id),
+    FOREIGN KEY (package_id)  REFERENCES booking_packages(id),
+    FOREIGN KEY (product_id)  REFERENCES booking_products(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+"""
+
+run_env = {**os.environ, 'MYSQL_PWD': env['CORE_DB_PASS']}
+result = subprocess.run(
+    ['mysql', '-h', env.get('CORE_DB_HOST', '127.0.0.1'),
+     '-u', env['CORE_DB_USER'], env['CORE_DB_NAME']],
+    input=sql.encode(), env=run_env, capture_output=True
+)
+if result.returncode != 0:
+    print('ERROR:', result.stderr.decode())
+    exit(1)
+print('OK  DB tables created')
+
+# ── Seed default settings ────────────────────────────────────────────────────
+defaults = [
+    ('booking', 'enabled',                  '0'),
+    ('booking', 'guest_booking',             '1'),
+    ('booking', 'require_confirmation',      '1'),
+    ('booking', 'booking_types',             json.dumps(['hourly', 'package', 'product'])),
+    ('booking', 'payment_mode',              'none'),
+    ('booking', 'deposit_percent',           '30'),
+    ('booking', 'stripe_enabled',            '0'),
+    ('booking', 'stripe_pk',                 ''),
+    ('booking', 'stripe_sk',                 ''),
+    ('booking', 'notification_email',        ''),
+    ('booking', 'customer_email_subject',    'Booking Confirmation — {reference}'),
+    ('booking', 'customer_email_body',
+     "Hi {customer_name},\n\nThank you for your booking!\n\nReference: {reference}\nResource: {resource}\nDate: {date}\nTime: {start_time} – {end_time}\nTotal: €{total}\nStatus: {status}\n\nWe look forward to seeing you."),
+    ('booking', 'owner_email_subject',       'New Booking — {reference}'),
+    ('booking', 'owner_email_body',
+     "New booking received.\n\nReference: {reference}\nCustomer: {customer_name} ({customer_email})\nResource: {resource}\nDate: {date}\nTime: {start_time} – {end_time}\nTotal: €{total}\nStatus: {status}"),
+    ('booking', 'business_hours_start',      '09:00'),
+    ('booking', 'business_hours_end',        '21:00'),
+    ('booking', 'business_days',             json.dumps([1, 2, 3, 4, 5, 6])),
+    ('booking', 'slot_duration_mins',        '60'),
+    ('booking', 'timezone',                  'Europe/Berlin'),
+    ('booking', 'calendar_sync',             '0'),
+]
+
+insert_sql = 'INSERT IGNORE INTO settings (module, setting_key, value) VALUES ' + \
+    ', '.join(['(%s, %s, %s)'] * len(defaults))
+
+flat = []
+for t in defaults:
+    flat.extend(t)
+
+# Use Python MySQL connector approach via a small PHP script
+php = "<?php\n"
+php += "require '/var/www/velocms/core/bootstrap.php';\n"
+php += "$pdo = $app->make(\\VeloCMS\\Core\\Database::class)->core();\n"
+for mod, key, val in defaults:
+    val_escaped = val.replace("'", "\\'").replace('\\', '\\\\')
+    php += f"$pdo->prepare(\"INSERT IGNORE INTO settings (module, setting_key, value) VALUES (?, ?, ?)\")"\
+           f"->execute(['{mod}', '{key}', '{val_escaped}']);\n"
+php += "echo 'OK  settings seeded\\n';\n"
+
+with open('/tmp/vcms_booking_seed.php', 'w') as f:
+    f.write(php)
+
+result2 = subprocess.run(['php', '/tmp/vcms_booking_seed.php'], capture_output=True, text=True)
+if result2.returncode != 0:
+    print('Seed ERROR:', result2.stderr)
+else:
+    print(result2.stdout.strip())
+
+print('\nDone.')

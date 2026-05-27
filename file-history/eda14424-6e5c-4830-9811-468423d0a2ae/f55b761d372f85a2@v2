@@ -1,0 +1,274 @@
+import os
+import json
+import subprocess
+
+base = '/var/www/velocms'
+files = {}
+
+# ── cli/commands/BackupCommand.php ────────────────────────────────────────────
+files['cli/commands/BackupCommand.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Cli;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Config;
+
+class BackupCommand
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function run(array $args): void
+    {
+        $config  = $this->app->make(Config::class);
+        $backDir = VELOCMS_ROOT . '/storage/backups';
+        if (!is_dir($backDir)) {
+            mkdir($backDir, 0750, true);
+        }
+
+        $stamp = date('Y-m-d_His');
+
+        // Database dump
+        $dbName = $config->get('CORE_DB_NAME', 'velocms_core');
+        $dbUser = $config->get('CORE_DB_USER', 'velocms');
+        $dbPass = $config->get('CORE_DB_PASS', '');
+        $dbHost = $config->get('CORE_DB_HOST', '127.0.0.1');
+        $sqlFile = "{$backDir}/{$stamp}_db.sql";
+
+        $env  = array_merge($_ENV, ['MYSQL_PWD' => $dbPass]);
+        $cmd  = "mysqldump --single-transaction --skip-lock-tables -h {$dbHost} -u {$dbUser} {$dbName}";
+        $ret  = null;
+        $out  = [];
+        exec($cmd . " > " . escapeshellarg($sqlFile) . " 2>&1", $out, $ret);
+
+        if ($ret === 0) {
+            echo "DB dump: {$sqlFile}\n";
+        } else {
+            echo "DB dump FAILED: " . implode("\n", $out) . "\n";
+        }
+
+        // Storage archive (uploads only, not cache/logs)
+        $uploadsDir = VELOCMS_ROOT . '/storage';
+        $tarFile    = "{$backDir}/{$stamp}_storage.tar.gz";
+        exec("tar -czf " . escapeshellarg($tarFile) . " --exclude='*/cache' --exclude='*/logs' "
+           . escapeshellarg($uploadsDir) . " 2>&1", $out, $ret);
+
+        if ($ret === 0) {
+            echo "Storage archive: {$tarFile}\n";
+        } else {
+            echo "Storage archive FAILED: " . implode("\n", $out) . "\n";
+        }
+
+        // Keep only last 7 backups of each type
+        foreach (['_db.sql', '_storage.tar.gz'] as $suffix) {
+            $backups = glob("{$backDir}/*{$suffix}");
+            if ($backups && count($backups) > 7) {
+                sort($backups);
+                $toDelete = array_slice($backups, 0, count($backups) - 7);
+                foreach ($toDelete as $f) {
+                    unlink($f);
+                    echo "Removed old backup: " . basename($f) . "\n";
+                }
+            }
+        }
+
+        echo "Backup complete.\n";
+    }
+}
+"""
+
+# Write backup command
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# ── composer.json — add PHPMailer + new sub-namespace mappings ────────────────
+composer_path = base + '/composer.json'
+with open(composer_path) as f:
+    composer = json.load(f)
+
+# PHPMailer dependency
+composer.setdefault('require', {})
+if 'phpmailer/phpmailer' not in composer['require']:
+    composer['require']['phpmailer/phpmailer'] = '^6.9'
+    print('OK  composer.json (phpmailer/phpmailer added)')
+else:
+    print('OK  composer.json (phpmailer already present)')
+
+# New sub-namespace mappings
+psr4 = composer['autoload']['psr-4']
+additions = {
+    'VeloCMS\\Modules\\Settings\\Admin\\':   'modules/settings/admin/controllers/',
+    'VeloCMS\\Modules\\Settings\\Models\\':  'modules/settings/models/',
+    'VeloCMS\\Modules\\Audit\\Admin\\':      'modules/audit/admin/controllers/',
+    'VeloCMS\\Modules\\Audit\\Models\\':     'modules/audit/models/',
+    'VeloCMS\\Modules\\Email\\Models\\':     'modules/email/models/',
+    'VeloCMS\\Modules\\Cron\\Admin\\':       'modules/cron/admin/controllers/',
+    'VeloCMS\\Modules\\Cron\\Models\\':      'modules/cron/models/',
+    'VeloCMS\\Modules\\Forms\\Admin\\':      'modules/forms/admin/controllers/',
+    'VeloCMS\\Modules\\Forms\\Models\\':     'modules/forms/models/',
+    'VeloCMS\\Modules\\Forms\\Controllers\\': 'modules/forms/controllers/',
+}
+added = []
+for k, v in additions.items():
+    if k not in psr4:
+        psr4[k] = v
+        added.append(k)
+
+with open(composer_path, 'w') as f:
+    json.dump(composer, f, indent=4)
+
+for k in added:
+    print(f'OK  composer.json ({k})')
+
+# ── admin/routes.php — add Settings, Audit, Cron, Forms routes ───────────────
+routes_path = base + '/admin/routes.php'
+routes = open(routes_path).read()
+
+new_blocks = [
+    # Settings
+    (
+        'SettingsAdminController',
+        """
+use VeloCMS\\Modules\\Settings\\Admin\\SettingsAdminController;
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+$router->get('/admin/settings',          [SettingsAdminController::class, 'index']);
+$router->post('/admin/settings/{module}',[SettingsAdminController::class, 'update']);"""
+    ),
+    # Audit
+    (
+        'AuditAdminController',
+        """
+use VeloCMS\\Modules\\Audit\\Admin\\AuditAdminController;
+
+// ── Audit Log ─────────────────────────────────────────────────────────────────
+$router->get('/admin/audit', [AuditAdminController::class, 'index']);"""
+    ),
+    # Cron
+    (
+        'CronAdminController',
+        """
+use VeloCMS\\Modules\\Cron\\Admin\\CronAdminController;
+
+// ── Cron Jobs ─────────────────────────────────────────────────────────────────
+$router->get('/admin/cron',                [CronAdminController::class, 'index']);
+$router->post('/admin/cron/{id}/toggle',   [CronAdminController::class, 'toggle']);"""
+    ),
+    # Forms
+    (
+        'FormAdminController',
+        """
+use VeloCMS\\Modules\\Forms\\Admin\\FormAdminController;
+use VeloCMS\\Modules\\Forms\\Admin\\SubmissionAdminController;
+
+// ── Forms ─────────────────────────────────────────────────────────────────────
+$router->get('/admin/forms',                          [FormAdminController::class, 'index']);
+$router->get('/admin/forms/create',                   [FormAdminController::class, 'create']);
+$router->post('/admin/forms',                         [FormAdminController::class, 'store']);
+$router->get('/admin/forms/{id}/edit',                [FormAdminController::class, 'edit']);
+$router->post('/admin/forms/{id}',                    [FormAdminController::class, 'update']);
+$router->post('/admin/forms/{id}/delete',             [FormAdminController::class, 'delete']);
+$router->get('/admin/forms/{id}/submissions',         [SubmissionAdminController::class, 'index']);
+$router->get('/admin/forms/{id}/submissions/export',  [SubmissionAdminController::class, 'exportCsv']);"""
+    ),
+]
+
+for marker, block in new_blocks:
+    if marker not in routes:
+        routes += '\n' + block
+        print(f'OK  admin/routes.php ({marker} added)')
+    else:
+        print(f'OK  admin/routes.php ({marker} already present)')
+
+open(routes_path, 'w').write(routes)
+
+# ── admin/views/layout.php — add new sidebar entries ─────────────────────────
+layout_path = base + '/admin/views/layout.php'
+layout = open(layout_path).read()
+
+# Add Forms after SEO in Content section
+if 'href="/admin/forms"' not in layout:
+    layout = layout.replace(
+        '            <a href="/admin/seo" class="<?= ($page ?? \'\') === \'seo\' ? \'active\' : \'\' ?>">\n                SEO\n            </a>',
+        '            <a href="/admin/seo" class="<?= ($page ?? \'\') === \'seo\' ? \'active\' : \'\' ?>">\n                SEO\n            </a>\n            <a href="/admin/forms" class="<?= ($page ?? \'\') === \'forms\' ? \'active\' : \'\' ?>">\n                Forms\n            </a>'
+    )
+    print('OK  admin/views/layout.php (Forms link added)')
+else:
+    print('OK  admin/views/layout.php (Forms already present)')
+
+# Add Audit + Cron before Settings in System section
+if 'href="/admin/audit"' not in layout:
+    layout = layout.replace(
+        '            <a href="/admin/settings" class="<?= ($page ?? \'\') === \'settings\' ? \'active\' : \'\' ?>">\n                Settings\n            </a>',
+        '            <a href="/admin/audit" class="<?= ($page ?? \'\') === \'audit\' ? \'active\' : \'\' ?>">\n                Audit Log\n            </a>\n            <a href="/admin/cron" class="<?= ($page ?? \'\') === \'cron\' ? \'active\' : \'\' ?>">\n                Cron Jobs\n            </a>\n            <a href="/admin/settings" class="<?= ($page ?? \'\') === \'settings\' ? \'active\' : \'\' ?>">\n                Settings\n            </a>'
+    )
+    print('OK  admin/views/layout.php (Audit + Cron links added)')
+else:
+    print('OK  admin/views/layout.php (Audit/Cron already present)')
+
+open(layout_path, 'w').write(layout)
+
+# ── public/index.php — add FormsModule ───────────────────────────────────────
+index_path = base + '/public/index.php'
+index = open(index_path).read()
+
+if 'FormsModule' not in index:
+    index = index.replace(
+        'use VeloCMS\\Modules\\Api\\ApiModule;',
+        'use VeloCMS\\Modules\\Api\\ApiModule;\nuse VeloCMS\\Modules\\Forms\\FormsModule;'
+    )
+    index = index.replace(
+        '    new SeoModule($app),',
+        '    new FormsModule($app),\n    new SeoModule($app),'
+    )
+    open(index_path, 'w').write(index)
+    print('OK  public/index.php (FormsModule added)')
+else:
+    print('OK  public/index.php (FormsModule already present)')
+
+# ── cli/velocms — add backup command ─────────────────────────────────────────
+cli_path = base + '/cli/velocms'
+cli = open(cli_path).read()
+
+if "'backup'" not in cli:
+    cli = cli.replace(
+        "'cache:clear'",
+        "'backup'          => VeloCMS\\Cli\\BackupCommand::class,\n    'cache:clear'"
+    )
+    open(cli_path, 'w').write(cli)
+    print('OK  cli/velocms (backup command added)')
+else:
+    print('OK  cli/velocms (backup already present)')
+
+# ── Install PHPMailer via composer ────────────────────────────────────────────
+print('\nInstalling PHPMailer via composer...')
+result = subprocess.run(
+    ['composer', 'require', 'phpmailer/phpmailer', '--no-interaction', '--no-progress'],
+    cwd=base, capture_output=True, text=True
+)
+if result.returncode == 0:
+    print('OK  PHPMailer installed')
+else:
+    print('WARN PHPMailer install failed (may already be installed or no internet):')
+    print(result.stderr[:500])
+    # Try dump-autoload anyway
+    subprocess.run(['composer', 'dump-autoload', '--optimize'], cwd=base)
+
+# Final autoloader regeneration
+result2 = subprocess.run(
+    ['composer', 'dump-autoload', '--optimize'],
+    cwd=base, capture_output=True, text=True
+)
+if result2.returncode == 0:
+    print('OK  composer dump-autoload')
+else:
+    print('ERR composer dump-autoload:', result2.stderr[:300])
+
+# Ensure backup dir exists with correct permissions
+import subprocess as sp
+sp.run(['mkdir', '-p', base + '/storage/backups'], check=False)
+sp.run(['chmod', '750', base + '/storage/backups'], check=False)
+
+print('\nPhase 5g done — backup + wiring complete.')

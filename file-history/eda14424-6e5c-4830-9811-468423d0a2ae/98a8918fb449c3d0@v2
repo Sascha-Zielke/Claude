@@ -1,0 +1,640 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── admin/routes.php ─────────────────────────────────────────────────────────
+files['admin/routes.php'] = r"""<?php declare(strict_types=1);
+
+use VeloCMS\Admin\AuthController;
+use VeloCMS\Admin\DashboardController;
+
+$router = $app->make(\VeloCMS\Core\Router::class);
+
+$router->get('/admin',              [AuthController::class, 'index']);
+$router->get('/admin/login',        [AuthController::class, 'showLogin']);
+$router->post('/admin/login',       [AuthController::class, 'processLogin']);
+$router->get('/admin/logout',       [AuthController::class, 'logout']);
+$router->get('/admin/dashboard',    [DashboardController::class, 'index']);
+"""
+
+# ── admin/controllers/BaseController.php ─────────────────────────────────────
+files['admin/controllers/BaseController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Admin;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Response;
+use VeloCMS\Core\View;
+
+abstract class BaseController
+{
+    public function __construct(protected readonly Application $app) {}
+
+    protected function auth(): Auth
+    {
+        return $this->app->make(Auth::class);
+    }
+
+    /** Render an admin view file (no layout). */
+    protected function view(string $template, array $data = []): string
+    {
+        $view = new View($this->app->basePath('admin/views'));
+        return $view->with($data)->render($template);
+    }
+
+    /** Render a view wrapped in the main admin layout. */
+    protected function layout(string $template, array $data = []): Response
+    {
+        $content = $this->view($template, $data);
+        $html    = $this->view('layout.php', array_merge($data, ['content' => $content]));
+        return (new Response())->html($html);
+    }
+
+    protected function redirect(string $url, int $status = 302): Response
+    {
+        return (new Response())->redirect($url, $status);
+    }
+}
+"""
+
+# ── admin/controllers/AuthController.php ─────────────────────────────────────
+files['admin/controllers/AuthController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Admin;
+
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class AuthController extends BaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        if ($this->auth()->check()) {
+            return $this->redirect('/admin/dashboard');
+        }
+        return $this->redirect('/admin/login');
+    }
+
+    public function showLogin(Request $request, array $params): Response
+    {
+        if ($this->auth()->check()) {
+            return $this->redirect('/admin/dashboard');
+        }
+
+        $html = $this->view('login.php', [
+            'csrf'  => $this->auth()->csrfToken(),
+            'error' => $_GET['error'] ?? null,
+            'email' => $_GET['email'] ?? '',
+        ]);
+        return (new Response())->html($html);
+    }
+
+    public function processLogin(Request $request, array $params): Response
+    {
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect('/admin/login?error=' . urlencode('Invalid request. Please try again.'));
+        }
+
+        $email    = trim($request->post('email', ''));
+        $password = $request->post('password', '');
+
+        if ($email === '' || $password === '') {
+            return $this->redirect('/admin/login?error=' . urlencode('Email and password are required.')
+                . '&email=' . urlencode($email));
+        }
+
+        try {
+            $ok = $this->auth()->attempt($email, $password, $request->ip());
+        } catch (\RuntimeException $e) {
+            return $this->redirect('/admin/login?error=' . urlencode($e->getMessage())
+                . '&email=' . urlencode($email));
+        }
+
+        if (!$ok) {
+            return $this->redirect('/admin/login?error=' . urlencode('Incorrect email or password.')
+                . '&email=' . urlencode($email));
+        }
+
+        return $this->redirect('/admin/dashboard');
+    }
+
+    public function logout(Request $request, array $params): Response
+    {
+        $this->auth()->logout();
+        return $this->redirect('/admin/login');
+    }
+}
+"""
+
+# ── admin/controllers/DashboardController.php ────────────────────────────────
+files['admin/controllers/DashboardController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Admin;
+
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class DashboardController extends BaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        $this->auth()->requireLogin();
+
+        $db = $this->app->make(Database::class);
+
+        $siteCount = (int) $db->core()
+            ->query('SELECT COUNT(*) FROM sites WHERE status = "active"')
+            ->fetchColumn();
+
+        $userCount = (int) $db->core()
+            ->query('SELECT COUNT(*) FROM users WHERE deleted_at IS NULL')
+            ->fetchColumn();
+
+        return $this->layout('dashboard.php', [
+            'user'       => $this->auth()->user(),
+            'page'       => 'dashboard',
+            'siteCount'  => $siteCount,
+            'userCount'  => $userCount,
+            'phpVersion' => PHP_VERSION,
+            'cmsVersion' => '0.1.0',
+        ]);
+    }
+}
+"""
+
+# ── admin/views/login.php ────────────────────────────────────────────────────
+files['admin/views/login.php'] = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in &mdash; VeloCMS</title>
+    <link rel="stylesheet" href="/assets/admin/style.css">
+</head>
+<body>
+<div class="vcms-login-wrap">
+    <div class="vcms-login-box">
+
+        <div class="vcms-login-logo">
+            <h1>Velo<span>CMS</span></h1>
+            <p>Sign in to the admin panel</p>
+        </div>
+
+        <?php if (!empty($error)): ?>
+            <div class="vcms-alert vcms-alert-error"><?= e($error) ?></div>
+        <?php endif; ?>
+
+        <form class="vcms-form" method="post" action="/admin/login">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="field">
+                <label for="email">Email address</label>
+                <input type="email" id="email" name="email"
+                       value="<?= e($email ?? '') ?>" autofocus required autocomplete="email">
+            </div>
+            <div class="field">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn-primary">Sign in</button>
+        </form>
+
+    </div>
+</div>
+</body>
+</html>
+"""
+
+# ── admin/views/layout.php ───────────────────────────────────────────────────
+files['admin/views/layout.php'] = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VeloCMS Admin</title>
+    <link rel="stylesheet" href="/assets/admin/style.css">
+</head>
+<body>
+<div class="vcms-layout">
+
+    <!-- Sidebar -->
+    <aside class="vcms-sidebar">
+        <div class="vcms-logo">
+            <h1>Velo<span>CMS</span></h1>
+        </div>
+        <nav class="vcms-nav">
+            <a href="/admin/dashboard" class="<?= ($page ?? '') === 'dashboard' ? 'active' : '' ?>">
+                Dashboard
+            </a>
+            <a href="/admin/sites" class="<?= ($page ?? '') === 'sites' ? 'active' : '' ?>">
+                Sites
+            </a>
+            <a href="/admin/users" class="<?= ($page ?? '') === 'users' ? 'active' : '' ?>">
+                Users
+            </a>
+            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">
+                Settings
+            </a>
+        </nav>
+        <div class="vcms-sidebar-footer">
+            VeloCMS v0.1.0
+        </div>
+    </aside>
+
+    <!-- Main area -->
+    <div class="vcms-main">
+        <div class="vcms-topbar">
+            <h2><?= e(ucfirst($page ?? 'Admin')) ?></h2>
+            <div class="vcms-topbar-user">
+                <span><?= e($user['name'] ?? '') ?></span>
+                <span class="vcms-role-badge"><?= e($user['role'] ?? '') ?></span>
+                <a href="/admin/logout">Sign out</a>
+            </div>
+        </div>
+        <div class="vcms-content">
+            <?= $content ?? '' ?>
+        </div>
+    </div>
+
+</div>
+</body>
+</html>
+"""
+
+# ── admin/views/dashboard.php ────────────────────────────────────────────────
+files['admin/views/dashboard.php'] = r"""<div class="vcms-welcome">
+    <h2>Welcome back, <?= e($user['name'] ?? 'Admin') ?>.</h2>
+    <p>Here is an overview of your VeloCMS installation.</p>
+</div>
+
+<div class="vcms-cards-grid">
+    <div class="vcms-card">
+        <h3>Active Sites</h3>
+        <div class="value"><?= (int) $siteCount ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3>Users</h3>
+        <div class="value"><?= (int) $userCount ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3>PHP Version</h3>
+        <div class="value value--sm"><?= e($phpVersion) ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3>CMS Version</h3>
+        <div class="value value--sm"><?= e($cmsVersion) ?></div>
+    </div>
+</div>
+
+<div class="vcms-card">
+    <h3>Next Steps</h3>
+    <ul class="vcms-checklist">
+        <li>Provision your first site: <code>php cli/velocms site:create --domain=yoursite.com</code></li>
+        <li>Add an Nginx server block for the site</li>
+        <li>Configure a domain or DNS record pointing to this server</li>
+        <li>Enable HTTPS with Let&apos;s Encrypt: <code>certbot --nginx</code></li>
+    </ul>
+</div>
+"""
+
+# ── public/assets/admin/style.css ────────────────────────────────────────────
+files['public/assets/admin/style.css'] = r""":root {
+    --sidebar-w:      240px;
+    --sidebar-bg:     #1a1f2e;
+    --sidebar-text:   #8892a4;
+    --sidebar-hover:  rgba(255, 255, 255, 0.06);
+    --accent:         #4f6ef7;
+    --accent-dark:    #3d5ce6;
+    --content-bg:     #f4f6fb;
+    --card-bg:        #ffffff;
+    --text-primary:   #1a1f2e;
+    --text-secondary: #6b7280;
+    --border:         #e5e7eb;
+    --danger:         #ef4444;
+    --danger-light:   #fef2f2;
+    --danger-border:  #fecaca;
+    --success:        #16a34a;
+    --success-light:  #f0fdf4;
+    --success-border: #bbf7d0;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    color: var(--text-primary);
+    background: var(--content-bg);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── App layout ────────────────────────────────────────────────────────────── */
+.vcms-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+.vcms-sidebar {
+    width: var(--sidebar-w);
+    background: var(--sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.vcms-logo {
+    padding: 22px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.vcms-logo h1 {
+    font-size: 19px;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -0.02em;
+}
+.vcms-logo span { color: var(--accent); }
+
+.vcms-nav {
+    padding: 12px 0;
+    flex: 1;
+}
+.vcms-nav a {
+    display: block;
+    padding: 10px 20px;
+    color: var(--sidebar-text);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    border-left: 3px solid transparent;
+    transition: color 0.15s, background 0.15s;
+}
+.vcms-nav a:hover {
+    color: #ffffff;
+    background: var(--sidebar-hover);
+}
+.vcms-nav a.active {
+    color: #ffffff;
+    background: var(--sidebar-hover);
+    border-left-color: var(--accent);
+}
+
+.vcms-sidebar-footer {
+    padding: 14px 20px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.25);
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Main area ─────────────────────────────────────────────────────────────── */
+.vcms-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+/* ── Topbar ────────────────────────────────────────────────────────────────── */
+.vcms-topbar {
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.vcms-topbar h2 {
+    font-size: 15px;
+    font-weight: 600;
+}
+.vcms-topbar-user {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.vcms-topbar-user a {
+    color: var(--danger);
+    text-decoration: none;
+    font-weight: 500;
+}
+.vcms-topbar-user a:hover { text-decoration: underline; }
+
+.vcms-role-badge {
+    background: var(--content-bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* ── Content area ──────────────────────────────────────────────────────────── */
+.vcms-content {
+    padding: 28px;
+    flex: 1;
+}
+
+/* ── Welcome ───────────────────────────────────────────────────────────────── */
+.vcms-welcome {
+    margin-bottom: 24px;
+}
+.vcms-welcome h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.vcms-welcome p {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+/* ── Cards ─────────────────────────────────────────────────────────────────── */
+.vcms-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.vcms-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px;
+}
+.vcms-card h3 {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+}
+.vcms-card .value {
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--text-primary);
+    line-height: 1;
+}
+.vcms-card .value--sm {
+    font-size: 22px;
+}
+
+/* ── Checklist ─────────────────────────────────────────────────────────────── */
+.vcms-checklist {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 12px;
+}
+.vcms-checklist li {
+    font-size: 14px;
+    color: var(--text-secondary);
+    padding-left: 18px;
+    position: relative;
+}
+.vcms-checklist li::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 700;
+}
+.vcms-checklist code {
+    background: var(--content-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: var(--accent);
+}
+
+/* ── Alerts ────────────────────────────────────────────────────────────────── */
+.vcms-alert {
+    padding: 12px 16px;
+    border-radius: 7px;
+    font-size: 14px;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+.vcms-alert-error {
+    background: var(--danger-light);
+    border: 1px solid var(--danger-border);
+    color: #b91c1c;
+}
+.vcms-alert-success {
+    background: var(--success-light);
+    border: 1px solid var(--success-border);
+    color: var(--success);
+}
+
+/* ── Login page ────────────────────────────────────────────────────────────── */
+.vcms-login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--content-bg);
+    padding: 24px;
+}
+.vcms-login-box {
+    width: 100%;
+    max-width: 380px;
+}
+.vcms-login-logo {
+    text-align: center;
+    margin-bottom: 32px;
+}
+.vcms-login-logo h1 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+}
+.vcms-login-logo span { color: var(--accent); }
+.vcms-login-logo p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+}
+
+/* ── Forms ─────────────────────────────────────────────────────────────────── */
+.vcms-form {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 30px;
+}
+.vcms-form .field { margin-bottom: 18px; }
+.vcms-form label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.vcms-form input[type="email"],
+.vcms-form input[type="password"],
+.vcms-form input[type="text"] {
+    width: 100%;
+    padding: 10px 13px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 15px;
+    color: var(--text-primary);
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.vcms-form input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,110,247,0.12);
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    transition: background 0.15s, transform 0.1s;
+}
+.btn-primary {
+    background: var(--accent);
+    color: #ffffff;
+    width: 100%;
+    text-align: center;
+    padding: 12px;
+    font-size: 15px;
+}
+.btn-primary:hover { background: var(--accent-dark); }
+.btn-primary:active { transform: scale(0.99); }
+"""
+
+# Write all files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nBatch 2 done.')

@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Update RESUME.md and SESSION_LOG.md for Session 16"""
+import subprocess
+
+BASE = '/var/www/velocms'
+
+def read(rel):
+    with open(BASE + '/' + rel, encoding='utf-8') as f:
+        return f.read()
+
+def write(rel, content):
+    with open(BASE + '/' + rel, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote {rel}')
+
+# ── Update RESUME.md ──────────────────────────────────────────────────────────
+resume = read('RESUME.md')
+
+old_session = '### What was last done (Session 15)'
+new_session = '### What was last done (Session 16)'
+
+old_done = """- **Price inputs**: `pkg_price` and `prod_price` inputs in Settings and Resource form get `inputmode="decimal"` for direct keyboard entry on mobile
+- **Daily date validation**: `validateDailyDates()` in create.php sets checkout `min` immediately when checkin changes (not just inside updateDailySummary); inline error + submit disabled if checkout ≤ checkin; edit.php daily section also validates and blocks submit
+- **15-minute time selects**: `<input type="time">` replaced with `<select>` showing 00:00–23:45 in 15-min steps; applied to create.php (b-start/b-end) and edit.php (edit-start/edit-end) with pre-selection of existing value; `.min` setter removed from select-based validation; `togglePricingFields()` resets submit button on type switch
+- **Booking Core COMPLETE** — all core booking features frozen; moving to next module"""
+
+new_done = """- **Translation system implemented** (Session 16)
+- **DB**: `translations` table in `velocms_core` (lang, trans_key, value, auto_translated) seeded with 20 nav/UI key pairs (DE + EN)
+- **core/I18n.php**: singleton class, cookie-based language detection (de/en), lazy DB load, `t(key)` with fallback chain: current lang → de → key
+- **core/helpers.php**: `t(string $key, array $replace = []): string` and `lang(): string` global helpers
+- **core/bootstrap.php**: I18n registered as singleton (wired to Database::core())
+- **modules/i18n/**: Translation model (groupedByKey, set, deleteByKey, missingForLang), Translator (Anthropic API, claude-haiku), I18nAdminController (index, save, update, delete, translateSingle, translateBulk, seedDefaults, saveApiKey)
+- **Admin UI**: /admin/translations — list all keys with inline click-to-edit DE/EN; per-row ✦ Auto button; Bulk Auto-Translate button; API key config; Seed Defaults button; search/filter
+- **admin/views/layout.php**: DE|EN toggle in topbar; all sidebar nav links use t() + data-i18n; translations JSON injected as window.__VCMS_I18N__; i18n.js loaded
+- **Frontend**: floating DE|EN toggle (bottom-right); translations JSON injected; i18n.js loaded
+- **public/assets/admin/i18n.js** + **public/assets/i18n.js**: language toggle JS, applies data-i18n swaps instantly, sets cookie + localStorage, exposes window.t()
+- **admin/routes.php**: 8 translation routes added
+- **composer.json**: VeloCMS\\Modules\\I18n\\ namespaces added + dump-autoload ran
+- Migration: `migrations/i18n/001_create_translations_table.php` ran ✓
+- PHPUnit: 23/23"""
+
+old_next = """### Priority 1 — Users module admin UI
+- [ ] List all users (table with email, role, status, last login)
+- [ ] Create user form (email, name, role, password)
+- [ ] Edit user (name, role, active/inactive toggle)
+- [ ] Deactivate user (soft delete via deleted_at)
+- Note: user:create CLI command already exists; this is the browser UI"""
+
+new_next = """### Priority 1 — Users module admin UI
+- [ ] List all users (table with email, role, status, last login)
+- [ ] Create user form (email, name, role, password)
+- [ ] Edit user (name, role, active/inactive toggle)
+- [ ] Deactivate user (soft delete via deleted_at)
+- Note: user:create CLI command already exists; this is the browser UI
+
+### Translation system — done ✓ (Session 16)
+- Set Anthropic API key in Admin → Translations → API key field
+- Click Seed Defaults to repopulate nav/UI translations
+- Use Bulk Auto-Translate to fill any missing EN entries
+- New code: use t('key') in PHP, window.t('key') in JS, data-i18n="key" on elements"""
+
+old_gotchas = "- Booking module is **disabled by default** — enable in Admin → Settings → Booking tab"
+new_gotchas = """- Booking module is **disabled by default** — enable in Admin → Settings → Booking tab
+- Translation system uses `velocms_core.translations` table — language cookie `vcms_lang` (de|en)
+- t() helper falls back: current lang → de → key itself (never throws)
+- Anthropic API key stored in settings table (module: i18n, key: anthropic_api_key)
+- Auto-translation uses claude-haiku-4-5-20251001; 300ms delay between bulk calls"""
+
+resume = (resume
+    .replace('### What was last done (Session 15)', '### What was last done (Session 16)')
+    .replace(old_done, new_done)
+    .replace('**Date of last update:** 2026-05-19\n**Phase:** Booking Settings UI complete (Session 10)',
+             '**Date of last update:** 2026-05-19\n**Phase:** Translation system complete (Session 16)')
+    .replace(old_next, new_next)
+    .replace(old_gotchas, new_gotchas)
+)
+write('RESUME.md', resume)
+
+# ── Append to SESSION_LOG.md ──────────────────────────────────────────────────
+session_entry = """
+---
+
+## Session 16 — Translation system (i18n)
+**Date:** 2026-05-19
+**Built / Done:**
+- **migrations/i18n/001_create_translations_table.php**: `translations` table (lang, trans_key, value, auto_translated, timestamps) + seed of 20 nav/UI key pairs (DE + EN)
+- **core/I18n.php**: cookie-based language detection (`vcms_lang`), lazy PDO load, `t(key, replace[])` with fallback chain (lang → de → key)
+- **core/helpers.php**: `t()` and `lang()` global helpers added
+- **core/bootstrap.php**: I18n registered as singleton after Database
+- **modules/i18n/models/Translation.php**: `set`, `deleteByKey`, `missingForLang`, `groupedByKey` (with search)
+- **modules/i18n/Translator.php**: Anthropic API wrapper (claude-haiku-4-5-20251001), DE → EN translation
+- **modules/i18n/admin/controllers/I18nAdminController.php**: index, save, update (inline AJAX), delete, translateSingle (AJAX), translateBulk, seedDefaults, saveApiKey
+- **admin/views/i18n/index.php**: table of all keys with inline click-to-edit DE/EN, per-row ✦ Auto button, Bulk Auto-Translate, API key config, Seed Defaults, search filter
+- **admin/views/layout.php**: DE|EN toggle in topbar; all sidebar links use t() + data-i18n; translations JSON injected as window.__VCMS_I18N__; i18n.js loaded
+- **themes/default/layouts/main.php**: floating DE|EN toggle; translations JSON injected; i18n.js loaded
+- **public/assets/admin/i18n.js** + **public/assets/i18n.js**: no-reload toggle, applies data-i18n swaps, cookie + localStorage, window.t()
+- **admin/routes.php**: 8 translation routes added
+- **composer.json**: I18n namespaces registered; dump-autoload ran
+- PHPUnit: 23/23
+- Commit: (see git log)
+"""
+with open(BASE + '/SESSION_LOG.md', 'a', encoding='utf-8') as f:
+    f.write(session_entry)
+print('  appended SESSION_LOG.md')
+
+# ── Update masterplan ──────────────────────────────────────────────────────────
+masterplan = read('VELOCMS_MASTERPLAN.md')
+masterplan = masterplan.replace(
+    '### Phase 7 -- Booking Module (COMPLETE)',
+    """### Phase 8 -- Translation / i18n (COMPLETE — Session 16)
+- [x] `translations` table in velocms_core with seed defaults
+- [x] `core/I18n.php` — singleton, cookie-based lang detection, lazy load, t() fallback chain
+- [x] `t()` and `lang()` global helpers in core/helpers.php
+- [x] I18n registered as bootstrap singleton
+- [x] Translation model + Anthropic Translator (claude-haiku)
+- [x] Admin UI: /admin/translations — inline edit, auto-translate, bulk translate, seed defaults
+- [x] Admin layout: DE|EN topbar toggle, all nav links use t() + data-i18n, translations JSON injected
+- [x] Frontend: floating DE|EN toggle, translations JSON injected, i18n.js
+- [x] No-reload JS toggle (data-i18n swap, cookie + localStorage)
+- [x] PHPUnit: 23/23
+
+### Phase 7 -- Booking Module (COMPLETE)"""
+)
+write('VELOCMS_MASTERPLAN.md', masterplan)
+
+print('\nAll docs updated.')

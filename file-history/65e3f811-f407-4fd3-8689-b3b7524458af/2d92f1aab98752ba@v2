@@ -1,0 +1,658 @@
+#!/usr/bin/env python3
+"""
+i18n fix: Option B (reload) + simplified Translations admin + pending-only translation.
+
+Changes:
+1. public/assets/i18n.js         — setLang() now reloads the page
+2. public/assets/admin/i18n.js   — same
+3. modules/i18n/models/Translation.php  — add getPending(), countPending(), countByLang()
+4. modules/i18n/admin/controllers/I18nAdminController.php — counts in index(), use getPending() in retranslateAll()
+5. admin/views/i18n/index.php    — remove monitoring table, show counter + "Translate all pending"
+"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    path = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── 1. public/assets/i18n.js ─────────────────────────────────────────────────
+write('public/assets/i18n.js', r"""'use strict';
+/* VeloCMS i18n — language selection via cookie + page reload */
+(function () {
+    const COOKIE = 'vcms_lang';
+    const LANGS  = ['de', 'en'];
+
+    function markActive(lang) {
+        document.querySelectorAll('[data-lang-toggle]').forEach(function (btn) {
+            const active = btn.dataset.lang === lang;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        window.__VCMS_LANG__ = lang;
+    }
+
+    function setLang(lang) {
+        if (!LANGS.includes(lang)) return;
+        document.cookie = COOKIE + '=' + lang + ';path=/;max-age=31536000;SameSite=Lax';
+        try { localStorage.setItem(COOKIE, lang); } catch (_) {}
+        location.reload();
+    }
+
+    // Mark the currently active language button on page load
+    markActive(window.__VCMS_LANG__ || 'de');
+
+    document.querySelectorAll('[data-lang-toggle]').forEach(function (btn) {
+        btn.addEventListener('click', function () { setLang(btn.dataset.lang); });
+    });
+
+    window.vcmsI18n = { setLang: setLang };
+    // window.t() — client-side translation lookup (for JS that renders strings)
+    window.t = function (key) {
+        const lang = window.__VCMS_LANG__ || 'de';
+        return (((window.__VCMS_I18N__ || {})[lang]) || {})[key] || key;
+    };
+}());
+""")
+
+# ── 2. public/assets/admin/i18n.js ───────────────────────────────────────────
+write('public/assets/admin/i18n.js', r"""'use strict';
+/* VeloCMS admin i18n — language selection via cookie + page reload */
+(function () {
+    const COOKIE = 'vcms_lang';
+    const LANGS  = ['de', 'en'];
+
+    function markActive(lang) {
+        document.querySelectorAll('[data-lang-toggle]').forEach(function (btn) {
+            const active = btn.dataset.lang === lang;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        window.__VCMS_LANG__ = lang;
+    }
+
+    function setLang(lang) {
+        if (!LANGS.includes(lang)) return;
+        document.cookie = COOKIE + '=' + lang + ';path=/;max-age=31536000;SameSite=Lax';
+        try { localStorage.setItem(COOKIE, lang); } catch (_) {}
+        location.reload();
+    }
+
+    markActive(window.__VCMS_LANG__ || 'de');
+
+    document.querySelectorAll('[data-lang-toggle]').forEach(function (btn) {
+        btn.addEventListener('click', function () { setLang(btn.dataset.lang); });
+    });
+
+    window.vcmsI18n = { setLang: setLang };
+    window.t = function (key) {
+        const lang = window.__VCMS_LANG__ || 'de';
+        return (((window.__VCMS_I18N__ || {})[lang]) || {})[key] || key;
+    };
+}());
+""")
+
+# ── 3. modules/i18n/models/Translation.php ───────────────────────────────────
+write('modules/i18n/models/Translation.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\I18n\Models;
+
+class Translation
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    /** Insert or update a translation. Does NOT change manual_override on existing rows. */
+    public function set(string $lang, string $key, string $value, bool $auto = false): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO translations (lang, trans_key, value, auto_translated, manual_override)
+             VALUES (?, ?, ?, ?, 0)
+             ON DUPLICATE KEY UPDATE value = VALUES(value),
+             auto_translated = VALUES(auto_translated), updated_at = NOW()'
+        )->execute([$lang, $key, $value, $auto ? 1 : 0]);
+    }
+
+    /** Mark a translation as manually overridden — never re-translated by auto. */
+    public function setWithManualOverride(string $lang, string $key, string $value): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO translations (lang, trans_key, value, auto_translated, manual_override)
+             VALUES (?, ?, ?, 0, 1)
+             ON DUPLICATE KEY UPDATE value = VALUES(value),
+             auto_translated = 0, manual_override = 1, updated_at = NOW()'
+        )->execute([$lang, $key, $value]);
+    }
+
+    /** Delete all language entries for a key. */
+    public function deleteByKey(string $key): void
+    {
+        $this->pdo->prepare('DELETE FROM translations WHERE trans_key = ?')->execute([$key]);
+    }
+
+    /**
+     * Return DE keys that have NO entry at all for $lang (truly pending).
+     */
+    public function getPending(string $lang): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.trans_key, d.value AS de_value
+             FROM translations d
+             WHERE d.lang = "de"
+               AND NOT EXISTS (
+                   SELECT 1 FROM translations e
+                   WHERE e.lang = ? AND e.trans_key = d.trans_key
+               )
+             ORDER BY d.trans_key'
+        );
+        $stmt->execute([$lang]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /** Count pending keys: DE exists but $lang does not. */
+    public function countPending(string $lang): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM translations d WHERE d.lang = "de"
+              AND NOT EXISTS (
+                  SELECT 1 FROM translations e WHERE e.lang = ? AND e.trans_key = d.trans_key
+              )'
+        );
+        $stmt->execute([$lang]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** Count all translations for a given language. */
+    public function countByLang(string $lang): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM translations WHERE lang = ?');
+        $stmt->execute([$lang]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * Return DE keys that can be auto-translated to $lang:
+     * those without ANY manual_override $lang entry.
+     * Used by retranslateAll (refresh auto entries).
+     */
+    public function getAutoTranslateable(string $lang): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.trans_key, d.value AS de_value
+             FROM translations d
+             WHERE d.lang = "de"
+             AND d.trans_key NOT IN (
+                 SELECT trans_key FROM translations
+                 WHERE lang = ? AND manual_override = 1
+             )
+             ORDER BY d.trans_key'
+        );
+        $stmt->execute([$lang]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /** Count manual override entries for a language. */
+    public function countManualOverrides(string $lang): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM translations WHERE lang = ? AND manual_override = 1'
+        );
+        $stmt->execute([$lang]);
+        return (int) $stmt->fetchColumn();
+    }
+}
+""")
+
+# ── 4. modules/i18n/admin/controllers/I18nAdminController.php ────────────────
+write('modules/i18n/admin/controllers/I18nAdminController.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\I18n\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\I18n\Models\Translation;
+use VeloCMS\Modules\I18n\Translator;
+use VeloCMS\Modules\Settings\Models\Setting;
+
+class I18nAdminController extends BaseController
+{
+    private const DEFAULTS = [
+        'nav.dashboard'    => ['Übersicht',          'Dashboard'],
+        'nav.booking'      => ['Buchungen',           'Booking'],
+        'nav.pages'        => ['Seiten',              'Pages'],
+        'nav.blog'         => ['Blog',                'Blog'],
+        'nav.media'        => ['Medien',              'Media'],
+        'nav.navigation'   => ['Navigation',          'Navigation'],
+        'nav.seo'          => ['SEO',                 'SEO'],
+        'nav.forms'        => ['Formulare',           'Forms'],
+        'nav.sites'        => ['Websites',            'Sites'],
+        'nav.users'        => ['Benutzer',            'Users'],
+        'nav.api_keys'     => ['API-Schlüssel',       'API Keys'],
+        'nav.audit_log'    => ['Audit-Protokoll',     'Audit Log'],
+        'nav.cron_jobs'    => ['Cron-Jobs',           'Cron Jobs'],
+        'nav.settings'     => ['Einstellungen',       'Settings'],
+        'nav.translations' => ['Übersetzungen',       'Translations'],
+        'nav.profile'      => ['Profil',              'Profile'],
+        'nav.signout'      => ['Abmelden',            'Sign out'],
+        'nav.content'      => ['Inhalt',              'Content'],
+        'nav.system'       => ['System',              'System'],
+        'btn.save'         => ['Speichern',           'Save'],
+        'btn.cancel'       => ['Abbrechen',           'Cancel'],
+        'btn.delete'       => ['Löschen',             'Delete'],
+        'btn.edit'         => ['Bearbeiten',          'Edit'],
+        'btn.create'       => ['Erstellen',           'Create'],
+        'btn.back'         => ['Zurück',              'Back'],
+        'label.search'     => ['Suchen',              'Search'],
+        'label.status'     => ['Status',              'Status'],
+        'label.actions'    => ['Aktionen',            'Actions'],
+        'label.name'       => ['Name',                'Name'],
+        'label.email'      => ['E-Mail',              'Email'],
+        'label.role'       => ['Rolle',               'Role'],
+        'label.created'    => ['Erstellt',            'Created'],
+        'label.updated'    => ['Aktualisiert',        'Updated'],
+        'settings.site'    => ['Website',             'Site'],
+        'settings.email'   => ['E-Mail',              'Email'],
+        'settings.booking' => ['Buchung',             'Booking'],
+    ];
+
+    public function index(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $model   = new Translation($pdo);
+        $setting = new Setting($pdo);
+
+        $provider    = $setting->get('i18n', 'provider',          'anthropic');
+        $togglePos   = $setting->get('i18n', 'toggle_position',   'bottom-right');
+        $hasAnthropicKey = $setting->get('i18n', 'anthropic_api_key', '') !== '';
+        $hasDeeplKey     = $setting->get('i18n', 'deepl_api_key',     '') !== '';
+
+        $totalDe   = $model->countByLang('de');
+        $totalEn   = $model->countByLang('en');
+        $pendingEn = $model->countPending('en');
+
+        return $this->layout('i18n/index.php', [
+            'user'            => $auth->user(),
+            'page'            => 'translations',
+            'provider'        => $provider,
+            'togglePos'       => $togglePos,
+            'hasAnthropicKey' => $hasAnthropicKey,
+            'hasDeeplKey'     => $hasDeeplKey,
+            'totalDe'         => $totalDe,
+            'totalEn'         => $totalEn,
+            'pendingEn'       => $pendingEn,
+            'csrf'            => $auth->csrfToken(),
+            'flash'           => $_SESSION['_flash']       ?? null,
+            'flashError'      => $_SESSION['_flash_error'] ?? null,
+        ]);
+    }
+
+    /** Inline edit (AJAX) — marks EN edits as manual_override. */
+    public function update(Request $request, array $params): Response
+    {
+        $auth   = $this->auth();
+        $auth->requireLogin();
+        $isAjax = $request->header('X-Requested-With') === 'XMLHttpRequest';
+
+        if (!$auth->verifyCsrf()) {
+            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);
+            return $this->redirect('/admin/translations');
+        }
+
+        $lang = $request->post('lang', '');
+        $key  = trim($request->post('key', ''));
+        $val  = trim($request->post('value', ''));
+
+        if (!in_array($lang, ['de', 'en'], true) || $key === '') {
+            if ($isAjax) return (new Response())->json(['ok' => false]);
+            return $this->redirect('/admin/translations');
+        }
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Translation($pdo);
+
+        if ($lang === 'en') {
+            $model->setWithManualOverride($lang, $key, $val);
+        } else {
+            $model->set($lang, $key, $val);
+        }
+
+        if ($isAjax) return (new Response())->json(['ok' => true]);
+        $_SESSION['_flash'] = 'Translation updated.';
+        return $this->redirect('/admin/translations');
+    }
+
+    public function delete(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $key = trim($request->post('key', ''));
+        if ($key !== '') {
+            (new Translation($this->app->make(Database::class)->core()))->deleteByKey($key);
+        }
+
+        $_SESSION['_flash'] = 'Translation deleted.';
+        return $this->redirect('/admin/translations');
+    }
+
+    /** Per-row auto-translate button (AJAX). Still available via direct API. */
+    public function translateSingle(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $key  = trim($request->post('key', ''));
+        $text = trim($request->post('text', ''));
+        $lang = trim($request->post('lang', 'en'));
+
+        if ($key === '' || $text === '') {
+            return (new Response())->json(['ok' => false, 'error' => 'Missing key or text']);
+        }
+
+        $pdo        = $this->app->make(Database::class)->core();
+        $translated = $this->callTranslate($pdo, $text, $lang);
+
+        if ($translated === '') {
+            return (new Response())->json([
+                'ok'    => false,
+                'error' => 'Translation failed — check API key in settings.',
+            ]);
+        }
+
+        (new Translation($pdo))->set($lang, $key, $translated, true);
+        return (new Response())->json(['ok' => true, 'translation' => $translated]);
+    }
+
+    /**
+     * Translate all PENDING keys (DE exists, no EN entry at all).
+     * Manual overrides are never touched.
+     */
+    public function retranslateAll(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        set_time_limit(120);
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $model   = new Translation($pdo);
+        $pending = $model->getPending('en');
+
+        $count = 0; $errors = 0;
+        foreach ($pending as $row) {
+            $translated = $this->callTranslate($pdo, $row['de_value'], 'en');
+            if ($translated !== '') {
+                $model->set('en', $row['trans_key'], $translated, true);
+                $count++;
+            } else {
+                $errors++;
+            }
+            usleep(150000); // 150 ms between API calls
+        }
+
+        return (new Response())->json([
+            'ok'         => true,
+            'translated' => $count,
+            'total'      => count($pending),
+            'errors'     => $errors,
+        ]);
+    }
+
+    public function seedDefaults(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Translation($pdo);
+        foreach (self::DEFAULTS as $key => [$de, $en]) {
+            $model->set('de', $key, $de);
+            $model->set('en', $key, $en);
+        }
+
+        $_SESSION['_flash'] = count(self::DEFAULTS) . ' default translations seeded.';
+        return $this->redirect('/admin/translations');
+    }
+
+    public function saveSettings(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $setting = new Setting($pdo);
+
+        $provider = $request->post('provider', 'anthropic');
+        if (in_array($provider, ['anthropic', 'deepl'], true)) {
+            $setting->set('i18n', 'provider', $provider);
+        }
+
+        $togglePos = $request->post('toggle_position', 'bottom-right');
+        if (in_array($togglePos, ['bottom-right', 'top-right', 'hidden'], true)) {
+            $setting->set('i18n', 'toggle_position', $togglePos);
+        }
+
+        $anthropicKey = trim($request->post('anthropic_api_key', ''));
+        if ($anthropicKey !== '' && !str_starts_with($anthropicKey, '**')) {
+            $setting->set('i18n', 'anthropic_api_key', $anthropicKey);
+        }
+
+        $deeplKey = trim($request->post('deepl_api_key', ''));
+        if ($deeplKey !== '' && !str_starts_with($deeplKey, '**')) {
+            $setting->set('i18n', 'deepl_api_key', $deeplKey);
+        }
+
+        $_SESSION['_flash'] = 'Translation settings saved.';
+        return $this->redirect('/admin/translations');
+    }
+
+    private function callTranslate(\PDO $pdo, string $text, string $toLang): string
+    {
+        $setting  = new Setting($pdo);
+        $provider = $setting->get('i18n', 'provider', 'anthropic');
+        $apiKey   = $provider === 'deepl'
+            ? $setting->get('i18n', 'deepl_api_key',     '')
+            : $setting->get('i18n', 'anthropic_api_key', '');
+
+        if ($apiKey === '') return '';
+        try {
+            return (new Translator($provider, $apiKey))->translate($text, $toLang);
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+}
+""")
+
+# ── 5. admin/views/i18n/index.php ────────────────────────────────────────────
+write('admin/views/i18n/index.php', r"""<?php
+$flash      = $flash      ?? null;
+$flashError = $flashError ?? null;
+unset($_SESSION['_flash'], $_SESSION['_flash_error']);
+$provider        = $provider        ?? 'anthropic';
+$togglePos       = $togglePos       ?? 'bottom-right';
+$hasAnthropicKey = $hasAnthropicKey ?? false;
+$hasDeeplKey     = $hasDeeplKey     ?? false;
+$totalDe         = $totalDe         ?? 0;
+$totalEn         = $totalEn         ?? 0;
+$pendingEn       = $pendingEn       ?? 0;
+$hasApiKey       = ($provider === 'deepl' ? $hasDeeplKey : $hasAnthropicKey);
+?>
+<div class="vcms-page-header">
+    <h2><?= t('nav.translations','Übersetzungen') ?></h2>
+</div>
+
+<?php if ($flash): ?>
+<div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+<?php if ($flashError): ?>
+<div class="vcms-alert vcms-alert--error"><?= e($flashError) ?></div>
+<?php endif ?>
+
+<!-- Provider & API keys -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1.25rem"><?= t('i18n.settings_title','Übersetzungseinstellungen') ?></h4>
+    <form method="post" action="/admin/translations/settings">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.25rem">
+            <div style="flex:1;min-width:200px">
+                <label style="display:block;font-size:.8rem;color:#6b7280;margin-bottom:.5rem;font-weight:600">
+                    <?= t('i18n.provider','Übersetzungsanbieter') ?>
+                </label>
+                <div style="display:flex;gap:1rem">
+                    <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="radio" name="provider" value="anthropic"
+                               <?= $provider === 'anthropic' ? 'checked' : '' ?>>
+                        <span>Claude (Anthropic)</span>
+                        <?php if ($hasAnthropicKey): ?>
+                            <span class="i18n-badge i18n-badge--ok">&#10003; <?= t('i18n.key_set','aktiv') ?></span>
+                        <?php endif ?>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                        <input type="radio" name="provider" value="deepl"
+                               <?= $provider === 'deepl' ? 'checked' : '' ?>>
+                        <span>DeepL</span>
+                        <?php if ($hasDeeplKey): ?>
+                            <span class="i18n-badge i18n-badge--ok">&#10003; <?= t('i18n.key_set','aktiv') ?></span>
+                        <?php endif ?>
+                    </label>
+                </div>
+            </div>
+
+            <div style="flex:1;min-width:180px">
+                <label for="toggle-pos" style="display:block;font-size:.8rem;color:#6b7280;margin-bottom:.5rem;font-weight:600">
+                    <?= t('i18n.toggle_position','Sprachumschalter-Position (Frontend)') ?>
+                </label>
+                <select name="toggle_position" id="toggle-pos">
+                    <option value="bottom-right" <?= $togglePos === 'bottom-right' ? 'selected' : '' ?>><?= t('i18n.pos_bottom_right','Unten rechts (Standard)') ?></option>
+                    <option value="top-right"    <?= $togglePos === 'top-right'    ? 'selected' : '' ?>><?= t('i18n.pos_top_right','Oben rechts') ?></option>
+                    <option value="hidden"       <?= $togglePos === 'hidden'       ? 'selected' : '' ?>><?= t('i18n.pos_hidden','Ausgeblendet') ?></option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1.25rem">
+            <label style="display:flex;flex-direction:column;gap:.3rem;flex:1;min-width:220px">
+                <span style="font-size:.8rem;color:#6b7280">
+                    <?= t('i18n.anthropic_key','Anthropic API-Schlüssel') ?>
+                    <?= $hasAnthropicKey ? '<span class="i18n-badge i18n-badge--ok">&#10003; '.t('i18n.configured','konfiguriert').'</span>' : '' ?>
+                </span>
+                <input type="password" name="anthropic_api_key"
+                       placeholder="<?= $hasAnthropicKey ? t('i18n.paste_to_replace','Neuen Schlüssel einfügen zum Ersetzen') : 'sk-ant-...' ?>">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:.3rem;flex:1;min-width:220px">
+                <span style="font-size:.8rem;color:#6b7280">
+                    <?= t('i18n.deepl_key','DeepL API-Schlüssel') ?>
+                    <?= $hasDeeplKey ? '<span class="i18n-badge i18n-badge--ok">&#10003; '.t('i18n.configured','konfiguriert').'</span>' : '' ?>
+                </span>
+                <input type="password" name="deepl_api_key"
+                       placeholder="<?= $hasDeeplKey ? t('i18n.paste_to_replace','Neuen Schlüssel einfügen zum Ersetzen') : 'xxxxxxxx:fx' ?>">
+                <small style="color:#9ca3af"><?= t('i18n.deepl_hint','Kostenlose Schlüssel enden auf :fx') ?></small>
+            </label>
+        </div>
+
+        <button class="vcms-btn vcms-btn--primary" type="submit"><?= t('btn.save','Speichern') ?></button>
+    </form>
+</div>
+
+<!-- Status + Translate -->
+<div class="vcms-card">
+    <h4 style="margin:0 0 1.25rem"><?= t('i18n.status_title','Übersetzungsstatus') ?></h4>
+
+    <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-bottom:1.5rem">
+        <div class="i18n-stat">
+            <div class="i18n-stat__num"><?= $totalDe ?></div>
+            <div class="i18n-stat__label"><?= t('i18n.stat_registered','DE-Schlüssel registriert') ?></div>
+        </div>
+        <div class="i18n-stat">
+            <div class="i18n-stat__num" style="color:<?= $totalEn > 0 ? '#16a34a' : '#6b7280' ?>"><?= $totalEn ?></div>
+            <div class="i18n-stat__label"><?= t('i18n.stat_translated','EN-Übersetzungen vorhanden') ?></div>
+        </div>
+        <div class="i18n-stat">
+            <div class="i18n-stat__num" style="color:<?= $pendingEn > 0 ? '#d97706' : '#16a34a' ?>"><?= $pendingEn ?></div>
+            <div class="i18n-stat__label"><?= t('i18n.stat_pending','Ausstehend (kein EN)') ?></div>
+        </div>
+    </div>
+
+    <?php if ($pendingEn > 0): ?>
+    <?php if (!$hasApiKey): ?>
+    <div class="vcms-alert vcms-alert--error" style="margin-bottom:1rem">
+        <?= t('i18n.no_api_key_warning','Kein API-Schlüssel für den gewählten Anbieter konfiguriert. Bitte oben einen Schlüssel eintragen.') ?>
+    </div>
+    <?php endif ?>
+    <button class="vcms-btn vcms-btn--primary" id="btn-translate-pending" type="button"
+            <?= !$hasApiKey ? 'disabled' : '' ?>>
+        <?= t('i18n.translate_pending','Alle ausstehenden übersetzen') ?> (<?= $pendingEn ?>)
+    </button>
+    <?php else: ?>
+    <div class="vcms-alert vcms-alert--success" style="margin-bottom:0">
+        <?= t('i18n.all_translated','Alle Schlüssel sind übersetzt.') ?> &#10003;
+    </div>
+    <?php endif ?>
+
+    <div style="margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid #f1f5f9;display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+        <form method="post" action="/admin/translations/seed" style="display:inline">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <button class="vcms-btn vcms-btn--secondary" type="submit">
+                <?= t('i18n.seed_defaults','Standard-Übersetzungen laden') ?>
+            </button>
+        </form>
+        <small style="color:#9ca3af">
+            <?= t('i18n.seed_hint','Lädt Navigation und UI-Strings für DE und EN.') ?>
+        </small>
+    </div>
+</div>
+
+<style>
+.i18n-stat{text-align:center;min-width:100px}
+.i18n-stat__num{font-size:2rem;font-weight:700;line-height:1;color:#111827}
+.i18n-stat__label{font-size:.8rem;color:#6b7280;margin-top:.25rem}
+.i18n-badge{display:inline-block;font-size:.7rem;padding:.15rem .4rem;border-radius:3px;font-weight:600;margin-left:.3rem}
+.i18n-badge--ok{background:#d1fae5;color:#065f46}
+</style>
+
+<script>
+const I18N_CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+
+document.getElementById('btn-translate-pending')?.addEventListener('click', function () {
+    const btn = this;
+    const count = <?= (int)$pendingEn ?>;
+    if (!confirm(<?= json_encode(t('i18n.confirm_translate',
+        'Alle ausstehenden Schlüssel jetzt übersetzen? Dies kann je nach Anzahl etwas dauern.')) ?>)) return;
+    btn.disabled = true;
+    btn.textContent = <?= json_encode(t('i18n.translating','Übersetze…')) ?>;
+
+    fetch('/admin/translations/retranslate-auto', {
+        method: 'POST',
+        headers: {'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
+        body: new URLSearchParams({_csrf: I18N_CSRF})
+    })
+    .then(r => r.json())
+    .then(function (d) {
+        if (d.ok) {
+            location.reload();
+        } else {
+            btn.disabled = false;
+            btn.textContent = <?= json_encode(t('i18n.translate_pending','Alle ausstehenden übersetzen')) ?>;
+            alert(<?= json_encode(t('i18n.translate_failed','Übersetzung fehlgeschlagen. API-Schlüssel prüfen.')) ?>);
+        }
+    })
+    .catch(function () {
+        btn.disabled = false;
+        btn.textContent = <?= json_encode(t('i18n.translate_pending','Alle ausstehenden übersetzen')) ?>;
+    });
+});
+</script>
+""")
+
+print('\ni18n fix done — 5 files written.')

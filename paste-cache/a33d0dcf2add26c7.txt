@@ -1,0 +1,72 @@
+Several fixes and improvements needed:
+
+1. TRANSLATION SYSTEM — Full overhaul:
+Remove the "Add / Update Translation" manual entry 
+form completely from Admin → Translations. No manual 
+key entry — everything is automatic.
+
+Replace with this logic:
+- Every t('key') call in PHP and every data-i18n 
+  attribute in HTML automatically registers the key 
+  in the translations table if it does not exist yet
+- German (DE) source text comes directly from the 
+  code/database content — NOT from manual entry
+- Auto-translation runs automatically for ALL keys 
+  that have a DE value but no EN value yet
+- If an admin manually edits an EN field, that 
+  manual override is flagged (manual_override = true) 
+  and is never overwritten by auto-translation
+- Auto-translation must cover ALL text in both 
+  frontend AND backend — not just navigation menu 
+  items. This includes: page content, blog posts, 
+  booking details, form labels, error messages, 
+  button texts, headings, footer text — everything
+- Translation runs via queue: when new content is 
+  saved in DE, EN translation is triggered 
+  automatically in the background
+
+Admin → Translations page becomes a monitoring view:
+- List all keys with DE source, EN translation, 
+  status (auto/manual override), last updated
+- Search/filter
+- One button: "Re-translate all auto entries" to 
+  refresh all non-manual translations
+- No add form, no manual key creation
+
+2. TRANSLATION API — Add DeepL option:
+In Admin → Translations → Settings, add a toggle 
+to choose translation provider:
+- Anthropic Claude (existing)
+- DeepL API (new)
+For DeepL: add a DeepL API key field. Use the 
+DeepL REST API (https://api-free.deepl.com/v2/translate 
+for free tier, https://api.deepl.com/v2/translate 
+for pro). Auto-detect which endpoint based on key 
+format (free keys end with :fx).
+
+3. FRONTEND LANGUAGE TOGGLE — Fix missing button:
+The DE/EN toggle button is not appearing on the 
+frontend. Fix this so it appears on every frontend 
+page.
+
+Toggle behavior:
+- 2 languages: show as simple DE | EN toggle button
+- 3+ languages: automatically becomes a dropdown menu
+- Position: configurable in Settings (bottom-right 
+  default, or top-right, or in navigation)
+- Style: clean, unobtrusive, matches the site theme
+
+4. ADMIN TOPBAR — Add frontend link:
+Add a link in the admin topbar next to the user's 
+name that opens the frontend website in a new tab.
+Icon: external link icon. Tooltip: "View website".
+Links to the site's primary domain.
+
+5. AUDIT NOTE for next audit:
+Verify that the manual "Add / Update Translation" 
+form is completely removed — no traces in views, 
+controllers, or routes.
+
+After fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

@@ -1,0 +1,20 @@
+---
+tags: [velo-solutions, dashboard, wissen]
+status: aktiv
+---
+
+# Dashboard-Plattform — Wissensbase
+
+Dokumentation und Best Practices der Dashboard-Plattform für veloSolutions.
+
+## Module
+
+- [[veloCMS/_index|🔧 veloCMS]] — CMS Dokumentation
+- [[Finanzen, Steuern, Buchhaltung/_index|💼 Finanzen & Buchhaltung]]
+- [[Marketing/_index|📢 Marketing]]
+- [[Sicherheit/_index|🔒 Sicherheit]]
+- [[Kundenbetreuung/_index|👥 Kundenbetreuung]]
+
+## Übergeordnet
+
+← [[../_index|veloSolutions]] | [[../../Life OS|Life OS Wissensbase]]

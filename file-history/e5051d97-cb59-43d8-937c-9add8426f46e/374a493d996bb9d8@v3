@@ -1,0 +1,149 @@
+---
+tags: [veloSolutions, velocms, booking, buchungen]
+status: aktiv
+---
+
+# veloCMS — Booking App
+
+Booking-Tools erstellen und auf Seiten positionieren.
+
+---
+
+## 🎯 Zweck
+
+Benutzer erstellen Buchungs-Formulare und platzieren sie im Visual Editor auf Seiten.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Booking-Tool erstellen
+- Button: "+ Neues Tool"
+- Form:
+  - **Typ:** Dropdown (z.B. "Termin buchen", "Produkt reservieren", "Kontaktformular")
+  - **Name:** "Termin buchen am 27.5."
+  - **Felder definieren:** 
+    - Name, Email, Telefon (Standard)
+    - Datum (Datepicker)
+    - Zeit (Timepicker)
+    - Custom Felder hinzufügbar (Text, Select, etc.)
+  - **Styling:**
+    - Button-Farbe
+    - Label-Text
+    - Success-Message nach Buchung
+  - **Ziel-Email:** Wo sollen Buchungs-Anfragen hingehen?
+
+### 2. Tool-Verwaltung
+- Liste aller Tools (mit Preview)
+- Edit / Delete pro Tool
+- Status: Aktiv / Inaktiv
+
+### 3. Seiten-Zuordnung
+- "Auf welcher Seite soll dieses Tool angezeigt werden?"
+- Dropdown: Wähle Seite (aus Navigation-App)
+- Tool wird dann im Visual Editor verfügbar
+
+### 4. Visual Editor Integration
+- Wenn Tool einer Seite zugeordnet:
+  - Im Visual Editor können Tools eingefügt werden
+  - User draggt Tool auf die Seite
+  - Tool wird an Position positioniert
+  - Im Frontend: Tool sichtbar an dieser Position
+
+### 5. Frontend Funktionalität
+- Tool wird angezeigt
+- User füllt Formular aus
+- "Buchen" Button
+- Bestätigungsmessage: "Vielen Dank! Wir bestätigen die Buchung."
+- Email an Ziel-Email mit Buchungs-Details
+- Optional: Email an User mit Bestätigung
+
+---
+
+## 🎨 Tool-Editor Mockup
+
+```
+┌───────────────────────────────────────────┐
+│ Neues Booking-Tool                    [x] │
+├───────────────────────────────────────────┤
+│ Name:    [Termin buchen               ]  │
+│ Typ:     [Termin buchen          ▼]      │
+│ Seite:   [Services              ▼]      │
+│                                           │
+│ FELDER:                                   │
+│ ☑ Name (erforderlich)                    │
+│ ☑ Email (erforderlich)                   │
+│ ☑ Telefon (optional)                     │
+│ ☑ Datum (erforderlich)                   │
+│ ☑ Zeit (erforderlich)                    │
+│                                           │
+│ [+ Feld hinzufügen]                      │
+│                                           │
+│ STYLING:                                  │
+│ Button-Farbe: [Farbwähler]               │
+│ Button-Text: [Termin reservieren]        │
+│ Success-Message: [Danke für Buchung]     │
+│                                           │
+│ Ziel-Email: [admin@example.com      ]   │
+│ ☑ Bestätigungsemail an User senden       │
+│                                           │
+│ [Speichern] [Preview] [Löschen]          │
+└───────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Datenbank-Struktur
+
+### Tabelle: velocms_booking_tools
+```
+- id
+- name
+- type (appointment, product, contact)
+- page_id (aus Navigation-App)
+- fields (JSON: [{ name, type, required }, ...])
+- styling (JSON: { button_color, button_text, ... })
+- success_message
+- target_email
+- send_confirmation_email (boolean)
+- status (active, inactive)
+- created_at
+- updated_at
+```
+
+### Tabelle: velocms_bookings (gespeicherte Buchungen)
+```
+- id
+- tool_id
+- data (JSON: { name, email, date, time, ... })
+- created_at
+```
+
+---
+
+## ✅ Success-Kriterien (Phase 1)
+
+- [ ] Tool erstellen funktioniert
+- [ ] Felder hinzufügen/bearbeiten funktioniert
+- [ ] Tool-Liste wird angezeigt
+- [ ] Edit / Delete funktioniert
+- [ ] Tool kann einer Seite zugeordnet werden
+- [ ] Im Visual Editor: Tool kann platziert werden
+- [ ] Im Frontend: Tool wird angezeigt
+- [ ] Formular-Validierung funktioniert
+- [ ] Email wird gesendet bei Buchung
+- [ ] Success-Message wird angezeigt
+
+---
+
+## 🔗 Abhängigkeiten
+
+- **Navigation-App:** Seiten zum Zuordnen
+- **Visual Editor:** Tool platzieren
+- **Benutzer-App:** Wer hat Tool erstellt
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]]

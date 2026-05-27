@@ -1,0 +1,88 @@
+/* Vault Navigation Boxes */
+
+/* Basis-Stil für alle Boxen */
+.vault-box {
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 10px 0;
+  border-left: 4px solid;
+  display: block;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.vault-box:hover {
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* 00 Kontext - Dunkelblau */
+.vault-kontext {
+  background-color: rgba(41, 98, 255, 0.15);
+  border-left-color: #2962ff;
+}
+
+/* 01 Inbox - Zitronengelb */
+.vault-inbox {
+  background-color: rgba(255, 193, 7, 0.15);
+  border-left-color: #ffc107;
+}
+
+/* 02 Projekte - Grün */
+.vault-projekte {
+  background-color: rgba(76, 175, 80, 0.15);
+  border-left-color: #4caf50;
+}
+
+/* 03 Bereiche - Cyan */
+.vault-bereiche {
+  background-color: rgba(0, 188, 212, 0.15);
+  border-left-color: #00bcd4;
+}
+
+/* 04 Ressourcen - Lila/Violett */
+.vault-ressourcen {
+  background-color: rgba(156, 39, 176, 0.15);
+  border-left-color: #9c27b0;
+}
+
+/* 05 Daily Notes - Orange */
+.vault-daily {
+  background-color: rgba(255, 152, 0, 0.15);
+  border-left-color: #ff9800;
+}
+
+/* 06 Archiv - Grau */
+.vault-archiv {
+  background-color: rgba(158, 158, 158, 0.15);
+  border-left-color: #9e9e9e;
+}
+
+/* 07 Anhänge - Rot/Pink */
+.vault-anhaenge {
+  background-color: rgba(244, 67, 54, 0.15);
+  border-left-color: #f44336;
+}
+
+/* Life OS - Mehrfarbig */
+.vault-lifeos {
+  background-color: rgba(103, 58, 183, 0.15);
+  border-left-color: #673ab7;
+}
+
+/* Titel-Styling */
+.vault-box strong {
+  font-size: 1.1em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+/* Beschreibung-Styling */
+.vault-box em {
+  font-size: 0.95em;
+  opacity: 0.85;
+}
+
+/* Emoji-Größe */
+.vault-box strong::before {
+  margin-right: 6px;
+}

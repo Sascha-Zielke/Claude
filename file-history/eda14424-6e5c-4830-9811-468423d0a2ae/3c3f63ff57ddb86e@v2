@@ -1,0 +1,46 @@
+path = '/var/www/velocms/cli/commands/MigrateCommand.php'
+
+old = """        // Module migrations (each module's own migrations/ folder)
+        $modulesPath = $this->app->basePath('modules');
+        foreach (glob($modulesPath . '/*/migrations') ?: [] as $modPath) {
+            $module  = basename(dirname($modPath));
+            $modRan  = $migrator->run($modPath);
+            foreach ($modRan as $file) {
+                echo "  [{$module}] ✓ {$file}\\n";
+            }
+        }"""
+
+new = """        // Module migrations in migrations/{module}/ directories
+        foreach (glob($base . '/*/') ?: [] as $modPath) {
+            $module = basename(rtrim($modPath, '/'));
+            if ($module === 'core') continue;
+            $modRan = $migrator->run($modPath);
+            if (empty($modRan)) {
+                echo "  [{$module}] Nothing to migrate.\\n";
+            } else {
+                foreach ($modRan as $file) {
+                    echo "  [{$module}] ✓ {$file}\\n";
+                }
+            }
+        }
+
+        // Module migrations inside modules/{name}/migrations/ (legacy location)
+        $modulesPath = $this->app->basePath('modules');
+        foreach (glob($modulesPath . '/*/migrations') ?: [] as $modPath) {
+            $module  = basename(dirname($modPath));
+            $modRan  = $migrator->run($modPath);
+            foreach ($modRan as $file) {
+                echo "  [{$module}/internal] ✓ {$file}\\n";
+            }
+        }"""
+
+with open(path) as f:
+    content = f.read()
+
+if 'migrations/{module}/' in content:
+    print('Already patched, skipped.')
+else:
+    content = content.replace(old, new)
+    with open(path, 'w') as f:
+        f.write(content)
+    print('MigrateCommand.php patched')

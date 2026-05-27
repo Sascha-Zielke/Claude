@@ -1,0 +1,489 @@
+"""vcms_s12a_db_admin.py
+1. DB: add end_date, nights to bookings; min_stay_nights to booking_resources;
+       update pricing_type ENUM to include 'daily'
+2. Booking::create() — include end_date + nights
+3. Admin booking create view — Daily option + date range UI
+4. BookingAdminController::createStore() — handle daily pricing type
+"""
+BASE = '/var/www/velocms'
+import subprocess, os
+
+def env():
+    e = dict(os.environ)
+    for line in open(BASE + '/.env'):
+        line = line.strip()
+        if '=' in line and not line.startswith('#'):
+            k, v = line.split('=', 1)
+            e[k] = v
+    return e
+
+def mysql(sql):
+    ev = env()
+    return subprocess.run(
+        ['mysql', '-u', ev.get('CORE_DB_USER', 'velocms'),
+         '-p' + ev.get('CORE_DB_PASS', ''), ev.get('CORE_DB_NAME', 'velocms'), '-e', sql],
+        capture_output=True, text=True, env=ev
+    )
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. DB changes ─────────────────────────────────────────────────────────────
+r = mysql("SHOW COLUMNS FROM bookings LIKE 'end_date';")
+if not r.stdout.strip():
+    r2 = mysql(
+        "ALTER TABLE bookings "
+        "ADD COLUMN end_date DATE DEFAULT NULL AFTER booking_date, "
+        "ADD COLUMN nights SMALLINT UNSIGNED DEFAULT NULL AFTER end_date, "
+        "MODIFY pricing_type ENUM('hourly','package','product','daily') NOT NULL DEFAULT 'hourly';"
+    )
+    print('OK  DB bookings' if r2.returncode == 0 else ('ERR ' + r2.stderr))
+else:
+    print('SKIP DB bookings — end_date already exists')
+
+r = mysql("SHOW COLUMNS FROM booking_resources LIKE 'min_stay_nights';")
+if not r.stdout.strip():
+    r2 = mysql(
+        "ALTER TABLE booking_resources "
+        "ADD COLUMN min_stay_nights TINYINT UNSIGNED NOT NULL DEFAULT 1 AFTER daily_rate;"
+    )
+    print('OK  DB booking_resources' if r2.returncode == 0 else ('ERR ' + r2.stderr))
+else:
+    print('SKIP DB booking_resources — min_stay_nights already exists')
+
+# ── 2. Booking::create() — add end_date + nights ─────────────────────────────
+model_path = BASE + '/modules/booking/models/Booking.php'
+model = open(model_path).read()
+
+old_create_query = (
+    "        $this->pdo->prepare(\n"
+    "            'INSERT INTO bookings\n"
+    "              (reference, resource_id, package_id, product_id,\n"
+    "               customer_name, customer_email, customer_phone,\n"
+    "               booking_date, start_time, end_time, duration_mins,\n"
+    "               pricing_type, subtotal, deposit_amount, total_amount,\n"
+    "               payment_status, booking_status, notes, ip_address)\n"
+    "             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\n"
+    "        )->execute([\n"
+    "            $ref,\n"
+    "            (int) $data['resource_id'],\n"
+    "            isset($data['package_id']) && $data['package_id'] ? (int) $data['package_id'] : null,\n"
+    "            isset($data['product_id']) && $data['product_id'] ? (int) $data['product_id'] : null,\n"
+    "            $data['customer_name'],\n"
+    "            $data['customer_email'],\n"
+    "            $data['customer_phone'] ?? null,\n"
+    "            $data['booking_date'],\n"
+    "            $data['start_time'],\n"
+    "            $data['end_time'],\n"
+    "            (int) $data['duration_mins'],\n"
+    "            $data['pricing_type'],\n"
+    "            (float) $data['subtotal'],\n"
+    "            (float) ($data['deposit_amount'] ?? 0),\n"
+    "            (float) $data['total_amount'],\n"
+    "            $data['payment_status'] ?? 'none',\n"
+    "            $data['booking_status'] ?? 'pending',\n"
+    "            $data['notes'] ?? null,\n"
+    "            $data['ip_address'] ?? null,\n"
+    "        ]);"
+)
+new_create_query = (
+    "        $this->pdo->prepare(\n"
+    "            'INSERT INTO bookings\n"
+    "              (reference, resource_id, package_id, product_id,\n"
+    "               customer_name, customer_email, customer_phone,\n"
+    "               booking_date, end_date, nights,\n"
+    "               start_time, end_time, duration_mins,\n"
+    "               pricing_type, subtotal, deposit_amount, total_amount,\n"
+    "               payment_status, booking_status, notes, ip_address)\n"
+    "             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\n"
+    "        )->execute([\n"
+    "            $ref,\n"
+    "            (int) $data['resource_id'],\n"
+    "            isset($data['package_id']) && $data['package_id'] ? (int) $data['package_id'] : null,\n"
+    "            isset($data['product_id']) && $data['product_id'] ? (int) $data['product_id'] : null,\n"
+    "            $data['customer_name'],\n"
+    "            $data['customer_email'],\n"
+    "            $data['customer_phone'] ?? null,\n"
+    "            $data['booking_date'],\n"
+    "            $data['end_date'] ?? null,\n"
+    "            isset($data['nights']) ? (int) $data['nights'] : null,\n"
+    "            $data['start_time'],\n"
+    "            $data['end_time'],\n"
+    "            (int) $data['duration_mins'],\n"
+    "            $data['pricing_type'],\n"
+    "            (float) $data['subtotal'],\n"
+    "            (float) ($data['deposit_amount'] ?? 0),\n"
+    "            (float) $data['total_amount'],\n"
+    "            $data['payment_status'] ?? 'none',\n"
+    "            $data['booking_status'] ?? 'pending',\n"
+    "            $data['notes'] ?? null,\n"
+    "            $data['ip_address'] ?? null,\n"
+    "        ]);"
+)
+
+if 'end_date' not in model:
+    if old_create_query in model:
+        model = model.replace(old_create_query, new_create_query)
+        with open(model_path, 'w') as f: f.write(model)
+        print('OK  Booking::create() updated')
+    else:
+        print('ERR Booking::create() pattern not found')
+else:
+    print('SKIP Booking model — already updated')
+php_lint(model_path, 'Booking.php')
+
+# ── 3. Admin booking create view — add Daily + date range ─────────────────────
+create_view_path = BASE + '/admin/views/booking/create.php'
+create_view = open(create_view_path).read()
+
+# a) Add 'daily' to pricing_type select
+old_pricing_select = (
+    '            <select id="b-pricing" name="pricing_type" onchange="togglePricingFields()">\n'
+    '                <option value="hourly">Hourly</option>\n'
+    '                <option value="package">Package</option>\n'
+    '                <option value="product">Product</option>\n'
+    '            </select>'
+)
+new_pricing_select = (
+    '            <select id="b-pricing" name="pricing_type" onchange="togglePricingFields()">\n'
+    '                <option value="hourly">Hourly</option>\n'
+    '                <option value="daily">Daily (overnight / multi-day)</option>\n'
+    '                <option value="package">Package</option>\n'
+    '                <option value="product">Product</option>\n'
+    '            </select>'
+)
+
+# b) Replace the date/time row to add daily date range fields
+old_datetime_row = (
+    '    <div class="vcms-form-row">\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-date">Date <span class="vcms-required">*</span></label>\n'
+    '            <input type="date" id="b-date" name="booking_date"\n'
+    '                   min="<?= date(\'Y-m-d\') ?>" required>\n'
+    '        </div>\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-start">Start time <span class="vcms-required">*</span></label>\n'
+    '            <input type="time" id="b-start" name="start_time" required>\n'
+    '        </div>\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-end">End time <span class="vcms-required">*</span></label>\n'
+    '            <input type="time" id="b-end" name="end_time" required>\n'
+    '        </div>\n'
+    '    </div>'
+)
+new_datetime_row = (
+    '    <!-- Hourly/Package/Product date + time -->\n'
+    '    <div class="vcms-form-row" id="hourly-date-row">\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-date">Date <span class="vcms-required">*</span></label>\n'
+    '            <input type="date" id="b-date" name="booking_date"\n'
+    '                   min="<?= date(\'Y-m-d\') ?>">\n'
+    '        </div>\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-start">Start time <span class="vcms-required">*</span></label>\n'
+    '            <input type="time" id="b-start" name="start_time">\n'
+    '        </div>\n'
+    '        <div class="vcms-form-group">\n'
+    '            <label for="b-end">End time <span class="vcms-required">*</span></label>\n'
+    '            <input type="time" id="b-end" name="end_time">\n'
+    '        </div>\n'
+    '    </div>\n'
+    '\n'
+    '    <!-- Daily: check-in / check-out dates -->\n'
+    '    <div id="daily-date-row" style="display:none">\n'
+    '        <div class="vcms-form-row">\n'
+    '            <div class="vcms-form-group">\n'
+    '                <label for="b-checkin">Check-in date <span class="vcms-required">*</span></label>\n'
+    '                <input type="date" id="b-checkin" name="checkin_date"\n'
+    '                       min="<?= date(\'Y-m-d\') ?>">\n'
+    '            </div>\n'
+    '            <div class="vcms-form-group">\n'
+    '                <label for="b-checkout">Check-out date <span class="vcms-required">*</span></label>\n'
+    '                <input type="date" id="b-checkout" name="checkout_date">\n'
+    '            </div>\n'
+    '            <div class="vcms-form-group">\n'
+    '                <label>Duration</label>\n'
+    '                <p id="b-daily-summary" style="margin:.6rem 0;font-size:.9rem;color:#374151">— select dates —</p>\n'
+    '            </div>\n'
+    '        </div>\n'
+    '    </div>'
+)
+
+# c) Update the JS
+old_js = (
+    '<script>\n'
+    'const resourceData = <?= json_encode(array_column($resources, null, \'id\')) ?>;\n'
+    '\n'
+    'function togglePricingFields() {\n'
+    '    const type = document.getElementById(\'b-pricing\').value;\n'
+    '    document.getElementById(\'pkg-field\').style.display  = type === \'package\' ? \'\' : \'none\';\n'
+    '    document.getElementById(\'prod-field\').style.display = type === \'product\' ? \'\' : \'none\';\n'
+    '}\n'
+    '\n'
+    'function loadResourceOptions(resourceId) {\n'
+    '    const pkgSel  = document.getElementById(\'b-package\');\n'
+    '    const prodSel = document.getElementById(\'b-product\');\n'
+    '    pkgSel.innerHTML  = \'<option value="">— none —</option>\';\n'
+    '    prodSel.innerHTML = \'<option value="">— none —</option>\';\n'
+    '    if (!resourceId) return;\n'
+    '    fetch(`/booking-admin-data/resource/${resourceId}/options`)\n'
+    '        .then(r => r.ok ? r.json() : null)\n'
+    '        .then(data => {\n'
+    '            if (!data) return;\n'
+    '            (data.packages || []).forEach(p => {\n'
+    '                pkgSel.innerHTML  += `<option value="${p.id}">${p.name} — €${p.price} (${p.duration_mins} min)</option>`;\n'
+    '            });\n'
+    '            (data.products || []).forEach(p => {\n'
+    '                prodSel.innerHTML += `<option value="${p.id}">${p.name} — €${p.price}</option>`;\n'
+    '            });\n'
+    '        });\n'
+    '}\n'
+    '</script>'
+)
+new_js = (
+    '<script>\n'
+    'const resourceData = <?= json_encode(array_column($resources, null, \'id\')) ?>;\n'
+    '\n'
+    'function togglePricingFields() {\n'
+    '    const type = document.getElementById(\'b-pricing\').value;\n'
+    '    document.getElementById(\'pkg-field\').style.display      = type === \'package\' ? \'\' : \'none\';\n'
+    '    document.getElementById(\'prod-field\').style.display     = type === \'product\' ? \'\' : \'none\';\n'
+    '    document.getElementById(\'hourly-date-row\').style.display = type === \'daily\'   ? \'none\' : \'\';\n'
+    '    document.getElementById(\'daily-date-row\').style.display  = type === \'daily\'   ? \'\' : \'none\';\n'
+    '}\n'
+    '\n'
+    'function updateDailySummary() {\n'
+    '    const checkin  = document.getElementById(\'b-checkin\').value;\n'
+    '    const checkout = document.getElementById(\'b-checkout\').value;\n'
+    '    const summary  = document.getElementById(\'b-daily-summary\');\n'
+    '    if (!checkin || !checkout) { summary.textContent = \'— select dates —\'; return; }\n'
+    '    const nights = Math.round((new Date(checkout) - new Date(checkin)) / 86400000);\n'
+    '    if (nights < 1) { summary.textContent = \'Check-out must be after check-in\'; return; }\n'
+    '    const res = resourceData[document.getElementById(\'b-resource\').value];\n'
+    '    const rate = res && res.daily_rate ? parseFloat(res.daily_rate) : 0;\n'
+    '    const total = (rate * nights).toFixed(2);\n'
+    '    summary.textContent = nights + \' night\' + (nights !== 1 ? \'s\' : \'\') + (rate ? \' — Total: €\' + total : \'\');\n'
+    '    document.getElementById(\'b-checkout\').min = new Date(new Date(checkin).getTime() + 86400000).toISOString().slice(0,10);\n'
+    '}\n'
+    '\n'
+    'document.getElementById(\'b-checkin\').addEventListener(\'change\', updateDailySummary);\n'
+    'document.getElementById(\'b-checkout\').addEventListener(\'change\', updateDailySummary);\n'
+    '\n'
+    'function loadResourceOptions(resourceId) {\n'
+    '    const pkgSel  = document.getElementById(\'b-package\');\n'
+    '    const prodSel = document.getElementById(\'b-product\');\n'
+    '    pkgSel.innerHTML  = \'<option value="">— none —</option>\';\n'
+    '    prodSel.innerHTML = \'<option value="">— none —</option>\';\n'
+    '    if (!resourceId) return;\n'
+    '    fetch(`/booking-admin-data/resource/${resourceId}/options`)\n'
+    '        .then(r => r.ok ? r.json() : null)\n'
+    '        .then(data => {\n'
+    '            if (!data) return;\n'
+    '            (data.packages || []).forEach(p => {\n'
+    '                pkgSel.innerHTML  += `<option value="${p.id}">${p.name} — €${p.price} (${p.duration_mins} min)</option>`;\n'
+    '            });\n'
+    '            (data.products || []).forEach(p => {\n'
+    '                prodSel.innerHTML += `<option value="${p.id}">${p.name} — €${p.price}</option>`;\n'
+    '            });\n'
+    '        });\n'
+    '}\n'
+    '</script>'
+)
+
+changed = 0
+for old, new, label in [
+    (old_pricing_select, new_pricing_select, 'pricing_type daily option'),
+    (old_datetime_row,   new_datetime_row,   'date/time rows'),
+    (old_js,             new_js,             'JavaScript'),
+]:
+    if old in create_view:
+        create_view = create_view.replace(old, new)
+        changed += 1
+        print(f'OK  create.php — {label}')
+    elif 'daily-date-row' in create_view and label == 'date/time rows':
+        print(f'SKIP create.php — {label} already done')
+    else:
+        print(f'ERR create.php — pattern not found for {label}')
+
+with open(create_view_path, 'w') as f: f.write(create_view)
+php_lint(create_view_path, 'admin/views/booking/create.php')
+
+# ── 4. BookingAdminController::createStore() — handle daily ──────────────────
+admin_ctrl_path = BASE + '/modules/booking/admin/controllers/BookingAdminController.php'
+admin_ctrl = open(admin_ctrl_path).read()
+
+old_create_store_body = (
+    "        $resourceId  = (int) $req->post('resource_id', 0);\n"
+    "        $pricingType = $req->post('pricing_type', 'hourly');\n"
+    "        $bookingDate = $req->post('booking_date', '');\n"
+    "        $startTime   = $req->post('start_time', '');\n"
+    "        $endTime     = $req->post('end_time', '');\n"
+    "        $name        = trim($req->post('customer_name', ''));\n"
+    "        $email       = trim($req->post('customer_email', ''));\n"
+    "\n"
+    "        if (!$resourceId || !$bookingDate || !$startTime || !$endTime || !$name || !$email) {\n"
+    "            return $this->layout('booking/create.php', [\n"
+    "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+    "                'csrf'      => $this->auth()->csrfToken(),\n"
+    "                'resources' => $this->resource()->all(true),\n"
+    "                'error'     => 'All required fields must be filled.',\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        $startTs  = strtotime(\"{$bookingDate} {$startTime}\");\n"
+    "        $endTs    = strtotime(\"{$bookingDate} {$endTime}\");\n"
+    "        $duration = (int) (($endTs - $startTs) / 60);\n"
+    "\n"
+    "        $resource  = $this->resource()->findById($resourceId);\n"
+    "        $subtotal  = 0.0;\n"
+    "        $packageId = null;\n"
+    "        $productId = null;\n"
+    "\n"
+    "        $pkgModel  = new BookingPackage($this->pdo());\n"
+    "        $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "        if ($pricingType === 'hourly' && $resource) {\n"
+    "            $subtotal = round((float) $resource['hourly_rate'] * ($duration / 60), 2);\n"
+    "        } elseif ($pricingType === 'package') {\n"
+    "            $packageId = (int) $req->post('package_id', 0);\n"
+    "            $pkg       = $pkgModel->findById($packageId);\n"
+    "            $subtotal  = $pkg ? (float) $pkg['price'] : 0.0;\n"
+    "        } elseif ($pricingType === 'product') {\n"
+    "            $productId = (int) $req->post('product_id', 0);\n"
+    "            $prod      = $prodModel->findById($productId);\n"
+    "            $subtotal  = $prod ? (float) $prod['price'] : 0.0;\n"
+    "        }\n"
+    "\n"
+    "        $settings   = $this->settings();\n"
+    "        $depPct     = (float) ($settings['deposit_percent'] ?? 0);\n"
+    "        $deposit    = ($settings['payment_mode'] ?? 'none') === 'deposit'\n"
+    "            ? round($subtotal * $depPct / 100, 2) : 0.0;\n"
+    "\n"
+    "        $id = $this->booking()->create([\n"
+    "            'resource_id'    => $resourceId,\n"
+    "            'package_id'     => $packageId,\n"
+    "            'product_id'     => $productId,\n"
+    "            'customer_name'  => $name,\n"
+    "            'customer_email' => $email,\n"
+    "            'customer_phone' => trim($req->post('customer_phone', '')),\n"
+    "            'booking_date'   => $bookingDate,\n"
+    "            'start_time'     => $startTime,\n"
+    "            'end_time'       => $endTime,\n"
+    "            'duration_mins'  => $duration,\n"
+    "            'pricing_type'   => $pricingType,\n"
+    "            'subtotal'       => $subtotal,\n"
+    "            'deposit_amount' => $deposit,\n"
+    "            'total_amount'   => $subtotal,\n"
+    "            'payment_status' => 'none',\n"
+    "            'booking_status' => 'confirmed',\n"
+    "            'notes'          => trim($req->post('notes', '')),\n"
+    "            'ip_address'     => null,\n"
+    "        ]);"
+)
+
+new_create_store_body = (
+    "        $resourceId  = (int) $req->post('resource_id', 0);\n"
+    "        $pricingType = $req->post('pricing_type', 'hourly');\n"
+    "        $name        = trim($req->post('customer_name', ''));\n"
+    "        $email       = trim($req->post('customer_email', ''));\n"
+    "\n"
+    "        // Validate required fields (varies by pricing type)\n"
+    "        $missingDates = ($pricingType === 'daily')\n"
+    "            ? (!$req->post('checkin_date') || !$req->post('checkout_date'))\n"
+    "            : (!$req->post('booking_date') || !$req->post('start_time') || !$req->post('end_time'));\n"
+    "\n"
+    "        if (!$resourceId || !$name || !$email || $missingDates) {\n"
+    "            return $this->layout('booking/create.php', [\n"
+    "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+    "                'csrf'      => $this->auth()->csrfToken(),\n"
+    "                'resources' => $this->resource()->all(true),\n"
+    "                'error'     => 'All required fields must be filled.',\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        $resource  = $this->resource()->findById($resourceId);\n"
+    "        $subtotal  = 0.0;\n"
+    "        $packageId = null;\n"
+    "        $productId = null;\n"
+    "        $settings  = $this->settings();\n"
+    "\n"
+    "        // Daily booking\n"
+    "        $endDate  = null;\n"
+    "        $nights   = null;\n"
+    "\n"
+    "        if ($pricingType === 'daily') {\n"
+    "            $bookingDate  = $req->post('checkin_date');\n"
+    "            $endDate      = $req->post('checkout_date');\n"
+    "            $nights       = max(1, (int) ((\n"
+    "                strtotime($endDate) - strtotime($bookingDate)\n"
+    "            ) / 86400));\n"
+    "            $startTime    = $settings['daily_checkin_time']  ?? '15:00';\n"
+    "            $endTime      = $settings['daily_checkout_time'] ?? '11:00';\n"
+    "            $duration     = $nights * 1440;\n"
+    "            $subtotal     = round((float) ($resource['daily_rate'] ?? 0) * $nights, 2);\n"
+    "        } else {\n"
+    "            $bookingDate = $req->post('booking_date', '');\n"
+    "            $startTime   = $req->post('start_time', '');\n"
+    "            $endTime     = $req->post('end_time', '');\n"
+    "            $startTs     = strtotime(\"{$bookingDate} {$startTime}\");\n"
+    "            $endTs       = strtotime(\"{$bookingDate} {$endTime}\");\n"
+    "            $duration    = (int) (($endTs - $startTs) / 60);\n"
+    "\n"
+    "            $pkgModel  = new BookingPackage($this->pdo());\n"
+    "            $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "            if ($pricingType === 'hourly' && $resource) {\n"
+    "                $subtotal = round((float) $resource['hourly_rate'] * ($duration / 60), 2);\n"
+    "            } elseif ($pricingType === 'package') {\n"
+    "                $packageId = (int) $req->post('package_id', 0);\n"
+    "                $pkg       = $pkgModel->findById($packageId);\n"
+    "                $subtotal  = $pkg ? (float) $pkg['price'] : 0.0;\n"
+    "            } elseif ($pricingType === 'product') {\n"
+    "                $productId = (int) $req->post('product_id', 0);\n"
+    "                $prod      = $prodModel->findById($productId);\n"
+    "                $subtotal  = $prod ? (float) $prod['price'] : 0.0;\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        $depPct  = (float) ($settings['deposit_percent'] ?? 0);\n"
+    "        $deposit = ($settings['payment_mode'] ?? 'none') === 'deposit'\n"
+    "            ? round($subtotal * $depPct / 100, 2) : 0.0;\n"
+    "\n"
+    "        $id = $this->booking()->create([\n"
+    "            'resource_id'    => $resourceId,\n"
+    "            'package_id'     => $packageId,\n"
+    "            'product_id'     => $productId,\n"
+    "            'customer_name'  => $name,\n"
+    "            'customer_email' => $email,\n"
+    "            'customer_phone' => trim($req->post('customer_phone', '')),\n"
+    "            'booking_date'   => $bookingDate,\n"
+    "            'end_date'       => $endDate,\n"
+    "            'nights'         => $nights,\n"
+    "            'start_time'     => $startTime,\n"
+    "            'end_time'       => $endTime,\n"
+    "            'duration_mins'  => $duration,\n"
+    "            'pricing_type'   => $pricingType,\n"
+    "            'subtotal'       => $subtotal,\n"
+    "            'deposit_amount' => $deposit,\n"
+    "            'total_amount'   => $subtotal,\n"
+    "            'payment_status' => 'none',\n"
+    "            'booking_status' => 'confirmed',\n"
+    "            'notes'          => trim($req->post('notes', '')),\n"
+    "            'ip_address'     => null,\n"
+    "        ]);"
+)
+
+if 'checkin_date' not in admin_ctrl:
+    if old_create_store_body in admin_ctrl:
+        admin_ctrl = admin_ctrl.replace(old_create_store_body, new_create_store_body)
+        with open(admin_ctrl_path, 'w') as f: f.write(admin_ctrl)
+        print('OK  BookingAdminController::createStore() updated')
+    else:
+        print('ERR BookingAdminController::createStore() — pattern not found')
+else:
+    print('SKIP BookingAdminController — already updated')
+php_lint(admin_ctrl_path, 'BookingAdminController.php')
+
+print('\nDone.')

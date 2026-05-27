@@ -1,0 +1,51 @@
+---
+tags: [life-os, übersicht]
+status: aktiv
+erstellt: 2026-05-26
+---
+
+# Life OS — Persönliche Plattform
+
+Integriertes System aus Geschäftsplattform, Lernplattform und persönlichem Dashboard.
+
+## 🏢 Säulen
+
+### [[Privat/_index|💼 Privat]]
+Persönliche Lebensbereiche — Finanzen, Gesundheit, Charakter, Hobbys
+
+- [[Privat/Finanzen, Steuern/_index|💰 Finanzen & Steuern]]
+- [[Privat/Gesundheit/_index|❤️ Gesundheit]]
+- [[Privat/Charakter/_index|🎯 Charakter & Entwicklung]]
+- [[Privat/Hobbys/_index|🎮 Hobbys]]
+
+### [[Ausbildung/_index|📚 Ausbildung]]
+Binnenschifffahrtskapitän — Struktur, Wissen, Prüfungsvorbereitung
+
+- [[Ausbildung/Wiki/_index|📖 Wiki]]
+- [[Ausbildung/Berichtsheft/_index|📋 Berichtsheft]]
+- [[Ausbildung/Lernplattform/Lernplattform|🎓 Lernplattform]]
+
+### [[veloSolutions/_index|🚀 veloSolutions]]
+AI-Web-Agentur — Produkte, Dashboard, Kundenplattform
+
+- [[veloSolutions/Dashboard/_index|📊 Dashboard-Plattform]]
+- [[veloSolutions/Dashboard/veloCMS/veloCMS|🔧 veloCMS]]
+
+## 📊 Status
+
+| Bereich | Status | Progress |
+|---------|--------|----------|
+| Privat | 🔄 Aktiv | - |
+| Ausbildung | 🔄 Aktiv | - |
+| veloSolutions | 🔄 Entwicklung | MVP |
+
+## 🎯 Nächste Schritte
+
+- [ ] Dashboard MVP bauen
+- [ ] veloCMS Technical Spec
+- [ ] Lernplattform Modulstruktur
+- [ ] Finanzen-Tracking Setup
+
+## 📝 Notizen
+
+Alle Änderungen werden synchron in Projekte & Bereiche aktualisiert.

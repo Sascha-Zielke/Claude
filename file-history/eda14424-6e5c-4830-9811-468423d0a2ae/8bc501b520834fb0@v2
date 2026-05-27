@@ -1,0 +1,37 @@
+path = '/var/www/velocms/core/bootstrap.php'
+
+old = """// Config — loads the .env for the current domain
+$app->singleton(Config::class, static function () use ($basePath): Config {
+    $config  = new Config();
+    $domain  = strtolower(explode(':', $_SERVER['HTTP_HOST'] ?? '')[0]);
+    $envFile = $basePath . '/sites/' . $domain . '/.env';
+    $config->load($envFile);
+    $config->set('SITE_DOMAIN', $domain);
+    return $config;
+});"""
+
+new = """// Config — loads root .env (core DB creds) then site-specific .env (overrides)
+$app->singleton(Config::class, static function () use ($basePath): Config {
+    $config  = new Config();
+    $config->load($basePath . '/.env');
+    $domain  = strtolower(explode(':', $_SERVER['HTTP_HOST'] ?? '')[0]);
+    $envFile = $basePath . '/sites/' . $domain . '/.env';
+    $config->load($envFile);
+    $config->set('SITE_DOMAIN', $domain);
+    return $config;
+});"""
+
+with open(path) as f:
+    content = f.read()
+
+if '$config->load($basePath . \'/.env\');' in content:
+    print('Already patched, skipped.')
+else:
+    if old not in content:
+        print('ERROR: target string not found in bootstrap.php')
+        print(repr(content[content.find('// Config'):content.find('// Config')+300]))
+    else:
+        content = content.replace(old, new)
+        with open(path, 'w') as f:
+            f.write(content)
+        print('bootstrap.php patched — root .env now loaded first')

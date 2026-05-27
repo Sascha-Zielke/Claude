@@ -1,0 +1,274 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/settings/module.json ─────────────────────────────────────────────
+files['modules/settings/module.json'] = """{
+    "name": "settings",
+    "label": "Settings",
+    "version": "1.0.0",
+    "description": "Per-site key/value settings store.",
+    "author": "VeloCMS"
+}
+"""
+
+# ── modules/settings/models/Setting.php ──────────────────────────────────────
+files['modules/settings/models/Setting.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Settings\Models;
+
+class Setting
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function get(string $module, string $key, mixed $default = null): mixed
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT value FROM settings WHERE module = ? AND setting_key = ? LIMIT 1'
+        );
+        $stmt->execute([$module, $key]);
+        $row = $stmt->fetchColumn();
+        return $row !== false ? $row : $default;
+    }
+
+    public function set(string $module, string $key, string $value): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO settings (module, setting_key, value)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = NOW()'
+        )->execute([$module, $key, $value]);
+    }
+
+    public function all(?string $module = null): array
+    {
+        if ($module !== null) {
+            $stmt = $this->pdo->prepare(
+                'SELECT module, setting_key, value FROM settings WHERE module = ? ORDER BY setting_key'
+            );
+            $stmt->execute([$module]);
+        } else {
+            $stmt = $this->pdo->query(
+                'SELECT module, setting_key, value FROM settings ORDER BY module, setting_key'
+            );
+        }
+        $result = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $result[$row['module']][$row['setting_key']] = $row['value'];
+        }
+        return $module !== null ? ($result[$module] ?? []) : $result;
+    }
+}
+"""
+
+# ── modules/settings/admin/controllers/SettingsAdminController.php ────────────
+files['modules/settings/admin/controllers/SettingsAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Settings\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Settings\Models\Setting;
+
+class SettingsAdminController extends BaseController
+{
+    private const DEFINITIONS = [
+        'site' => [
+            ['key' => 'name',        'label' => 'Site Name',    'type' => 'text',     'default' => 'VeloCMS'],
+            ['key' => 'tagline',     'label' => 'Tagline',      'type' => 'text',     'default' => ''],
+            ['key' => 'admin_email', 'label' => 'Admin Email',  'type' => 'email',    'default' => ''],
+            ['key' => 'timezone',    'label' => 'Timezone',     'type' => 'text',     'default' => 'UTC'],
+        ],
+        'email' => [
+            ['key' => 'smtp_host',      'label' => 'SMTP Host',      'type' => 'text',     'default' => ''],
+            ['key' => 'smtp_port',      'label' => 'SMTP Port',      'type' => 'number',   'default' => '587'],
+            ['key' => 'smtp_user',      'label' => 'SMTP Username',  'type' => 'text',     'default' => ''],
+            ['key' => 'smtp_pass',      'label' => 'SMTP Password',  'type' => 'password', 'default' => ''],
+            ['key' => 'smtp_from',      'label' => 'From Address',   'type' => 'email',    'default' => ''],
+            ['key' => 'smtp_from_name', 'label' => 'From Name',      'type' => 'text',     'default' => 'VeloCMS'],
+            ['key' => 'smtp_secure',    'label' => 'Encryption',     'type' => 'select',   'default' => 'tls',
+             'options' => ['tls' => 'TLS (STARTTLS)', 'ssl' => 'SSL/TLS', '' => 'None']],
+        ],
+    ];
+
+    public function index(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $model   = new Setting($pdo);
+        $current = $model->all();
+
+        return $this->layout('settings/index.php', [
+            'user'        => $auth->user(),
+            'page'        => 'settings',
+            'definitions' => self::DEFINITIONS,
+            'current'     => $current,
+            'csrf'        => $auth->csrfToken(),
+            'flash'       => $_SESSION['_flash'] ?? null,
+        ]);
+    }
+
+    public function update(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        $auth->verifyCsrf();
+
+        $module = $params['module'] ?? '';
+        if (!isset(self::DEFINITIONS[$module])) {
+            return $this->redirect('/admin/settings');
+        }
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Setting($pdo);
+
+        foreach (self::DEFINITIONS[$module] as $field) {
+            $value = $request->post($field['key'], $field['default']);
+            $model->set($module, $field['key'], (string) $value);
+        }
+
+        $_SESSION['_flash'] = ucfirst($module) . ' settings saved.';
+        return $this->redirect('/admin/settings');
+    }
+}
+"""
+
+# ── admin/views/settings/index.php ───────────────────────────────────────────
+files['admin/views/settings/index.php'] = r"""<?php
+$flash = $flash ?? null;
+unset($_SESSION['_flash']);
+
+$tabs = ['site' => 'Site', 'email' => 'Email'];
+$activeTab = $_GET['tab'] ?? 'site';
+if (!isset($tabs[$activeTab])) $activeTab = 'site';
+?>
+<div class="vcms-page-header">
+    <h2>Settings</h2>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div class="vcms-tabs">
+    <?php foreach ($tabs as $key => $label): ?>
+        <a href="/admin/settings?tab=<?= $key ?>"
+           class="vcms-tab <?= $activeTab === $key ? 'active' : '' ?>">
+            <?= $label ?>
+        </a>
+    <?php endforeach ?>
+</div>
+
+<?php foreach ($definitions as $module => $fields):
+    if ($module !== $activeTab) continue; ?>
+<form method="post" action="/admin/settings/<?= $module ?>">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-card">
+        <table class="vcms-table vcms-table--form">
+            <?php foreach ($fields as $field):
+                $val = $current[$module][$field['key']] ?? $field['default'];
+            ?>
+            <tr>
+                <th><label for="<?= e($field['key']) ?>"><?= e($field['label']) ?></label></th>
+                <td>
+                <?php if ($field['type'] === 'select'): ?>
+                    <select name="<?= e($field['key']) ?>" id="<?= e($field['key']) ?>">
+                        <?php foreach ($field['options'] as $optVal => $optLabel): ?>
+                            <option value="<?= e($optVal) ?>" <?= $val === $optVal ? 'selected' : '' ?>>
+                                <?= e($optLabel) ?>
+                            </option>
+                        <?php endforeach ?>
+                    </select>
+                <?php else: ?>
+                    <input type="<?= e($field['type']) ?>"
+                           name="<?= e($field['key']) ?>"
+                           id="<?= e($field['key']) ?>"
+                           value="<?= $field['type'] === 'password' ? '' : e($val) ?>"
+                           placeholder="<?= $field['type'] === 'password' ? '(unchanged)' : '' ?>">
+                <?php endif ?>
+                </td>
+            </tr>
+            <?php endforeach ?>
+        </table>
+        <div class="vcms-form-actions">
+            <button type="submit" class="vcms-btn vcms-btn--primary">Save <?= $tabs[$module] ?> Settings</button>
+        </div>
+    </div>
+</form>
+<?php endforeach ?>
+"""
+
+# ── Add setting() helper to core/helpers.php ─────────────────────────────────
+helpers_path = base + '/core/helpers.php'
+helpers = open(helpers_path).read()
+
+setting_fn = r"""
+if (!function_exists('setting')) {
+    function setting(string $module, string $key, mixed $default = ''): mixed
+    {
+        static $cache = null;
+        if ($cache === null) {
+            $cache = [];
+            try {
+                $pdo  = app(\VeloCMS\Core\Database::class)->core();
+                $rows = $pdo->query(
+                    'SELECT module, setting_key, value FROM settings'
+                )->fetchAll(\PDO::FETCH_ASSOC);
+                foreach ($rows as $row) {
+                    $cache[$row['module']][$row['setting_key']] = $row['value'];
+                }
+            } catch (\Throwable) {}
+        }
+        return $cache[$module][$key] ?? $default;
+    }
+}
+"""
+
+if 'function setting' not in helpers:
+    with open(helpers_path, 'a') as f:
+        f.write(setting_fn)
+    print('OK  core/helpers.php (setting() added)')
+else:
+    print('OK  core/helpers.php (setting() already present)')
+
+# Write module files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# Add admin CSS for tabs and table-form
+admin_css_path = base + '/public/assets/admin/style.css'
+admin_css = open(admin_css_path).read()
+
+extra_css = """
+/* Tabs */
+.vcms-tabs        { display:flex; gap:.25rem; margin-bottom:1.5rem; border-bottom:2px solid #e2e8f0; }
+.vcms-tab         { padding:.5rem 1rem; text-decoration:none; color:#64748b; border-bottom:2px solid transparent; margin-bottom:-2px; font-size:.875rem; }
+.vcms-tab.active  { color:#2563eb; border-bottom-color:#2563eb; font-weight:600; }
+.vcms-tab:hover   { color:#1e293b; }
+
+/* Form table */
+.vcms-table--form        { width:100%; }
+.vcms-table--form th     { width:220px; padding:.75rem 1rem .75rem 0; font-weight:500; color:#475569; text-align:left; vertical-align:top; padding-top:.9rem; }
+.vcms-table--form td     { padding:.5rem 0; }
+.vcms-table--form input,
+.vcms-table--form select,
+.vcms-table--form textarea { width:100%; max-width:480px; padding:.5rem .75rem; border:1px solid #cbd5e1; border-radius:6px; font-size:.875rem; }
+.vcms-form-actions        { padding:1rem 0 .25rem; }
+"""
+
+if '.vcms-tabs' not in admin_css:
+    with open(admin_css_path, 'a') as f:
+        f.write(extra_css)
+    print('OK  public/assets/admin/style.css (tabs + form-table CSS added)')
+else:
+    print('OK  public/assets/admin/style.css (CSS already present)')
+
+print('\nPhase 5b done — settings module written.')

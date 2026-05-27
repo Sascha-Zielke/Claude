@@ -1,0 +1,193 @@
+"""vcms_s13_fixes.py
+Fix 1: Daily and Hourly are mutually exclusive
+  - autosave.js: turning on Daily turns off Hourly+slot-row; turning on Hourly turns off Daily+daily-row
+  - settings/index.php: add mutual-exclusion notice between Hourly and Daily toggles
+
+Fix 2: Remove Min duration, Max duration, Advance booking, Sort order from resource form
+  (DB columns kept; only hidden from UI)
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── Fix 1a: autosave.js — mutual exclusion logic ──────────────────────────────
+js_path = BASE + '/public/assets/admin/autosave.js'
+js = open(js_path).read()
+
+old_init_booking = (
+    "  function initBookingTypeToggles() {\n"
+    "    var hourly = document.getElementById('bk-type-hourly');\n"
+    "    var slotRow = document.getElementById('bk-slot-row');\n"
+    "    if (hourly && slotRow) {\n"
+    "      hourly.addEventListener('change', function () {\n"
+    "        slotRow.style.display = hourly.checked ? '' : 'none';\n"
+    "      });\n"
+    "    }\n"
+    "    ['package', 'product'].forEach(function (t) {\n"
+    "      var cb  = document.getElementById('bk-type-' + t);\n"
+    "      var sec = document.getElementById('bk-inline-' + t + 's');\n"
+    "      if (cb && sec) {\n"
+    "        cb.addEventListener('change', function () {\n"
+    "          sec.style.display = cb.checked ? '' : 'none';\n"
+    "        });\n"
+    "      }\n"
+    "    });\n"
+    "    // Daily type → daily settings row\n"
+    "    var dailyCb  = document.getElementById('bk-type-daily');\n"
+    "    var dailyRow = document.getElementById('bk-daily-row');\n"
+    "    if (dailyCb && dailyRow) {\n"
+    "      dailyCb.addEventListener('change', function () {\n"
+    "        dailyRow.style.display = dailyCb.checked ? '' : 'none';\n"
+    "      });\n"
+    "    }\n"
+    "  }"
+)
+new_init_booking = (
+    "  function initBookingTypeToggles() {\n"
+    "    var hourly   = document.getElementById('bk-type-hourly');\n"
+    "    var slotRow  = document.getElementById('bk-slot-row');\n"
+    "    var dailyCb  = document.getElementById('bk-type-daily');\n"
+    "    var dailyRow = document.getElementById('bk-daily-row');\n"
+    "\n"
+    "    // Hourly and Daily are mutually exclusive\n"
+    "    if (hourly && slotRow) {\n"
+    "      hourly.addEventListener('change', function () {\n"
+    "        slotRow.style.display = hourly.checked ? '' : 'none';\n"
+    "        if (hourly.checked && dailyCb && dailyCb.checked) {\n"
+    "          dailyCb.checked = false;\n"
+    "          if (dailyRow) dailyRow.style.display = 'none';\n"
+    "        }\n"
+    "      });\n"
+    "    }\n"
+    "    if (dailyCb && dailyRow) {\n"
+    "      dailyCb.addEventListener('change', function () {\n"
+    "        dailyRow.style.display = dailyCb.checked ? '' : 'none';\n"
+    "        if (dailyCb.checked && hourly && hourly.checked) {\n"
+    "          hourly.checked = false;\n"
+    "          if (slotRow) slotRow.style.display = 'none';\n"
+    "        }\n"
+    "      });\n"
+    "    }\n"
+    "    ['package', 'product'].forEach(function (t) {\n"
+    "      var cb  = document.getElementById('bk-type-' + t);\n"
+    "      var sec = document.getElementById('bk-inline-' + t + 's');\n"
+    "      if (cb && sec) {\n"
+    "        cb.addEventListener('change', function () {\n"
+    "          sec.style.display = cb.checked ? '' : 'none';\n"
+    "        });\n"
+    "      }\n"
+    "    });\n"
+    "  }"
+)
+
+if 'Daily are mutually exclusive' not in js:
+    if old_init_booking in js:
+        js = js.replace(old_init_booking, new_init_booking)
+        with open(js_path, 'w') as f: f.write(js)
+        print('OK  autosave.js — mutual exclusion logic')
+    else:
+        print('ERR autosave.js — initBookingTypeToggles pattern not found')
+else:
+    print('SKIP autosave.js — already updated')
+
+# ── Fix 1b: settings/index.php — mutual exclusion notice + PHP enforcement ────
+settings_path = BASE + '/admin/views/settings/index.php'
+settings = open(settings_path).read()
+
+# Add the notice between Hourly toggle+slot-row and Daily toggle,
+# and add PHP-level enforcement: if both daily+hourly are active, remove hourly.
+# Also update the $hasHourly/$hasDaily logic at the top to enforce mutual exclusion.
+
+# 1) After $hasDaily add server-side enforcement
+old_has_daily = (
+    "    $hasHourly  = in_array('hourly',  $bkTypes);\n"
+    "    $hasPackage = in_array('package', $bkTypes);\n"
+    "    $hasProduct = in_array('product', $bkTypes);\n"
+    "    $hasDaily   = in_array('daily',   $bkTypes);"
+)
+new_has_daily = (
+    "    $hasHourly  = in_array('hourly',  $bkTypes);\n"
+    "    $hasPackage = in_array('package', $bkTypes);\n"
+    "    $hasProduct = in_array('product', $bkTypes);\n"
+    "    $hasDaily   = in_array('daily',   $bkTypes);\n"
+    "    // Daily and Hourly are mutually exclusive — Daily takes precedence\n"
+    "    if ($hasDaily && $hasHourly) { $hasHourly = false; }"
+)
+
+# 2) Add the notice between Hourly slot-row and Daily toggle in the HTML
+old_between = (
+    "                        <label class=\"vcms-toggle\">\n"
+    "                            <input type=\"hidden\"   name=\"bktype_daily\" value=\"0\">"
+)
+new_between = (
+    "                        <p style=\"font-size:.8rem;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:.375rem;padding:.4rem .75rem;margin:.25rem 0 .25rem 3.6rem\">\n"
+    "                            Daily and Hourly booking cannot be active at the same time.\n"
+    "                        </p>\n"
+    "                        <label class=\"vcms-toggle\">\n"
+    "                            <input type=\"hidden\"   name=\"bktype_daily\" value=\"0\">"
+)
+
+changed = 0
+for old, new, label in [
+    (old_has_daily, new_has_daily, 'PHP mutual exclusion enforcement'),
+    (old_between,   new_between,   'mutual exclusion notice in HTML'),
+]:
+    if 'mutually exclusive' not in settings or label == 'PHP mutual exclusion enforcement' and 'Daily takes precedence' not in settings:
+        if old in settings:
+            settings = settings.replace(old, new)
+            changed += 1
+            print(f'OK  settings/index.php — {label}')
+        else:
+            print(f'ERR settings/index.php — pattern not found for {label}')
+    else:
+        print(f'SKIP settings/index.php — {label} already done')
+
+with open(settings_path, 'w') as f: f.write(settings)
+php_lint(settings_path, 'admin/views/settings/index.php')
+
+# ── Fix 2: Remove hidden fields from resource form ────────────────────────────
+form_path = BASE + '/admin/views/booking/resources/form.php'
+form = open(form_path).read()
+
+old_hidden_fields_row = (
+    "        <div class=\"vcms-form-row\">\n"
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-min\">Min duration (min)</label>\n"
+    "                <input type=\"number\" id=\"r-min\" name=\"min_duration_mins\" min=\"15\" step=\"15\"\n"
+    "                       value=\"<?= (int)($record['min_duration_mins'] ?? 60) ?>\">\n"
+    "            </div>\n"
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-max\">Max duration (min)</label>\n"
+    "                <input type=\"number\" id=\"r-max\" name=\"max_duration_mins\" min=\"15\" step=\"15\"\n"
+    "                       value=\"<?= (int)($record['max_duration_mins'] ?? 480) ?>\">\n"
+    "            </div>\n"
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-adv\">Advance booking (hours)</label>\n"
+    "                <input type=\"number\" id=\"r-adv\" name=\"advance_booking_hours\" min=\"0\"\n"
+    "                       value=\"<?= (int)($record['advance_booking_hours'] ?? 24) ?>\">\n"
+    "            </div>\n"
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-sort\">Sort order</label>\n"
+    "                <input type=\"number\" id=\"r-sort\" name=\"sort_order\" min=\"0\"\n"
+    "                       value=\"<?= (int)($record['sort_order'] ?? 0) ?>\">\n"
+    "            </div>\n"
+    "        </div>"
+)
+
+if 'r-min' in form:
+    if old_hidden_fields_row in form:
+        form = form.replace(old_hidden_fields_row, '')
+        with open(form_path, 'w') as f: f.write(form)
+        print('OK  resources/form.php — removed min/max/advance/sort fields')
+    else:
+        print('ERR resources/form.php — fields row pattern not found')
+else:
+    print('SKIP resources/form.php — fields already removed')
+
+php_lint(form_path, 'admin/views/booking/resources/form.php')
+
+print('\nDone.')

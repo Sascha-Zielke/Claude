@@ -1,0 +1,521 @@
+"""vcms_s12b_frontend.py
+1. themes/default/booking/resource.php — add $showDaily + daily date range picker
+2. BookingController::bookForm() — pass pricing_type/checkin/checkout/dailyNights/dailyTotal
+3. BookingController::bookStore() — handle daily type, skip hourly validation
+4. themes/default/booking/form.php — daily hidden inputs + daily summary
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. resource.php ───────────────────────────────────────────────────────────
+res_path = BASE + '/themes/default/booking/resource.php'
+res = open(res_path).read()
+
+if '$showDaily' not in res:
+    # a) Add $showDaily after $showProduct line
+    old_show = (
+        "$showProduct  = in_array('product', $bookingTypes) && ($pricingMode === 'product' || $pricingMode === 'combined');"
+    )
+    new_show = (
+        "$showProduct  = in_array('product', $bookingTypes) && ($pricingMode === 'product' || $pricingMode === 'combined');\n"
+        "$showDaily    = in_array('daily',   $bookingTypes) && ($pricingMode === 'daily'   || $pricingMode === 'combined');"
+    )
+
+    # b) Insert daily picker section before the hourly calendar section
+    old_before_hourly = (
+        "    <?php if ($showHourly): ?>\n"
+        "    <div class=\"booking-calendar-section\">"
+    )
+    new_with_daily = (
+        "    <?php if ($showDaily): ?>\n"
+        "    <section class=\"booking-daily-section\">\n"
+        "        <h2>Select Your Dates</h2>\n"
+        "        <div class=\"bk-daily-form\">\n"
+        "            <div class=\"bk-daily-fields\">\n"
+        "                <label>Check-in date<br>\n"
+        "                    <input type=\"date\" id=\"bk-checkin\" min=\"<?= date('Y-m-d') ?>\"\n"
+        "                           onchange=\"updateDailyUrl()\">\n"
+        "                </label>\n"
+        "                <label>Check-out date<br>\n"
+        "                    <input type=\"date\" id=\"bk-checkout\"\n"
+        "                           onchange=\"updateDailyUrl()\">\n"
+        "                </label>\n"
+        "            </div>\n"
+        "            <p id=\"bk-daily-summary\" class=\"bk-daily-summary\">Select dates above to see the total.</p>\n"
+        "            <a id=\"bk-daily-btn\" href=\"#\" class=\"booking-slot-btn\" style=\"display:none\">Book Now</a>\n"
+        "        </div>\n"
+        "        <?php if ((int)($resource['min_stay_nights'] ?? 1) > 1): ?>\n"
+        "        <p class=\"bk-min-stay\">Minimum stay: <?= (int)$resource['min_stay_nights'] ?> night(s)</p>\n"
+        "        <?php endif ?>\n"
+        "        <script>\n"
+        "        (function(){\n"
+        "            var rate     = <?= (float)($resource['daily_rate'] ?? 0) ?>;\n"
+        "            var minNights= <?= (int)($resource['min_stay_nights'] ?? 1) ?>;\n"
+        "            var slug     = '<?= e($resource['slug']) ?>';\n"
+        "            function updateDailyUrl() {\n"
+        "                var ci  = document.getElementById('bk-checkin').value;\n"
+        "                var co  = document.getElementById('bk-checkout').value;\n"
+        "                var sum = document.getElementById('bk-daily-summary');\n"
+        "                var btn = document.getElementById('bk-daily-btn');\n"
+        "                btn.style.display = 'none';\n"
+        "                if (!ci || !co) { sum.textContent = 'Select dates above to see the total.'; return; }\n"
+        "                var n = Math.round((new Date(co) - new Date(ci)) / 86400000);\n"
+        "                if (n < 1)        { sum.textContent = 'Check-out must be after check-in.'; return; }\n"
+        "                if (n < minNights){ sum.textContent = 'Minimum stay: ' + minNights + ' night(s).'; return; }\n"
+        "                document.getElementById('bk-checkout').min =\n"
+        "                    new Date(new Date(ci).getTime() + 86400000).toISOString().slice(0,10);\n"
+        "                var total = rate ? ' — Total: €' + (rate * n).toFixed(2) : '';\n"
+        "                sum.textContent = n + ' night' + (n !== 1 ? 's' : '') + total;\n"
+        "                btn.href = '/booking/' + slug + '/book?pricing_type=daily&checkin=' + ci + '&checkout=' + co;\n"
+        "                btn.style.display = '';\n"
+        "            }\n"
+        "            window.updateDailyUrl = updateDailyUrl;\n"
+        "        }());\n"
+        "        </script>\n"
+        "    </section>\n"
+        "    <?php endif ?>\n"
+        "\n"
+        "    <?php if ($showHourly): ?>\n"
+        "    <div class=\"booking-calendar-section\">"
+    )
+
+    changed = 0
+    if old_show in res:
+        res = res.replace(old_show, new_show)
+        changed += 1
+        print('OK  resource.php — $showDaily')
+    else:
+        print('ERR resource.php — $showProduct line not found')
+
+    if old_before_hourly in res:
+        res = res.replace(old_before_hourly, new_with_daily)
+        changed += 1
+        print('OK  resource.php — daily picker section added')
+    else:
+        print('ERR resource.php — hourly calendar section anchor not found')
+
+    with open(res_path, 'w') as f: f.write(res)
+else:
+    print('SKIP resource.php — $showDaily already present')
+
+php_lint(res_path, 'themes/default/booking/resource.php')
+
+# ── 2. BookingController::bookForm() ─────────────────────────────────────────
+ctrl_path = BASE + '/modules/booking/controllers/BookingController.php'
+ctrl = open(ctrl_path).read()
+
+old_book_form_body = (
+    "        $date      = $req->get('date', '');\n"
+    "        $startTime = $req->get('start', '');\n"
+    "        $packageId = (int) $req->get('package_id', 0);\n"
+    "        $productId = (int) $req->get('product_id', 0);\n"
+    "\n"
+    "        $pkgModel  = new BookingPackage($this->pdo());\n"
+    "        $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "        return $this->render('booking/form.php', [\n"
+    "            'resource'   => $resource,\n"
+    "            'packages'   => $pkgModel->allForResource((int) $resource['id']),\n"
+    "            'products'   => $prodModel->allForResource((int) $resource['id']),\n"
+    "            'package'    => $packageId ? $pkgModel->findById($packageId) : null,\n"
+    "            'product'    => $productId ? $prodModel->findById($productId) : null,\n"
+    "            'date'       => $date,\n"
+    "            'start'      => $startTime,\n"
+    "            'settings'   => $settings,\n"
+    "            'error'      => null,\n"
+    "        ]);"
+)
+new_book_form_body = (
+    "        $date        = $req->get('date',         '');\n"
+    "        $startTime   = $req->get('start',        '');\n"
+    "        $packageId   = (int) $req->get('package_id',   0);\n"
+    "        $productId   = (int) $req->get('product_id',   0);\n"
+    "        $pricingType = $req->get('pricing_type', 'hourly');\n"
+    "        $checkin     = $req->get('checkin',      '');\n"
+    "        $checkout    = $req->get('checkout',     '');\n"
+    "\n"
+    "        // For daily bookings set $date so downstream code works\n"
+    "        if ($pricingType === 'daily' && $checkin) {\n"
+    "            $date = $checkin;\n"
+    "        }\n"
+    "\n"
+    "        $dailyNights = 0;\n"
+    "        $dailyTotal  = 0.0;\n"
+    "        if ($pricingType === 'daily' && $checkin && $checkout) {\n"
+    "            $dailyNights = max(0, (int) ((strtotime($checkout) - strtotime($checkin)) / 86400));\n"
+    "            $dailyTotal  = round((float) ($resource['daily_rate'] ?? 0) * $dailyNights, 2);\n"
+    "        }\n"
+    "\n"
+    "        $pkgModel  = new BookingPackage($this->pdo());\n"
+    "        $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "        return $this->render('booking/form.php', [\n"
+    "            'resource'    => $resource,\n"
+    "            'packages'    => $pkgModel->allForResource((int) $resource['id']),\n"
+    "            'products'    => $prodModel->allForResource((int) $resource['id']),\n"
+    "            'package'     => $packageId ? $pkgModel->findById($packageId) : null,\n"
+    "            'product'     => $productId ? $prodModel->findById($productId) : null,\n"
+    "            'date'        => $date,\n"
+    "            'start'       => $startTime,\n"
+    "            'pricingType' => $pricingType,\n"
+    "            'checkin'     => $checkin,\n"
+    "            'checkout'    => $checkout,\n"
+    "            'dailyNights' => $dailyNights,\n"
+    "            'dailyTotal'  => $dailyTotal,\n"
+    "            'settings'    => $settings,\n"
+    "            'error'       => null,\n"
+    "        ]);"
+)
+
+if 'checkin' not in ctrl:
+    if old_book_form_body in ctrl:
+        ctrl = ctrl.replace(old_book_form_body, new_book_form_body)
+        print('OK  BookingController — bookForm() updated')
+    else:
+        print('ERR BookingController — bookForm() pattern not found')
+else:
+    print('SKIP BookingController bookForm() — already updated')
+
+# ── 3. BookingController::bookStore() ────────────────────────────────────────
+old_book_store_vars = (
+    "        $name        = trim($req->post('customer_name', ''));\n"
+    "        $email       = trim($req->post('customer_email', ''));\n"
+    "        $phone       = trim($req->post('customer_phone', ''));\n"
+    "        $date        = $req->post('booking_date', '');\n"
+    "        $startTime   = $req->post('start_time', '');\n"
+    "        $notes       = trim($req->post('notes', ''));\n"
+    "        $pricingType = $req->post('pricing_type', 'hourly');\n"
+    "        $pkgId       = (int) $req->post('package_id', 0);\n"
+    "        $prodId      = (int) $req->post('product_id', 0);\n"
+    "\n"
+    "        $errors = [];\n"
+    "        if ($name === '') {\n"
+    "            $errors[] = 'Name is required.';\n"
+    "        }\n"
+    "        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {\n"
+    "            $errors[] = 'A valid email address is required.';\n"
+    "        }\n"
+    "        if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $date)) {\n"
+    "            $errors[] = 'Please select a date.';\n"
+    "        }\n"
+    "        if (!preg_match('/^\\d{2}:\\d{2}$/', $startTime)) {\n"
+    "            $errors[] = 'Please select a start time.';\n"
+    "        }\n"
+    "\n"
+    "        $slotMins = (int) ($settings['slot_duration_mins'] ?? 60);\n"
+    "        $endTs    = strtotime(\"{$date} {$startTime}\") + $slotMins * 60;\n"
+    "        $endTime  = date('H:i', $endTs);\n"
+    "\n"
+    "        $pkgModel  = new BookingPackage($this->pdo());\n"
+    "        $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "        if ($pricingType === 'package' && $pkgId) {\n"
+    "            $pkg = $pkgModel->findById($pkgId);\n"
+    "            if ($pkg) {\n"
+    "                $endTs    = strtotime(\"{$date} {$startTime}\") + ((int) $pkg['duration_mins'] * 60);\n"
+    "                $endTime  = date('H:i', $endTs);\n"
+    "                $slotMins = (int) $pkg['duration_mins'];\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        if (!empty($errors)) {\n"
+    "            return $this->render('booking/form.php', [\n"
+    "                'resource' => $resource,\n"
+    "                'packages' => $pkgModel->allForResource((int) $resource['id']),\n"
+    "                'products' => $prodModel->allForResource((int) $resource['id']),\n"
+    "                'package'  => $pkgId  ? $pkgModel->findById($pkgId)   : null,\n"
+    "                'product'  => $prodId ? $prodModel->findById($prodId) : null,\n"
+    "                'date'     => $date,\n"
+    "                'start'    => $startTime,\n"
+    "                'settings' => $settings,\n"
+    "                'error'    => implode(' ', $errors),\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        // Calculate price\n"
+    "        $subtotal      = 0.0;\n"
+    "        $actualPkgId   = null;\n"
+    "        $actualProdId  = null;\n"
+    "\n"
+    "        if ($pricingType === 'hourly') {\n"
+    "            $subtotal = round((float) $resource['hourly_rate'] * ($slotMins / 60), 2);\n"
+    "        } elseif ($pricingType === 'package' && $pkgId) {\n"
+    "            $pkg         = $pkgModel->findById($pkgId);\n"
+    "            $subtotal    = $pkg ? (float) $pkg['price'] : 0.0;\n"
+    "            $actualPkgId = $pkgId;\n"
+    "        } elseif ($pricingType === 'product' && $prodId) {\n"
+    "            $prod         = $prodModel->findById($prodId);\n"
+    "            $subtotal     = $prod ? (float) $prod['price'] : 0.0;\n"
+    "            $actualProdId = $prodId;\n"
+    "        }\n"
+    "\n"
+    "        $depPct  = (float) ($settings['deposit_percent'] ?? 0);\n"
+    "        $deposit = ($settings['payment_mode'] ?? 'none') === 'deposit'\n"
+    "            ? round($subtotal * $depPct / 100, 2) : 0.0;\n"
+    "\n"
+    "        $needsConfirm = !empty($settings['require_confirmation']);\n"
+    "        $status       = $needsConfirm ? 'pending' : 'confirmed';\n"
+    "\n"
+    "        $bookingModel = new Booking($this->pdo());\n"
+    "        $id = $bookingModel->create([\n"
+    "            'resource_id'    => (int) $resource['id'],\n"
+    "            'package_id'     => $actualPkgId,\n"
+    "            'product_id'     => $actualProdId,\n"
+    "            'customer_name'  => $name,\n"
+    "            'customer_email' => $email,\n"
+    "            'customer_phone' => $phone,\n"
+    "            'booking_date'   => $date,\n"
+    "            'start_time'     => $startTime,\n"
+    "            'end_time'       => $endTime,\n"
+    "            'duration_mins'  => $slotMins,\n"
+    "            'pricing_type'   => $pricingType,\n"
+    "            'subtotal'       => $subtotal,\n"
+    "            'deposit_amount' => $deposit,\n"
+    "            'total_amount'   => $subtotal,\n"
+    "            'payment_status' => 'none',\n"
+    "            'booking_status' => $status,\n"
+    "            'notes'          => $notes,\n"
+    "            'ip_address'     => $req->ip(),\n"
+    "        ]);"
+)
+new_book_store_vars = (
+    "        $name         = trim($req->post('customer_name', ''));\n"
+    "        $email        = trim($req->post('customer_email', ''));\n"
+    "        $phone        = trim($req->post('customer_phone', ''));\n"
+    "        $date         = $req->post('booking_date', '');\n"
+    "        $startTime    = $req->post('start_time', '');\n"
+    "        $notes        = trim($req->post('notes', ''));\n"
+    "        $pricingType  = $req->post('pricing_type', 'hourly');\n"
+    "        $pkgId        = (int) $req->post('package_id', 0);\n"
+    "        $prodId       = (int) $req->post('product_id', 0);\n"
+    "        $checkinDate  = $req->post('checkin_date',  '');\n"
+    "        $checkoutDate = $req->post('checkout_date', '');\n"
+    "\n"
+    "        $errors = [];\n"
+    "        if ($name === '') {\n"
+    "            $errors[] = 'Name is required.';\n"
+    "        }\n"
+    "        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {\n"
+    "            $errors[] = 'A valid email address is required.';\n"
+    "        }\n"
+    "        if ($pricingType === 'daily') {\n"
+    "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkinDate)) {\n"
+    "                $errors[] = 'Please select a check-in date.';\n"
+    "            }\n"
+    "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkoutDate)) {\n"
+    "                $errors[] = 'Please select a check-out date.';\n"
+    "            }\n"
+    "        } else {\n"
+    "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $date)) {\n"
+    "                $errors[] = 'Please select a date.';\n"
+    "            }\n"
+    "            if (!preg_match('/^\\d{2}:\\d{2}$/', $startTime)) {\n"
+    "                $errors[] = 'Please select a start time.';\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        $pkgModel  = new BookingPackage($this->pdo());\n"
+    "        $prodModel = new BookingProduct($this->pdo());\n"
+    "\n"
+    "        // Calculate times for hourly/package/product\n"
+    "        $slotMins = (int) ($settings['slot_duration_mins'] ?? 60);\n"
+    "        $endTime  = '';\n"
+    "        $endDate  = null;\n"
+    "        $nights   = null;\n"
+    "\n"
+    "        if ($pricingType !== 'daily' && $date && $startTime) {\n"
+    "            $endTs   = strtotime(\"{$date} {$startTime}\") + $slotMins * 60;\n"
+    "            $endTime = date('H:i', $endTs);\n"
+    "\n"
+    "            if ($pricingType === 'package' && $pkgId) {\n"
+    "                $pkg = $pkgModel->findById($pkgId);\n"
+    "                if ($pkg) {\n"
+    "                    $endTs    = strtotime(\"{$date} {$startTime}\") + ((int) $pkg['duration_mins'] * 60);\n"
+    "                    $endTime  = date('H:i', $endTs);\n"
+    "                    $slotMins = (int) $pkg['duration_mins'];\n"
+    "                }\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        if (!empty($errors)) {\n"
+    "            return $this->render('booking/form.php', [\n"
+    "                'resource'    => $resource,\n"
+    "                'packages'    => $pkgModel->allForResource((int) $resource['id']),\n"
+    "                'products'    => $prodModel->allForResource((int) $resource['id']),\n"
+    "                'package'     => $pkgId  ? $pkgModel->findById($pkgId)   : null,\n"
+    "                'product'     => $prodId ? $prodModel->findById($prodId) : null,\n"
+    "                'date'        => $date,\n"
+    "                'start'       => $startTime,\n"
+    "                'pricingType' => $pricingType,\n"
+    "                'checkin'     => $checkinDate,\n"
+    "                'checkout'    => $checkoutDate,\n"
+    "                'dailyNights' => 0,\n"
+    "                'dailyTotal'  => 0.0,\n"
+    "                'settings'    => $settings,\n"
+    "                'error'       => implode(' ', $errors),\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        // Calculate price\n"
+    "        $subtotal      = 0.0;\n"
+    "        $actualPkgId   = null;\n"
+    "        $actualProdId  = null;\n"
+    "\n"
+    "        if ($pricingType === 'daily') {\n"
+    "            $date     = $checkinDate;\n"
+    "            $endDate  = $checkoutDate;\n"
+    "            $nights   = max(1, (int) ((strtotime($checkoutDate) - strtotime($checkinDate)) / 86400));\n"
+    "            $startTime= $settings['daily_checkin_time']  ?? '15:00';\n"
+    "            $endTime  = $settings['daily_checkout_time'] ?? '11:00';\n"
+    "            $slotMins = $nights * 1440;\n"
+    "            $subtotal = round((float) ($resource['daily_rate'] ?? 0) * $nights, 2);\n"
+    "        } elseif ($pricingType === 'hourly') {\n"
+    "            $subtotal = round((float) $resource['hourly_rate'] * ($slotMins / 60), 2);\n"
+    "        } elseif ($pricingType === 'package' && $pkgId) {\n"
+    "            $pkg         = $pkgModel->findById($pkgId);\n"
+    "            $subtotal    = $pkg ? (float) $pkg['price'] : 0.0;\n"
+    "            $actualPkgId = $pkgId;\n"
+    "        } elseif ($pricingType === 'product' && $prodId) {\n"
+    "            $prod         = $prodModel->findById($prodId);\n"
+    "            $subtotal     = $prod ? (float) $prod['price'] : 0.0;\n"
+    "            $actualProdId = $prodId;\n"
+    "        }\n"
+    "\n"
+    "        $depPct  = (float) ($settings['deposit_percent'] ?? 0);\n"
+    "        $deposit = ($settings['payment_mode'] ?? 'none') === 'deposit'\n"
+    "            ? round($subtotal * $depPct / 100, 2) : 0.0;\n"
+    "\n"
+    "        $needsConfirm = !empty($settings['require_confirmation']);\n"
+    "        $status       = $needsConfirm ? 'pending' : 'confirmed';\n"
+    "\n"
+    "        $bookingModel = new Booking($this->pdo());\n"
+    "        $id = $bookingModel->create([\n"
+    "            'resource_id'    => (int) $resource['id'],\n"
+    "            'package_id'     => $actualPkgId,\n"
+    "            'product_id'     => $actualProdId,\n"
+    "            'customer_name'  => $name,\n"
+    "            'customer_email' => $email,\n"
+    "            'customer_phone' => $phone,\n"
+    "            'booking_date'   => $date,\n"
+    "            'end_date'       => $endDate,\n"
+    "            'nights'         => $nights,\n"
+    "            'start_time'     => $startTime,\n"
+    "            'end_time'       => $endTime,\n"
+    "            'duration_mins'  => $slotMins,\n"
+    "            'pricing_type'   => $pricingType,\n"
+    "            'subtotal'       => $subtotal,\n"
+    "            'deposit_amount' => $deposit,\n"
+    "            'total_amount'   => $subtotal,\n"
+    "            'payment_status' => 'none',\n"
+    "            'booking_status' => $status,\n"
+    "            'notes'          => $notes,\n"
+    "            'ip_address'     => $req->ip(),\n"
+    "        ]);"
+)
+
+if 'checkin_date' not in ctrl:
+    if old_book_store_vars in ctrl:
+        ctrl = ctrl.replace(old_book_store_vars, new_book_store_vars)
+        print('OK  BookingController — bookStore() updated')
+    else:
+        print('ERR BookingController — bookStore() pattern not found')
+else:
+    print('SKIP BookingController bookStore() — already updated')
+
+with open(ctrl_path, 'w') as f: f.write(ctrl)
+php_lint(ctrl_path, 'BookingController.php')
+
+# ── 4. form.php — daily hidden inputs + summary ───────────────────────────────
+form_path = BASE + '/themes/default/booking/form.php'
+form = open(form_path).read()
+
+if 'checkin_date' not in form:
+    # a) Add PHP vars at top
+    old_top_vars = (
+        "$slotMins    = (int)($settings['slot_duration_mins'] ?? 60);\n"
+        "$endTs       = ($date && $start) ? strtotime(\"{$date} {$start}\") + $slotMins * 60 : null;\n"
+        "$endTime     = $endTs ? date('H:i', $endTs) : '';"
+    )
+    new_top_vars = (
+        "$pricingType = $pricingType ?? ($_GET['pricing_type'] ?? 'hourly');\n"
+        "$checkin     = $checkin     ?? '';\n"
+        "$checkout    = $checkout    ?? '';\n"
+        "$dailyNights = $dailyNights ?? 0;\n"
+        "$dailyTotal  = $dailyTotal  ?? 0.0;\n"
+        "$slotMins    = (int)($settings['slot_duration_mins'] ?? 60);\n"
+        "$endTs       = ($date && $start) ? strtotime(\"{$date} {$start}\") + $slotMins * 60 : null;\n"
+        "$endTime     = $endTs ? date('H:i', $endTs) : '';"
+    )
+
+    # b) Add hidden inputs for daily after existing hidden inputs block
+    old_hidden = (
+        "                <input type=\"hidden\" name=\"pricing_type\"  value=\"<?= e($_GET['pricing_type'] ?? 'hourly') ?>\">\n"
+        "                <?php if ($package): ?>"
+    )
+    new_hidden = (
+        "                <input type=\"hidden\" name=\"pricing_type\"  value=\"<?= e($pricingType) ?>\">\n"
+        "                <?php if ($pricingType === 'daily'): ?>\n"
+        "                <input type=\"hidden\" name=\"checkin_date\"   value=\"<?= e($checkin) ?>\">\n"
+        "                <input type=\"hidden\" name=\"checkout_date\"  value=\"<?= e($checkout) ?>\">\n"
+        "                <?php endif ?>\n"
+        "                <?php if ($package): ?>"
+    )
+
+    # c) Add daily summary rows before the existing date row in summary sidebar
+    old_summary_date = (
+        "                <?php if ($date): ?>\n"
+        "                <div class=\"booking-summary-row\">\n"
+        "                    <span>Date</span>\n"
+        "                    <span><?= e($date) ?></span>\n"
+        "                </div>\n"
+        "                <?php endif ?>"
+    )
+    new_summary_date = (
+        "                <?php if ($pricingType === 'daily' && $checkin): ?>\n"
+        "                <div class=\"booking-summary-row\">\n"
+        "                    <span>Check-in</span>\n"
+        "                    <span><?= e($checkin) ?></span>\n"
+        "                </div>\n"
+        "                <div class=\"booking-summary-row\">\n"
+        "                    <span>Check-out</span>\n"
+        "                    <span><?= e($checkout) ?></span>\n"
+        "                </div>\n"
+        "                <div class=\"booking-summary-row\">\n"
+        "                    <span>Duration</span>\n"
+        "                    <span><?= (int)$dailyNights ?> night<?= $dailyNights !== 1 ? 's' : '' ?></span>\n"
+        "                </div>\n"
+        "                <div class=\"booking-summary-row booking-summary-total\">\n"
+        "                    <span>Total</span>\n"
+        "                    <span>&euro;<?= number_format($dailyTotal, 2) ?></span>\n"
+        "                </div>\n"
+        "                <?php elseif ($date): ?>\n"
+        "                <div class=\"booking-summary-row\">\n"
+        "                    <span>Date</span>\n"
+        "                    <span><?= e($date) ?></span>\n"
+        "                </div>\n"
+        "                <?php endif ?>"
+    )
+
+    for old, new, label in [
+        (old_top_vars,      new_top_vars,      'top PHP vars'),
+        (old_hidden,        new_hidden,         'daily hidden inputs'),
+        (old_summary_date,  new_summary_date,   'daily summary rows'),
+    ]:
+        if old in form:
+            form = form.replace(old, new)
+            print(f'OK  form.php — {label}')
+        else:
+            print(f'ERR form.php — pattern not found for {label}')
+
+    with open(form_path, 'w') as f: f.write(form)
+else:
+    print('SKIP form.php — already updated')
+
+php_lint(form_path, 'themes/default/booking/form.php')
+
+print('\nDone.')

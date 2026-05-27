@@ -1,0 +1,140 @@
+---
+tags: [veloSolutions, velocms, dashboard, übersicht]
+status: aktiv
+---
+
+# veloCMS — Dashboard App
+
+Zentrale Übersicht und Schnellzugriff für alle Apps.
+
+---
+
+## 🎯 Zweck
+
+Willkommenscreen mit Status-Überblick und Quick Links zu den wichtigsten Apps.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Willkommen-Screen
+- Begrüßung: "Willkommen, [Username]!"
+- Aktuelle Uhrzeit + Datum
+- "Letzte Aktivität: Vor 2 Stunden"
+
+### 2. Status-Übersicht (Widgets)
+- **Blog:** X Blog-Beiträge (Y Entwürfe)
+- **Seiten:** X Seiten erstellt
+- **Benutzer:** X Benutzer aktiv (zuletzt: [Name] vor [Zeit])
+- **Übersetzungen:** X noch zu übersetzen
+- **Buchungen:** X neue Buchungen (heute: Y)
+
+### 3. Quick-Links (Schnellzugriff)
+Buttons zu oft genutzten Apps:
+- 📝 **Neuen Blog-Beitrag schreiben** → Blog-App
+- 📄 **Neue Seite erstellen** → Navigation-App
+- ✏️ **Frontend bearbeiten** → Visual Editor
+- 📅 **Buchungen verwalten** → Booking-App
+- 🔧 **Einstellungen** → Settings
+
+### 4. Recent Activity
+Kurzes Log der letzten Aktivitäten:
+- "John hat 'Über uns' editiert (vor 1h)"
+- "Jane hat neuen Blog-Post veröffentlicht (vor 3h)"
+- "New booking from Max (Services, 28.5.2026 14:00)"
+
+### 5. Alerts/Benachrichtigungen
+- ⚠️ "3 Blog-Beiträge warten auf Überprüfung"
+- 🌍 "5 Inhalte noch zu übersetzen"
+- 📅 "Neue Buchung für morgen eingegangen"
+
+---
+
+## 🎨 Dashboard-Mockup
+
+```
+┌────────────────────────────────────────────────────────┐
+│  Dashboard                                       [⚙️]  │
+├────────────────────────────────────────────────────────┤
+│                                                         │
+│  Willkommen, John! 📋                                  │
+│  Dienstag, 27. Mai 2026 · 14:32 Uhr                   │
+│  Letzte Aktivität: Vor 30 Minuten                      │
+│                                                         │
+├────────────────────────────────────────────────────────┤
+│  STATUS ÜBERSICHT                                       │
+│                                                         │
+│  📝 Blog             |  📄 Seiten        |  👥 Benutzer│
+│  8 Beiträge         |  12 Seiten        |  4 aktiv    │
+│  (2 Entwürfe)       |                   |             │
+│                                                         │
+│  🌍 Übersetzungen   |  📅 Buchungen                   │
+│  5 ausstehend       |  3 neue (heute)                │
+│                                                         │
+├────────────────────────────────────────────────────────┤
+│  QUICK LINKS                                            │
+│                                                         │
+│  [📝 Neuer Beitrag] [📄 Neue Seite] [✏️ Frontend]    │
+│  [📅 Buchungen]     [🔧 Settings]                     │
+│                                                         │
+├────────────────────────────────────────────────────────┤
+│  ALERTS                                                 │
+│  ⚠️  3 Blog-Beiträge ausstehend                        │
+│  🌍 5 Inhalte zu übersetzen                            │
+│  📅 Buchung morgen: Max (Services, 14:00)              │
+│                                                         │
+├────────────────────────────────────────────────────────┤
+│  RECENT ACTIVITY                                        │
+│  • John editierte "Über uns" (vor 30 Min)              │
+│  • Jane veröffentlichte "Neue Broschüre" (vor 2h)      │
+│  • New booking: Max (Services, 28.5.2026 14:00)        │
+│  • Bob erstellte neuen Benutzer "Lisa"                 │
+│                                                         │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Datenbank-Integration
+
+Dashboard liest Daten von:
+- **Blog-App:** Blog-Post-Count, Entwürfe
+- **Navigation-App:** Page-Count
+- **Benutzer-App:** Active Users
+- **Translation-App:** Pending Translations
+- **Booking-App:** Recent Bookings
+- **Audit-Log:** Recent Activities
+
+(Keine eigenen Tabellen nötig — nur Lesezugriff)
+
+---
+
+## 🔄 Real-Time Updates (Optional)
+- Activity-Log refreshed alle 30 Sekunden
+- Oder: WebSocket für Live-Updates
+- (Phase 2: Notifications wenn neue Buchung kommt)
+
+---
+
+## ✅ Success-Kriterien (Phase 1)
+
+- [ ] Dashboard-Seite lädt
+- [ ] Willkommen-Message wird angezeigt
+- [ ] Status-Widgets zeigen korrekte Zahlen
+- [ ] Quick-Links funktionieren (zu Apps)
+- [ ] Recent Activity wird angezeigt
+- [ ] Alerts werden korrekt angezeigt
+- [ ] Responsive auf Mobile
+
+---
+
+## 🔗 Abhängigkeiten
+
+- **Alle Apps:** Daten lesen (Blog, Navigation, Benutzer, Übersetzungen, Booking)
+- **Activity Logger:** System-Logs speichern
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]]

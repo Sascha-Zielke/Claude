@@ -1,0 +1,358 @@
+---
+tags: [veloSolutions, velocms, visual-editor, grid-system, technical-spec]
+status: aktiv
+---
+
+# Visual Editor — Grid-System Technische Spezifikation
+
+Dynamisches Grid-System für den Visual Editor mit Drag-and-Drop, Resizing und Live-Synchronisation.
+
+---
+
+## 🎯 Überblick
+
+Der Visual Editor arbeitet auf **2 Layout-Ebenen:**
+
+1. **Grid-Ebene:** Boxen auf dem Canvas (positionierbar, resizable)
+2. **Content-Ebene:** Komponenten innerhalb jeder Box (Text, Bilder, Tags — sortierbar)
+
+**Alle Änderungen:** Live AJAX-Sync zu PHP-Backend (kein Page-Reload)
+
+---
+
+## 📋 Anforderungen (Detailliert)
+
+### Ebene 1: Grid-System (Layout-Boxen)
+
+**Was ist eine Box?**
+- Rechteckiger Container auf dem Canvas
+- Positionierbar (X, Y)
+- Resizable (Width, Height)
+- Mit Raster-Snap (z.B. 10px Grid)
+- Enthält beliebig viele Inhalts-Komponenten
+
+**Interaktionen:**
+- ✅ Drag-and-Drop: Box verschieben (neue X, Y)
+- ✅ Resize: Ecken/Kanten greifen, Box skalieren (neue Width, Height)
+- ✅ Snapping: Beim Verschieben/Resizen am 10px-Raster einrasten
+- ✅ Visual Feedback: Outline beim Hover/Drag, Snap-Linien beim Resize
+
+### Ebene 2: Content-Editor (Komponenten innerhalb Box)
+
+**Komponenten-Typen innerhalb einer Box:**
+- `text` — Textfeld (editierbar im Visual Editor)
+- `image` — Bild (aus Media-App)
+- `tags` — Tag-Liste (z.B. Kategorien)
+
+**Interaktionen:**
+- ✅ Komponente hinzufügen: Button "Komponente hinzufügen" → Dialog mit Typ-Wahl
+- ✅ Komponente editieren: Klick auf Komponente → Inline-Editor oder Modal
+- ✅ Sortierung: Komponenten per Drag-and-Drop innerhalb Box umsortieren (neue Reihenfolge)
+- ✅ Löschen: Komponente entfernen
+
+### Ebene 3: Live-Synchronisation (AJAX)
+
+**Wann wird gespeichert?**
+- Nach jeder Box-Bewegung (Drag Drop)
+- Nach jedem Resize
+- Nach jeder Content-Änderung (Komponente added/removed/reordered)
+- **Auto-Save:** 2 Sekunden Debounce (nicht bei jeder Tastatureingabe)
+
+**Daten-Versand:**
+- Format: JSON (POST via Fetch API)
+- Ziel: `/admin/visual-editor/save-grid`
+- Payload: Kompletter Grid-State (alle Boxen + Komponenten)
+
+---
+
+## 🛠️ JavaScript-Bibliotheken — Optionen
+
+Sascha hat gefragt: Welche Bibliothek für das Grid-System?
+
+### Option A: **Gridstack.js** ⭐ EMPFOHLEN
+
+**Pros:**
+- ✅ Spezialisiert auf Grid + Drag-and-Drop
+- ✅ Built-in Snapping/Rasterung
+- ✅ Responsive Grid
+- ✅ Touch-freundlich (Mobile)
+- ✅ Leichte Integration
+- ✅ Große Community
+
+**Cons:**
+- ⚠️ Layout nur für Grid-Container (benötigt zusätzliche Lib für Inner-Content)
+
+**Größe:** ~40KB
+
+**Für Inner-Content (Komponenten sortieren):** SortableJS (~20KB)
+
+---
+
+### Option B: **Muuri**
+
+**Pros:**
+- ✅ Mehr Kontrolle über Animations
+- ✅ Flexible Grid-Layouts
+- ✅ Gutes Performance
+
+**Cons:**
+- ⚠️ Weniger Dokumentation
+- ⚠️ Komplexer zu konfigurieren
+- ⚠️ Weniger vorkonfigurierte Features
+
+**Größe:** ~30KB
+
+---
+
+### Option C: **Interact.js**
+
+**Pros:**
+- ✅ Höchste Kontrolle (low-level)
+- ✅ Unglaublich flexibel
+
+**Cons:**
+- ❌ Mehr Code-Aufwand
+- ❌ Keine vorkonfigurierte Grid-Features
+- ❌ Snapping manuell implementieren
+
+**Größe:** ~10KB (aber mehr Custom-Code nötig)
+
+---
+
+### 🎯 Empfehlung für veloCMS
+
+**Gridstack.js + SortableJS**
+
+**Begründung:**
+- Gridstack für Grid-Container (Boxen auf Canvas)
+- SortableJS für Inner-Content (Komponenten-Reihenfolge in Box)
+- Kombination ist etabliert, gut dokumentiert, erprobtt
+- Minimale Custom-Code-Anforderung
+- Responsive + Touch-Support out-of-the-box
+
+---
+
+## 📊 JSON-Datenstruktur
+
+### Grid-State Structure
+
+```json
+{
+  "page_id": 123,
+  "grid_data": {
+    "grid_config": {
+      "columns": 12,
+      "row_height": 50,
+      "margin": 10,
+      "column_width": 80
+    },
+    "boxes": [
+      {
+        "id": "box_001",
+        "x": 0,
+        "y": 0,
+        "width": 4,
+        "height": 3,
+        "z_index": 1,
+        "components": [
+          {
+            "id": "comp_001",
+            "type": "text",
+            "order": 1,
+            "content": "Über uns..."
+          },
+          {
+            "id": "comp_002",
+            "type": "image",
+            "order": 2,
+            "content": {
+              "image_id": 42,
+              "alt_text": "Team Photo"
+            }
+          },
+          {
+            "id": "comp_003",
+            "type": "tags",
+            "order": 3,
+            "content": ["Innovation", "Team", "Quality"]
+          }
+        ]
+      },
+      {
+        "id": "box_002",
+        "x": 4,
+        "y": 0,
+        "width": 8,
+        "height": 3,
+        "z_index": 1,
+        "components": []
+      }
+    ]
+  }
+}
+```
+
+### Erklärung:
+
+**`grid_config`** — Grid-Konfiguration
+- `columns`: Gesamtspalten (z.B. 12 wie Bootstrap)
+- `row_height`: Höhe einer Reihe in Pixeln
+- `margin`: Abstand zwischen Boxen
+- `column_width`: Breite einer Spalte in Pixeln
+
+**`boxes`** — Array aller Boxen auf dem Canvas
+- `id`: Eindeutige Box-ID
+- `x`, `y`: Position im Grid (Spalten/Reihen)
+- `width`, `height`: Größe in Grid-Units
+- `z_index`: Überlagerings-Reihenfolge
+- `components`: Array der Inhalts-Komponenten
+
+**`components`** — Inhalts-Komponenten in der Box
+- `id`: Eindeutige Komponenten-ID
+- `type`: "text" | "image" | "tags"
+- `order`: Sortierungs-Reihenfolge
+- `content`: Der tatsächliche Inhalt (variabel nach Type)
+
+---
+
+## 🔄 AJAX-Payload beim Speichern
+
+**Beispiel POST zu `/admin/visual-editor/save-grid`:**
+
+```javascript
+// Fetch-Request
+fetch('/admin/visual-editor/save-grid', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken // CSRF-Protection
+    },
+    body: JSON.stringify({
+        page_id: 123,
+        grid_data: {
+            grid_config: { ... },
+            boxes: [ ... ]
+        }
+    })
+})
+.then(response => response.json())
+.then(data => {
+    if (data.success) {
+        console.log('Grid saved!');
+    }
+})
+```
+
+**Response vom Server (JSON):**
+
+```json
+{
+    "success": true,
+    "message": "Grid saved successfully",
+    "timestamp": "2026-05-27T10:30:00Z"
+}
+```
+
+---
+
+## 💾 PHP-Backend Anforderungen
+
+### Endpoint: `/admin/visual-editor/save-grid`
+
+**Aufgaben:**
+1. ✅ Empfange JSON-Payload
+2. ✅ Validiere Structure (Page-ID exists, Grid-Data valid)
+3. ✅ Sanitize Inhalte (Text, Alt-Text, Tags)
+4. ✅ Speichere in DB (oder überschreibe existierende Row)
+5. ✅ Sende JSON-Response zurück
+
+**Validierung:**
+- Page-ID muss existieren
+- Grid-Config Werte müssen Zahlen sein
+- Box-IDs, Component-IDs müssen eindeutig sein
+- Component-Types müssen erlaubt sein (text, image, tags)
+- Text-Content muss sanitized werden (XSS-Protection)
+- Image-IDs müssen in Media-DB existieren
+
+**Database:**
+- Tabelle: `velocms_page_layouts` oder ähnlich
+- Spalten: `id`, `page_id`, `grid_data` (JSON), `created_at`, `updated_at`
+
+---
+
+## 🎯 Alternative Umsetzungsmöglichkeiten
+
+### Variante 1: Absolute Pixel-Positioning (statt Grid-Units)
+
+**Grid-Units Approach (EMPFOHLEN):**
+```json
+{ "x": 0, "y": 0, "width": 4, "height": 3 }
+// x=0, y=0 = erste Spalte, erste Reihe
+// width=4 = 4 Spalten breit
+```
+
+**Alternative: Absolute Pixel:**
+```json
+{ "x_px": 0, "y_px": 0, "width_px": 320, "height_px": 150 }
+// Direkte Pixel-Positionen
+```
+
+**Unterschied:**
+- Grid-Units: Responsive, skaliert mit verschiedenen Bildschirm-Größen
+- Pixel: Exakt, aber nicht responsive
+
+**Empfehlung:** Grid-Units (veloCMS-Seiten sollen responsive sein)
+
+---
+
+### Variante 2: Save-Trigger
+
+**Option A: Auto-Save (EMPFOHLEN)**
+- Jede Änderung löst AJAX aus (mit Debounce 2s)
+- Pro: Immer synchronized
+- Contra: Mehr Server-Calls
+
+**Option B: Manuell Save-Button**
+- User klickt "Speichern" nach Änderungen
+- Pro: Weniger Server-Load
+- Contra: Risiko von Datenverlust
+
+**Empfehlung:** Auto-Save mit Debounce (User Experience)
+
+---
+
+### Variante 3: Component-Types Erweiterbar?
+
+**Feste Types (aktuell):**
+- text, image, tags
+
+**Erweiterbar?**
+- Button, Heading, Separator, Custom HTML?
+- Pro: Mehr Flexibilität
+- Contra: Komplexere Verwaltung
+
+**Empfehlung:** Start mit 3 Types, später erweiterbar (Architecture supports it)
+
+---
+
+## 📋 Klärungsfragen für Claude Code (vor Implementierung)
+
+**Entscheide dich für:**
+
+1. ✅ **Bibliothek:** Gridstack.js + SortableJS? (Oder alternative?)
+2. ✅ **Positioning:** Grid-Units (responsive) oder Pixel (absolut)?
+3. ✅ **Save-Strategie:** Auto-Save mit Debounce oder Manueller Save-Button?
+4. ✅ **Component-Types:** Nur 3 (text, image, tags) oder erweiterbar für später?
+
+**Falls Alternativen gewünscht:** Frage Sascha, bevor du codest!
+
+---
+
+## 🔗 Übergeordnet
+
+← [[_index|Visual Editor App]] | [[../App-Development-Guide|App-Development Guide]]
+
+---
+
+**Status:** Anforderungs-Spezifikation (vor Claude Code Implementation)  
+**Nächster Schritt:** Saschas Entscheidung zu den Varianten, dann: Masterplan + Code

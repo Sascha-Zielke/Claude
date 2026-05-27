@@ -1,0 +1,46 @@
+Fixes needed in Booking module:
+
+1. BOOKING DETAIL VIEW — Daily booking display:
+- TIME field: show check-in and check-out DATE 
+  instead of times. Format: "20 May 2026 → 21 May 2026"
+- DURATION field: show nights instead of minutes. 
+  Format: "1 night" or "3 nights"
+- PRICE CALCULATION: fix daily rate calculation — 
+  total = nights × resource daily_rate. If daily_rate 
+  is 0 or null, show a warning in admin view.
+
+2. BOOKING CHANGES & CANCELLATION:
+Add two buttons to Booking Detail view:
+- "Edit Booking" → admin can change date, resource, 
+  or status
+- "Cancel Booking" → sets status to cancelled, 
+  triggers automatic email to customer
+
+Email templates for:
+- Booking modification: subject + body with old 
+  and new details
+- Booking cancellation: subject + body with booking 
+  reference and apology
+
+3. DATE/TIME VALIDATION — Prevent invalid ranges:
+Client-side (JavaScript, real-time):
+- When start date/time is selected, set minimum 
+  value of end date/time to start + minimum duration
+- If end is before start: show inline error and 
+  disable submit button
+- Daily bookings: check-out minimum = check-in + 1 day
+- Hourly bookings: end time minimum = start time + 
+  minimum slot duration
+
+Server-side (PHP):
+- Validate end > start before saving
+- If invalid: return proper 400 error with clear 
+  message, never a 500 error
+- Wrap all booking submissions in try/catch
+- On any error: show friendly message instead of 
+  500 page
+- Log actual error server-side for debugging
+
+After all fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

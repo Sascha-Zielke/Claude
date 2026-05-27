@@ -1,0 +1,252 @@
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-37-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-38-// ── Auth ──────────────────────────────────────────────────────────────────────
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php:39:$router->public('POST', '/maxiworx/cms/api/auth/login', function ($p, $u, $body) use ($auth) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-40-    $username = trim((string)($body['username'] ?? ''));
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-41-    $password = (string)($body['password'] ?? '');
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-43-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-44-    try {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php:45:        $result = $auth->login($username, $password, $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-46-    } catch (\RuntimeException $e) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\api.php-47-        jsonError($e->getMessage(), 429);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\index.php-440-        <li><a href="/datenschutz" class="footer-link" data-i18n="footer.privacy">Datenschutz</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\index.php-441-        <li><a href="/agb"         class="footer-link" data-i18n="footer.terms">AGB</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\index.php:442:        <li><a href="/cms/login"   class="footer-link footer-link--cms">Login</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\index.php-443-      </ul>
+D:\Eigene Dateien\Webseiten\Maxiworx\index.php-444-      <div class="footer-social">
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-1-<?php
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-2-/**
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:3: * public/cms/login.php
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:4: * CMS Login — CSRF-Token wird als Hidden-Field gesetzt.
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-5- */
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-6-declare(strict_types=1);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-13-}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-14-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:15:// Generate CSRF token for login form
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:16:if (empty($_SESSION['login_csrf'])) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:17:    $_SESSION['login_csrf'] = bin2hex(random_bytes(32));
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-18-}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-19-
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-21-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-22-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:23:    // Verify login CSRF
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-24-    $submittedToken = $_POST['csrf_token'] ?? '';
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:25:    if (!hash_equals($_SESSION['login_csrf'], $submittedToken)) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-26-        $error = 'Ungültige Anfrage. Bitte Seite neu laden.';
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-27-    } else {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-28-            $auth = new \Maxiworx\Auth\AuthService(getDbConnection());
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-29-        try {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:30:            $result = $auth->login(
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-31-                trim($_POST['username'] ?? ''),
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-32-                $_POST['password'] ?? '',
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-35-            );
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-36-            if ($result) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:37:                // Invalidate login CSRF after use
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:38:                unset($_SESSION['login_csrf']);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-39-                if ($result['force_pw_change']) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-40-                    header('Location: ' . BASE_WEB_PATH . '/cms/change-password.php');
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-57-  <meta charset="UTF-8">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-58-  <meta name="viewport" content="width=device-width, initial-scale=1">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:59:  <title>Login — Maxiworx CMS</title>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-60-  <link rel="preconnect" href="https://fonts.googleapis.com">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-61-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400&display=swap" rel="stylesheet">
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-96-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-97-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:98:    .login-wrap {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-99-      width: 100%;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-100-      max-width: 380px;
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-104-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-105-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:106:    .login-logo {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-107-      text-align: center;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-108-      margin-bottom: 36px;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-109-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:110:    .login-logo h1 {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-111-      font-size: 22px;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-112-      font-weight: 600;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-113-      letter-spacing: -.02em;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-114-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:115:    .login-logo h1 span { color: var(--accent); }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:116:    .login-logo p {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-117-      font-size: 12px;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-118-      color: var(--muted);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-122-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-123-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:124:    .login-card {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-125-      background: var(--bg-surface);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-126-      border: 1px solid var(--border);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-170-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-171-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:172:    .btn-login {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-173-      width: 100%;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-174-      padding: 12px;
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-185-      letter-spacing: .02em;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-186-    }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:187:    .btn-login:hover { background: #e8bb77; }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:188:    .btn-login:active { background: #c4923f; }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-189-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:190:    .login-footer {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-191-      text-align: center;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-192-      margin-top: 20px;
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-198-<body>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-199-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:200:<div class="login-wrap">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:201:  <div class="login-logo">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-202-    <h1>Maxi<span>worx</span></h1>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-203-    <p>Content Management System</p>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-204-  </div>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-205-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:206:  <div class="login-card">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-207-    <?php if ($error): ?>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-208-    <div class="error-box">
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-212-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-213-    <form method="POST" action="" autocomplete="off">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:214:      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['login_csrf']) ?>">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-215-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-216-      <div class="form-group">
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-227-      </div>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-228-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:229:      <button type="submit" class="btn-login">Anmelden</button>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-230-    </form>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-231-  </div>
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-232-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php:233:  <div class="login-footer">
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-234-    Maxiworx 2026 CMS &mdash; Nur für autorisierte Benutzer
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\login.php-235-  </div>
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\config\bootstrap.php-115-    if (empty($_SESSION['user_id'])) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\config\bootstrap.php-116-        if ($jsonMode) jsonError('Nicht authentifiziert.', 401);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\config\bootstrap.php:117:        header('Location: ' . BASE_WEB_PATH . '/cms/login.php');
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\config\bootstrap.php-118-        exit;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\config\bootstrap.php-119-    }
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\logout.php-12-}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\logout.php-13-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\logout.php:14:header('Location: /maxiworx/cms/login.php');
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\logout.php-15-exit;
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\logout.php-16-    
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\includes\page-footer.php-15-      <li><a href="/maxiworx/datenschutz.php" class="footer-link">Datenschutz</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\includes\page-footer.php-16-      <li><a href="/maxiworx/agb.php"         class="footer-link">AGB</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\includes\page-footer.php:17:      <li><a href="/maxiworx/cms/login.php"   class="footer-link footer-link--cms">Login</a></li>
+D:\Eigene Dateien\Webseiten\Maxiworx\includes\page-footer.php-18-    </ul>
+D:\Eigene Dateien\Webseiten\Maxiworx\includes\page-footer.php-19-    <div class="footer-social">
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\migrations\seed_admin.php-25-if ($stmt->rowCount() === 1) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\migrations\seed_admin.php-26-    echo "[OK] Admin password hash set (Argon2id).\n";
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\migrations\seed_admin.php:27:    echo "[!!] Login: admin / admin123 — Change this immediately after first login!\n";
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\migrations\seed_admin.php-28-} else {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\migrations\seed_admin.php-29-    echo "[ERR] No admin user found. Did 001_initial_schema.sql run first?\n";
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-2-/**
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-3- * src/Auth/AuthService.php
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:4: * Handles login, logout, password change, session validation.
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-5- * All DB queries via PDO Prepared Statements.
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-6- */
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-20-    public function __construct(private readonly PDO $db) {}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-21-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:22:    // ── Login ─────────────────────────────────────────────────────────────────
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-23-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-24-    /**
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-26-     * @return array{id: int, username: string, role: string} on success
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-27-     */
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:28:    public function login(string $username, string $password, string $ip, string $userAgent): array
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-29-    {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-30-        $username = trim($username);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-44-        if (!$user) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-45-            $this->dummyVerify();
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:46:            $this->auditLog(null, 'auth.login_fail_unknown', $ip);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-47-            return [];
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-48-        }
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-62-        if (!password_verify($password, $user['password'])) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-63-            $this->handleFailedAttempt((int)$user['id'], (int)$user['failed_attempts']);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:64:            $this->auditLog((int)$user['id'], 'auth.login_fail_password', $ip);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-65-            return [];
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-66-        }
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-103-        }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-104-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:105:        // 8. Reset failed attempts + update last_login
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-106-        $this->db->prepare(
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-107-            'UPDATE cms_users
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:108:             SET failed_attempts = 0, locked_until = NULL, last_login = NOW()
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-109-             WHERE id = ?'
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-110-        )->execute([$user['id']]);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-111-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php:112:        $this->auditLog((int)$user['id'], 'auth.login_success', $ip);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-113-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Auth\AuthService.php-114-        return [
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Helpers\Router.php-76-                }
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Helpers\Router.php-77-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Helpers\Router.php:78:                // CSRF enforcement on all mutations (except login)
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Helpers\Router.php-79-                if ($route['auth'] !== 'public') {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\src\Helpers\Router.php-80-                    verifyCsrf();
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-37-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-38-// ── Auth ──────────────────────────────────────────────────────────────────────
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php:39:$router->public('POST', '/maxiworx/cms/api/auth/login', function ($p, $u, $body) use ($auth) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-40-    $username = trim((string)($body['username'] ?? ''));
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-41-    $password = (string)($body['password'] ?? '');
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-43-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-44-    try {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php:45:        $result = $auth->login($username, $password, $_SERVER['REMOTE_ADDR'] ?? '', $_SERVER['HTTP_USER_AGENT'] ?? '');
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-46-    } catch (\RuntimeException $e) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\api.php-47-        jsonError($e->getMessage(), 429);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-1-<?php
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-2-/**
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:3: * public/cms/login.php
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:4: * CMS Login — CSRF-Token wird als Hidden-Field gesetzt.
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-5- */
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-6-declare(strict_types=1);
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-13-}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-14-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:15:// Generate CSRF token for login form
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:16:if (empty($_SESSION['login_csrf'])) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:17:    $_SESSION['login_csrf'] = bin2hex(random_bytes(32));
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-18-}
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-19-
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-21-
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-22-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:23:    // Verify login CSRF
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-24-    $submittedToken = $_POST['csrf_token'] ?? '';
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:25:    if (!hash_equals($_SESSION['login_csrf'], $submittedToken)) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-26-        $error = 'Ungültige Anfrage. Bitte Seite neu laden.';
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-27-    } else {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-28-            $auth = new \Maxiworx\Auth\AuthService(getDbConnection());
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-29-        try {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:30:            $result = $auth->login(
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-31-                trim($_POST['username'] ?? ''),
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-32-                $_POST['password'] ?? '',
+--
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-35-            );
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-36-            if ($result) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:37:                // Invalidate login CSRF after use
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php:38:                unset($_SESSION['login_csrf']);
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-39-                if ($result['force_pw_change']) {
+D:\Eigene Dateien\Webseiten\Maxiworx\cms\tests\login.php-40-                    header('Location: /maxiworx/cms/change-password.php');
+--
+
+[Showing results with pagination = limit: 250]

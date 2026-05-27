@@ -1,0 +1,26 @@
+---
+tags: [veloSolutions, velocms, apps]
+status: aktiv
+---
+
+# veloCMS — Apps
+
+Modulare Apps für veloSolutions-Kunden.
+
+## 📦 Apps
+
+### Translation-App
+Mehrsprachige Website-Lösung. Frontend + Backend mit automatischer KI-Übersetzung.
+
+[[Translation-App/Translation-App|Anforderungen]] | [[Translation-App/Advanced-Ideas|Ideen für Phase 2-3]]
+
+### Booking-App
+Buchungssystem für Dienstleistungen.
+
+[[Booking-App/_index|Booking-App Übersicht]]
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../veloCMS|veloCMS Projekt Übersicht]]

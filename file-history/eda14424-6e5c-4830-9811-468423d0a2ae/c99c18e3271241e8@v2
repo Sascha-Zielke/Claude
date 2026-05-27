@@ -1,0 +1,237 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/cron/module.json ──────────────────────────────────────────────────
+files['modules/cron/module.json'] = """{
+    "name": "cron",
+    "label": "Scheduled Tasks",
+    "version": "1.0.0",
+    "description": "Runs scheduled background jobs.",
+    "author": "VeloCMS"
+}
+"""
+
+# ── modules/cron/models/CronJob.php ───────────────────────────────────────────
+files['modules/cron/models/CronJob.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Cron\Models;
+
+class CronJob
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query(
+            'SELECT * FROM cron_jobs ORDER BY name'
+        )->fetchAll();
+    }
+
+    /** Returns jobs whose next_run_at is due and are enabled. */
+    public function getDue(): array
+    {
+        return $this->pdo->query(
+            "SELECT * FROM cron_jobs
+             WHERE enabled = 1 AND next_run_at <= NOW()"
+        )->fetchAll();
+    }
+
+    /** Mark a job as run and schedule next execution. */
+    public function markRun(int $id, int $intervalMinutes): void
+    {
+        $this->pdo->prepare(
+            'UPDATE cron_jobs
+             SET last_run_at = NOW(),
+                 next_run_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+             WHERE id = ?'
+        )->execute([$intervalMinutes, $id]);
+    }
+
+    public function toggle(int $id, bool $enabled): void
+    {
+        $this->pdo->prepare(
+            'UPDATE cron_jobs SET enabled = ? WHERE id = ?'
+        )->execute([$enabled ? 1 : 0, $id]);
+    }
+}
+"""
+
+# ── cli/commands/CronRunCommand.php ───────────────────────────────────────────
+files['cli/commands/CronRunCommand.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Cli;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Modules\Cron\Models\CronJob;
+
+class CronRunCommand
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function run(array $args): void
+    {
+        $pdo  = $this->app->make(Database::class)->core();
+        $jobs = new CronJob($pdo);
+
+        $due = $jobs->getDue();
+        if (empty($due)) {
+            echo "No jobs due.\n";
+            return;
+        }
+
+        foreach ($due as $job) {
+            echo "Running: {$job['name']} ... ";
+            try {
+                $this->dispatch($job['name']);
+                $jobs->markRun((int) $job['id'], (int) $job['interval_minutes']);
+                echo "OK\n";
+            } catch (\Throwable $e) {
+                echo "FAILED: {$e->getMessage()}\n";
+            }
+        }
+    }
+
+    private function dispatch(string $name): void
+    {
+        $map = [
+            'email:flush'    => EmailFlushCommand::class,
+            'search:reindex' => SearchReindexCommand::class,
+            'cache:clear'    => CacheClearCommand::class,
+            'audit:prune'    => AuditPruneCommand::class,
+        ];
+
+        if (!isset($map[$name])) {
+            throw new \RuntimeException("Unknown cron job: {$name}");
+        }
+
+        $cmd = new $map[$name]($this->app);
+        $cmd->run([]);
+    }
+}
+"""
+
+# ── modules/cron/admin/controllers/CronAdminController.php ───────────────────
+files['modules/cron/admin/controllers/CronAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Cron\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Cron\Models\CronJob;
+
+class CronAdminController extends BaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $pdo  = $this->app->make(Database::class)->core();
+        $jobs = (new CronJob($pdo))->all();
+
+        return $this->layout('cron/index.php', [
+            'user' => $auth->user(),
+            'page' => 'cron',
+            'jobs' => $jobs,
+            'csrf' => $auth->csrfToken(),
+        ]);
+    }
+
+    public function toggle(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        $auth->verifyCsrf();
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $model   = new CronJob($pdo);
+        $id      = (int) ($params['id'] ?? 0);
+        $enabled = $request->post('enabled', '0') === '1';
+        $model->toggle($id, $enabled);
+
+        return $this->redirect('/admin/cron');
+    }
+}
+"""
+
+# ── admin/views/cron/index.php ────────────────────────────────────────────────
+files['admin/views/cron/index.php'] = r"""<div class="vcms-page-header">
+    <h2>Scheduled Tasks</h2>
+    <small style="color:#64748b">Add <code>* * * * * php /var/www/velocms/cli/velocms cron:run</code> to system crontab.</small>
+</div>
+
+<div class="vcms-card" style="padding:0">
+    <table class="vcms-table">
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Interval</th>
+                <th>Last Run</th>
+                <th>Next Run</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($jobs as $job): ?>
+            <tr>
+                <td>
+                    <strong><?= e($job['label']) ?></strong>
+                    <div style="font-size:.75rem;color:#94a3b8"><?= e($job['name']) ?></div>
+                </td>
+                <td><?= e($job['interval_minutes']) ?> min</td>
+                <td style="color:#64748b;font-size:.85rem">
+                    <?= $job['last_run_at'] ? e(date('d M Y H:i', strtotime($job['last_run_at']))) : '—' ?>
+                </td>
+                <td style="color:#64748b;font-size:.85rem">
+                    <?= e(date('d M Y H:i', strtotime($job['next_run_at']))) ?>
+                </td>
+                <td>
+                    <?php if ($job['enabled']): ?>
+                        <span class="vcms-badge" style="background:#dcfce7;color:#166534">Enabled</span>
+                    <?php else: ?>
+                        <span class="vcms-badge" style="background:#fee2e2;color:#991b1b">Disabled</span>
+                    <?php endif ?>
+                </td>
+                <td>
+                    <form method="post" action="/admin/cron/<?= $job['id'] ?>/toggle">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <input type="hidden" name="enabled" value="<?= $job['enabled'] ? '0' : '1' ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--ghost">
+                            <?= $job['enabled'] ? 'Disable' : 'Enable' ?>
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+</div>
+"""
+
+# Write all files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# Patch cli/velocms to add cron:run command
+cli_path = base + '/cli/velocms'
+cli = open(cli_path).read()
+
+if 'cron:run' not in cli:
+    cli = cli.replace(
+        "'cache:clear'",
+        "'cron:run'        => VeloCMS\\Cli\\CronRunCommand::class,\n    'cache:clear'"
+    )
+    open(cli_path, 'w').write(cli)
+    print('OK  cli/velocms (cron:run added)')
+else:
+    print('OK  cli/velocms (cron:run already present)')
+
+print('\nPhase 5e done — cron module written.')

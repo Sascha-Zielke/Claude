@@ -1,0 +1,44 @@
+---
+tags: [veloSolutions, velocms, apps]
+status: aktiv
+---
+
+# veloCMS — Apps
+
+Modulare Apps für veloSolutions-Kunden.
+
+## 📦 Core Apps
+
+### Dashboard
+Zentrale Übersicht mit Status und Quick-Links.
+[[Dashboard-App/_index|Details]]
+
+### Visual Editor ⭐
+Frontend-Editor mit Live-Preview (CRITICAL App).
+[[Visual-Editor-App/_index|Details]]
+
+### Navigation
+Seiten-Management und Frontend-Menu.
+[[Navigation-App/_index|Details]]
+
+### Blog
+Blog-Beiträge mit Rich Text Editor.
+[[Blog-App/_index|Details]]
+
+### Benutzer
+User Management und Rollen.
+[[Benutzer-App/_index|Details]]
+
+### Übersetzungen
+API-Integration (DeepL, Anthropic) + Glossar.
+[[Translation-App/Translation-App|Details]]
+
+### Booking
+Booking-Tools erstellen und platzieren.
+[[Booking-App/_index|Details]]
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../veloCMS|veloCMS Projekt Übersicht]]

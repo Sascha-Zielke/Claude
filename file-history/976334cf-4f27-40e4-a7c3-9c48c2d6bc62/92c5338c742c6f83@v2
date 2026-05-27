@@ -1,0 +1,21 @@
+---
+tags: [life-os, velo-solutions, agentur]
+status: aktiv
+---
+
+# veloSolutions — AI-Web-Agentur
+
+Produkte, Plattformen und Geschäftsinfrastruktur der veloSolutions Agentur.
+
+## Projekte & Module
+
+- [[Dashboard/_index|📊 Dashboard-Plattform]] — Zentrale Verwaltungsplattform
+  - [[Dashboard/veloCMS/veloCMS|🔧 veloCMS]] — CMS für Kundenseiten
+  - [[Dashboard/Finanzen, Steuern, Buchhaltung/_index|💼 Finanzen & Buchhaltung]]
+  - [[Dashboard/Marketing/_index|📢 Marketing]]
+  - [[Dashboard/Sicherheit/_index|🔒 Sicherheit]]
+  - [[Dashboard/Kundenbetreuung/_index|👥 Kundenbetreuung]]
+
+## Übergeordnet
+
+← [[../Life OS|Life OS Übersicht]]

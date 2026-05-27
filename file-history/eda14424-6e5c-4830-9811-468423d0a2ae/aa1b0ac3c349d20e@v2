@@ -1,0 +1,227 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── migrations/pages/001_create_pages_table.php ──────────────────────────────
+files['migrations/pages/001_create_pages_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS pages (
+            id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            parent_id    BIGINT UNSIGNED NULL,
+            title        VARCHAR(255)    NOT NULL,
+            slug         VARCHAR(255)    NOT NULL UNIQUE,
+            body         LONGTEXT        NOT NULL DEFAULT '',
+            status       ENUM('draft','published','scheduled','archived')
+                         NOT NULL DEFAULT 'draft',
+            template     VARCHAR(100)    NOT NULL DEFAULT 'default',
+            meta_title   VARCHAR(255)    NOT NULL DEFAULT '',
+            meta_desc    TEXT            NOT NULL DEFAULT '',
+            published_at DATETIME        NULL,
+            created_by   BIGINT UNSIGNED NOT NULL,
+            created_at   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
+                         ON UPDATE CURRENT_TIMESTAMP,
+            deleted_at   DATETIME        NULL,
+            FOREIGN KEY (parent_id) REFERENCES pages(id) ON DELETE SET NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_slug    (slug),
+            INDEX idx_status  (status),
+            INDEX idx_parent  (parent_id),
+            INDEX idx_deleted (deleted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS pages'); }
+};
+"""
+
+# ── migrations/pages/002_create_page_revisions_table.php ─────────────────────
+files['migrations/pages/002_create_page_revisions_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS page_revisions (
+            id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            page_id    BIGINT UNSIGNED NOT NULL,
+            body       LONGTEXT        NOT NULL,
+            saved_by   BIGINT UNSIGNED NOT NULL,
+            created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (page_id)  REFERENCES pages(id) ON DELETE CASCADE,
+            FOREIGN KEY (saved_by) REFERENCES users(id),
+            INDEX idx_page (page_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS page_revisions'); }
+};
+"""
+
+# ── migrations/media/001_create_media_table.php ───────────────────────────────
+files['migrations/media/001_create_media_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS media (
+            id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            filename    VARCHAR(255)    NOT NULL,
+            disk_path   VARCHAR(512)    NOT NULL,
+            mime_type   VARCHAR(100)    NOT NULL,
+            size        BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            alt         VARCHAR(255)    NOT NULL DEFAULT '',
+            caption     TEXT            NOT NULL DEFAULT '',
+            uploaded_by BIGINT UNSIGNED NOT NULL,
+            created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id),
+            INDEX idx_mime (mime_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS media'); }
+};
+"""
+
+# ── migrations/blog/001_create_categories_table.php ──────────────────────────
+files['migrations/blog/001_create_categories_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS categories (
+            id        BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name      VARCHAR(100)    NOT NULL,
+            slug      VARCHAR(100)    NOT NULL UNIQUE,
+            parent_id BIGINT UNSIGNED NULL,
+            INDEX idx_slug (slug)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS categories'); }
+};
+"""
+
+# ── migrations/blog/002_create_tags_table.php ────────────────────────────────
+files['migrations/blog/002_create_tags_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS tags (
+            id   BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            slug VARCHAR(100) NOT NULL UNIQUE,
+            INDEX idx_slug (slug)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS tags'); }
+};
+"""
+
+# ── migrations/blog/003_create_posts_table.php ───────────────────────────────
+files['migrations/blog/003_create_posts_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS posts (
+            id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            title             VARCHAR(255)    NOT NULL,
+            slug              VARCHAR(255)    NOT NULL UNIQUE,
+            body              LONGTEXT        NOT NULL DEFAULT '',
+            status            ENUM('draft','published','scheduled') NOT NULL DEFAULT 'draft',
+            author_id         BIGINT UNSIGNED NOT NULL,
+            featured_image_id BIGINT UNSIGNED NULL,
+            published_at      DATETIME        NULL,
+            created_at        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at        DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
+                              ON UPDATE CURRENT_TIMESTAMP,
+            deleted_at        DATETIME        NULL,
+            FOREIGN KEY (author_id) REFERENCES users(id),
+            INDEX idx_slug    (slug),
+            INDEX idx_status  (status),
+            INDEX idx_deleted (deleted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS posts'); }
+};
+"""
+
+# ── migrations/blog/004_create_post_categories_table.php ─────────────────────
+files['migrations/blog/004_create_post_categories_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS post_categories (
+            post_id     BIGINT UNSIGNED NOT NULL,
+            category_id BIGINT UNSIGNED NOT NULL,
+            PRIMARY KEY (post_id, category_id),
+            FOREIGN KEY (post_id)     REFERENCES posts(id)      ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS post_categories'); }
+};
+"""
+
+# ── migrations/blog/005_create_post_tags_table.php ───────────────────────────
+files['migrations/blog/005_create_post_tags_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS post_tags (
+            post_id BIGINT UNSIGNED NOT NULL,
+            tag_id  BIGINT UNSIGNED NOT NULL,
+            PRIMARY KEY (post_id, tag_id),
+            FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (tag_id)  REFERENCES tags(id)  ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS post_tags'); }
+};
+"""
+
+# ── migrations/navigation/001_create_menus_table.php ─────────────────────────
+files['migrations/navigation/001_create_menus_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS menus (
+            id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            name       VARCHAR(100) NOT NULL,
+            slug       VARCHAR(100) NOT NULL UNIQUE,
+            created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                       ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_slug (slug)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS menus'); }
+};
+"""
+
+# ── migrations/navigation/002_create_menu_items_table.php ────────────────────
+files['migrations/navigation/002_create_menu_items_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS menu_items (
+            id         BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
+            menu_id    BIGINT UNSIGNED  NOT NULL,
+            parent_id  BIGINT UNSIGNED  NULL,
+            label      VARCHAR(100)     NOT NULL,
+            url        VARCHAR(512)     NOT NULL DEFAULT '',
+            page_id    BIGINT UNSIGNED  NULL,
+            sort_order SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            FOREIGN KEY (menu_id)   REFERENCES menus(id)      ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES menu_items(id) ON DELETE SET NULL,
+            INDEX idx_menu (menu_id),
+            INDEX idx_sort (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS menu_items'); }
+};
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 3a done — all migrations written.')

@@ -1,0 +1,1085 @@
+#!/usr/bin/env python3
+"""Batch 2 — t() wrapping: admin views (non-booking)"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    full = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── dashboard ─────────────────────────────────────────────────────────────────
+write('admin/views/dashboard.php', r"""<div class="vcms-welcome">
+    <h2><?= e(t('dashboard.welcome', 'Willkommen zurück')) ?>, <?= e($user['name'] ?? 'Admin') ?>.</h2>
+    <p><?= e(t('dashboard.overview', 'Hier ist eine Übersicht Ihrer VeloCMS-Installation.')) ?></p>
+</div>
+
+<div class="vcms-cards-grid">
+    <div class="vcms-card">
+        <h3><?= e(t('dashboard.active_sites', 'Aktive Websites')) ?></h3>
+        <div class="value"><?= (int) $siteCount ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3><?= e(t('nav.users', 'Benutzer')) ?></h3>
+        <div class="value"><?= (int) $userCount ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3><?= e(t('dashboard.php_version', 'PHP-Version')) ?></h3>
+        <div class="value value--sm"><?= e($phpVersion) ?></div>
+    </div>
+    <div class="vcms-card">
+        <h3><?= e(t('dashboard.cms_version', 'CMS-Version')) ?></h3>
+        <div class="value value--sm"><?= e($cmsVersion) ?></div>
+    </div>
+</div>
+
+<div class="vcms-card">
+    <h3><?= e(t('dashboard.next_steps', 'Nächste Schritte')) ?></h3>
+    <ul class="vcms-checklist">
+        <li><?= e(t('dashboard.step_site', 'Erste Website anlegen')) ?>: <code>php cli/velocms site:create --domain=yoursite.com</code></li>
+        <li><?= e(t('dashboard.step_nginx', 'Nginx-Serverblock für die Website einrichten')) ?></li>
+        <li><?= e(t('dashboard.step_dns', 'Domain oder DNS-Eintrag auf diesen Server zeigen lassen')) ?></li>
+        <li><?= e(t('dashboard.step_https', 'HTTPS mit Let\'s Encrypt aktivieren')) ?>: <code>certbot --nginx</code></li>
+    </ul>
+</div>
+""")
+
+# ── login ─────────────────────────────────────────────────────────────────────
+write('admin/views/login.php', r"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><?= e(t('login.title', 'Anmelden')) ?> &mdash; VeloCMS</title>
+    <link rel="stylesheet" href="/assets/admin/style.css">
+</head>
+<body>
+<div class="vcms-login-wrap">
+    <div class="vcms-login-box">
+
+        <div class="vcms-login-logo">
+            <h1>Velo<span>CMS</span></h1>
+            <p><?= e(t('login.subtitle', 'Anmelden am Admin-Panel')) ?></p>
+        </div>
+
+        <?php if (!empty($error)): ?>
+            <div class="vcms-alert vcms-alert-error"><?= e($error) ?></div>
+        <?php endif; ?>
+
+        <form class="vcms-form" method="post" action="/admin/login">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="field">
+                <label for="email"><?= e(t('label.email', 'E-Mail')) ?></label>
+                <input type="email" id="email" name="email"
+                       value="<?= e($email ?? '') ?>" autofocus required autocomplete="email">
+            </div>
+            <div class="field">
+                <label for="password"><?= e(t('login.password', 'Passwort')) ?></label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn-primary"><?= e(t('login.submit', 'Anmelden')) ?></button>
+        </form>
+
+    </div>
+</div>
+</body>
+</html>
+""")
+
+# ── profile ───────────────────────────────────────────────────────────────────
+write('admin/views/profile.php', r"""<?php
+$flash = $_SESSION['_flash'] ?? null;
+unset($_SESSION['_flash']);
+?>
+<div class="admin-page-header">
+    <h1><?= e(t('nav.profile', 'Profil')) ?></h1>
+</div>
+
+<?php if ($flash): ?>
+    <div class="alert alert-success"><?= e($flash) ?></div>
+<?php endif; ?>
+<?php if (!empty($error)): ?>
+    <div class="alert alert-danger"><?= e($error) ?></div>
+<?php endif; ?>
+
+<div class="card" style="max-width:min(520px,100%)">
+    <div class="card-body">
+        <dl style="margin:0 0 1.5rem">
+            <dt style="color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em"><?= e(t('label.email', 'E-Mail')) ?></dt>
+            <dd style="margin:.25rem 0 1rem;font-weight:600"><?= e($user['email']) ?></dd>
+            <dt style="color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em"><?= e(t('label.role', 'Rolle')) ?></dt>
+            <dd style="margin:.25rem 0 0;font-weight:600"><?= e($user['role']) ?></dd>
+        </dl>
+
+        <hr style="border-color:var(--border);margin:1.25rem 0">
+
+        <h2 style="font-size:1rem;margin:0 0 1rem"><?= e(t('profile.change_password', 'Passwort ändern')) ?></h2>
+        <form method="POST" action="/admin/profile/password" autocomplete="off">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+            <div class="form-group">
+                <label for="current_password"><?= e(t('profile.current_password', 'Aktuelles Passwort')) ?></label>
+                <input type="password" id="current_password" name="current_password"
+                       class="form-control" required autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="new_password"><?= e(t('profile.new_password', 'Neues Passwort')) ?> <small style="color:var(--muted)">(<?= e(t('profile.min_chars', 'min. 12 Zeichen')) ?>)</small></label>
+                <input type="password" id="new_password" name="new_password"
+                       class="form-control" required minlength="12" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label for="confirm_password"><?= e(t('profile.confirm_password', 'Passwort bestätigen')) ?></label>
+                <input type="password" id="confirm_password" name="confirm_password"
+                       class="form-control" required minlength="12" autocomplete="new-password">
+            </div>
+
+            <button type="submit" class="btn btn-primary"><?= e(t('profile.update_password', 'Passwort aktualisieren')) ?></button>
+        </form>
+    </div>
+</div>
+""")
+
+# ── pages/index ───────────────────────────────────────────────────────────────
+write('admin/views/pages/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.pages', 'Seiten')) ?></h3>
+    <a href="/admin/pages/create" class="vcms-btn">+ <?= e(t('pages.new', 'Neue Seite')) ?></a>
+</div>
+
+<?php if (empty($pages)): ?>
+    <p class="vcms-empty"><?= e(t('pages.empty', 'Noch keine Seiten.')) ?> <a href="/admin/pages/create"><?= e(t('pages.create_first', 'Erste Seite erstellen.')) ?></a></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th><?= e(t('label.name', 'Titel')) ?></th>
+            <th>Slug</th>
+            <th><?= e(t('label.status', 'Status')) ?></th>
+            <th><?= e(t('pages.parent', 'Übergeordnet')) ?></th>
+            <th><?= e(t('label.updated', 'Aktualisiert')) ?></th>
+            <th><?= e(t('label.actions', 'Aktionen')) ?></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($pages as $p): ?>
+        <tr>
+            <td><strong><?= e($p['title']) ?></strong></td>
+            <td><code>/<?= e($p['slug']) ?></code></td>
+            <td><span class="vcms-badge vcms-badge--<?= e($p['status']) ?>"><?= e($p['status']) ?></span></td>
+            <td><?= e($p['parent_title'] ?? '—') ?></td>
+            <td><?= e(substr($p['updated_at'], 0, 16)) ?></td>
+            <td class="vcms-actions">
+                <a href="/<?= e($p['slug']) ?>" target="_blank" class="vcms-btn vcms-btn--sm"><?= e(t('btn.view', 'Ansehen')) ?></a>
+                <a href="/admin/pages/<?= $p['id'] ?>/edit" class="vcms-btn vcms-btn--sm"><?= e(t('btn.edit', 'Bearbeiten')) ?></a>
+                <form method="post" action="/admin/pages/<?= $p['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('<?= e(t('pages.confirm_delete', 'Diese Seite wirklich löschen?')) ?>')">
+                        <?= e(t('btn.delete', 'Löschen')) ?>
+                    </button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+""")
+
+# ── pages/form ────────────────────────────────────────────────────────────────
+write('admin/views/pages/form.php', r"""<div class="vcms-section-header">
+    <h3><?= e($title ?? t('nav.pages', 'Seite')) ?></h3>
+    <a href="/admin/pages" class="vcms-btn vcms-btn--secondary">← <?= e(t('btn.back', 'Zurück')) ?></a>
+</div>
+
+<?php if (!empty($error)): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif; ?>
+
+<form method="post" action="<?= e($action) ?>" class="vcms-form" id="page-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group vcms-form-group--wide">
+            <label for="f-title"><?= e(t('pages.title_label', 'Titel')) ?> <span class="vcms-required">*</span></label>
+            <input type="text" id="f-title" name="title"
+                   value="<?= e($record['title'] ?? '') ?>"
+                   placeholder="<?= e(t('pages.title_placeholder', 'Seitentitel')) ?>" required autofocus>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-slug">Slug</label>
+            <div class="vcms-slug-wrap">
+                <span class="vcms-slug-prefix">/</span>
+                <input type="text" id="f-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>"
+                       placeholder="<?= e(t('pages.slug_placeholder', 'automatisch')) ?>">
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label><?= e(t('pages.body', 'Inhalt')) ?></label>
+        <div class="vcms-editor-wrap">
+            <div class="vcms-editor-toolbar" id="editor-toolbar">
+                <button type="button" data-cmd="bold"         title="Bold">B</button>
+                <button type="button" data-cmd="italic"       title="Italic"><em>I</em></button>
+                <button type="button" data-cmd="h2"           title="Heading 2">H2</button>
+                <button type="button" data-cmd="h3"           title="Heading 3">H3</button>
+                <button type="button" data-cmd="ul"           title="Bullet list">&#8226; List</button>
+                <button type="button" data-cmd="ol"           title="Numbered list">1. List</button>
+                <button type="button" data-cmd="link"         title="Insert link">&#128279; Link</button>
+                <button type="button" data-cmd="blockquote"   title="Blockquote">&#10077;</button>
+                <button type="button" data-cmd="removeFormat" title="Clear formatting">&#10060;</button>
+            </div>
+            <div id="vcms-editor" class="vcms-editor"
+                 contenteditable="true"><?= $record['body'] ?? '' ?></div>
+            <textarea name="body" id="vcms-body" hidden><?= e($record['body'] ?? '') ?></textarea>
+        </div>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="f-status"><?= e(t('label.status', 'Status')) ?></label>
+            <select id="f-status" name="status">
+                <?php foreach (['draft','published','scheduled','archived'] as $s): ?>
+                <option value="<?= $s ?>" <?= ($record['status'] ?? 'draft') === $s ? 'selected' : '' ?>>
+                    <?= ucfirst($s) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-parent"><?= e(t('pages.parent', 'Übergeordnete Seite')) ?></label>
+            <select id="f-parent" name="parent_id">
+                <option value="0"><?= e(t('pages.no_parent', '— Keine (oberste Ebene) —')) ?></option>
+                <?php foreach ($pages as $p):
+                    if (($record['id'] ?? 0) === $p['id']) continue; ?>
+                <option value="<?= $p['id'] ?>"
+                    <?= ((int)($record['parent_id'] ?? 0)) === $p['id'] ? 'selected' : '' ?>>
+                    <?= e($p['title']) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-template"><?= e(t('pages.template', 'Vorlage')) ?></label>
+            <select id="f-template" name="template">
+                <option value="default"    <?= ($record['template'] ?? '') === 'default'    ? 'selected' : '' ?>><?= e(t('pages.tpl_default',    'Standard')) ?></option>
+                <option value="full-width" <?= ($record['template'] ?? '') === 'full-width' ? 'selected' : '' ?>><?= e(t('pages.tpl_full_width', 'Volle Breite')) ?></option>
+                <option value="landing"    <?= ($record['template'] ?? '') === 'landing'    ? 'selected' : '' ?>><?= e(t('pages.tpl_landing',    'Landing')) ?></option>
+            </select>
+        </div>
+    </div>
+
+    <details class="vcms-meta-box">
+        <summary>SEO / Meta</summary>
+        <div class="vcms-form-group">
+            <label for="f-meta-title"><?= e(t('seo.meta_title', 'Meta-Titel')) ?></label>
+            <input type="text" id="f-meta-title" name="meta_title"
+                   value="<?= e($record['meta_title'] ?? '') ?>"
+                   placeholder="<?= e(t('seo.meta_title_hint', 'Entspricht dem Seitentitel')) ?>">
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-meta-desc"><?= e(t('seo.meta_desc', 'Meta-Beschreibung')) ?></label>
+            <textarea id="f-meta-desc" name="meta_desc" rows="2"
+                      placeholder="<?= e(t('seo.meta_desc_hint', 'Max. 155 Zeichen')) ?>"><?= e($record['meta_desc'] ?? '') ?></textarea>
+        </div>
+    </details>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn"><?= e(t('pages.save', 'Seite speichern')) ?></button>
+        <a href="/admin/pages" class="vcms-btn vcms-btn--secondary"><?= e(t('btn.cancel', 'Abbrechen')) ?></a>
+    </div>
+</form>
+
+<script src="/assets/admin/editor.js" defer></script>
+<script src="/assets/admin/slug.js" defer></script>
+""")
+
+# ── blog/index ────────────────────────────────────────────────────────────────
+write('admin/views/blog/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.blog', 'Blog')) ?></h3>
+    <div>
+        <a href="/admin/blog/categories" class="vcms-btn vcms-btn--secondary"><?= e(t('blog.categories', 'Kategorien')) ?></a>
+        <a href="/admin/blog/create" class="vcms-btn">+ <?= e(t('blog.new_post', 'Neuer Beitrag')) ?></a>
+    </div>
+</div>
+
+<?php if (empty($posts)): ?>
+    <p class="vcms-empty"><?= e(t('blog.empty', 'Noch keine Beiträge.')) ?> <a href="/admin/blog/create"><?= e(t('blog.write_first', 'Ersten Beitrag schreiben.')) ?></a></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th><?= e(t('label.name', 'Titel')) ?></th>
+            <th><?= e(t('label.status', 'Status')) ?></th>
+            <th><?= e(t('blog.author', 'Autor')) ?></th>
+            <th><?= e(t('label.created', 'Datum')) ?></th>
+            <th><?= e(t('label.actions', 'Aktionen')) ?></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($posts as $p): ?>
+        <tr>
+            <td><strong><?= e($p['title']) ?></strong></td>
+            <td><span class="vcms-badge vcms-badge--<?= e($p['status']) ?>"><?= e($p['status']) ?></span></td>
+            <td><?= e($p['author_name'] ?? '—') ?></td>
+            <td><?= e(substr($p['created_at'], 0, 10)) ?></td>
+            <td class="vcms-actions">
+                <?php if ($p['status'] === 'published'): ?>
+                <a href="/blog/<?= e($p['slug']) ?>" target="_blank" class="vcms-btn vcms-btn--sm"><?= e(t('btn.view', 'Ansehen')) ?></a>
+                <?php endif; ?>
+                <a href="/admin/blog/<?= $p['id'] ?>/edit" class="vcms-btn vcms-btn--sm"><?= e(t('btn.edit', 'Bearbeiten')) ?></a>
+                <form method="post" action="/admin/blog/<?= $p['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('<?= e(t('blog.confirm_delete', 'Diesen Beitrag wirklich löschen?')) ?>')">
+                        <?= e(t('btn.delete', 'Löschen')) ?>
+                    </button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+""")
+
+# ── blog/form ─────────────────────────────────────────────────────────────────
+write('admin/views/blog/form.php', r"""<div class="vcms-section-header">
+    <h3><?= e($title ?? t('nav.blog', 'Beitrag')) ?></h3>
+    <a href="/admin/blog" class="vcms-btn vcms-btn--secondary">← <?= e(t('btn.back', 'Zurück')) ?></a>
+</div>
+
+<?php if (!empty($error)): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif; ?>
+
+<form method="post" action="<?= e($action) ?>" class="vcms-form" id="page-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group vcms-form-group--wide">
+            <label for="f-title"><?= e(t('pages.title_label', 'Titel')) ?> <span class="vcms-required">*</span></label>
+            <input type="text" id="f-title" name="title"
+                   value="<?= e($record['title'] ?? '') ?>"
+                   placeholder="<?= e(t('blog.title_placeholder', 'Beitragstitel')) ?>" required autofocus>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-slug">Slug</label>
+            <div class="vcms-slug-wrap">
+                <span class="vcms-slug-prefix">/blog/</span>
+                <input type="text" id="f-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>"
+                       placeholder="<?= e(t('pages.slug_placeholder', 'automatisch')) ?>">
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label><?= e(t('pages.body', 'Inhalt')) ?></label>
+        <div class="vcms-editor-wrap">
+            <div class="vcms-editor-toolbar" id="editor-toolbar">
+                <button type="button" data-cmd="bold">B</button>
+                <button type="button" data-cmd="italic"><em>I</em></button>
+                <button type="button" data-cmd="h2">H2</button>
+                <button type="button" data-cmd="h3">H3</button>
+                <button type="button" data-cmd="ul">&#8226; List</button>
+                <button type="button" data-cmd="ol">1. List</button>
+                <button type="button" data-cmd="link">&#128279; Link</button>
+                <button type="button" data-cmd="blockquote">&#10077;</button>
+                <button type="button" data-cmd="removeFormat">&#10060;</button>
+            </div>
+            <div id="vcms-editor" class="vcms-editor"
+                 contenteditable="true"><?= $record['body'] ?? '' ?></div>
+            <textarea name="body" id="vcms-body" hidden><?= e($record['body'] ?? '') ?></textarea>
+        </div>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="f-status"><?= e(t('label.status', 'Status')) ?></label>
+            <select id="f-status" name="status">
+                <?php foreach (['draft','published','scheduled'] as $s): ?>
+                <option value="<?= $s ?>" <?= ($record['status'] ?? 'draft') === $s ? 'selected' : '' ?>>
+                    <?= ucfirst($s) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label><?= e(t('blog.categories', 'Kategorien')) ?></label>
+            <div class="vcms-checkbox-group">
+            <?php foreach ($categories as $cat): ?>
+                <label class="vcms-checkbox">
+                    <input type="checkbox" name="categories[]" value="<?= $cat['id'] ?>"
+                        <?= in_array($cat['id'], $postCats ?? [], false) ? 'checked' : '' ?>>
+                    <?= e($cat['name']) ?>
+                </label>
+            <?php endforeach; ?>
+            <?php if (empty($categories)): ?>
+                <em><a href="/admin/blog/categories"><?= e(t('blog.add_categories_first', 'Zuerst Kategorien hinzufügen')) ?></a></em>
+            <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label for="f-tags"><?= e(t('blog.tags', 'Tags')) ?> <small>(<?= e(t('blog.tags_hint', 'kommagetrennt')) ?>)</small></label>
+        <input type="text" id="f-tags" name="tags"
+               value="<?= e($postTags ?? '') ?>"
+               placeholder="php, web, tutorial">
+    </div>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn"><?= e(t('blog.save', 'Beitrag speichern')) ?></button>
+        <a href="/admin/blog" class="vcms-btn vcms-btn--secondary"><?= e(t('btn.cancel', 'Abbrechen')) ?></a>
+    </div>
+</form>
+
+<script src="/assets/admin/editor.js" defer></script>
+<script src="/assets/admin/slug.js" defer></script>
+""")
+
+# ── blog/categories ───────────────────────────────────────────────────────────
+write('admin/views/blog/categories.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('blog.categories', 'Kategorien')) ?></h3>
+    <a href="/admin/blog" class="vcms-btn vcms-btn--secondary">← <?= e(t('nav.blog', 'Beiträge')) ?></a>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem"><?= e(t('blog.add_category', 'Kategorie hinzufügen')) ?></h4>
+<form method="post" action="/admin/blog/categories" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label for="cat-name"><?= e(t('label.name', 'Name')) ?></label>
+        <input type="text" id="cat-name" name="name" placeholder="<?= e(t('blog.category_name_placeholder', 'Kategoriename')) ?>" required>
+    </div>
+    <button type="submit" class="vcms-btn"><?= e(t('blog.add_category', 'Kategorie hinzufügen')) ?></button>
+</form>
+</div>
+
+<div>
+<?php if (empty($categories)): ?>
+    <p class="vcms-empty"><?= e(t('blog.no_categories', 'Noch keine Kategorien.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead><tr><th><?= e(t('label.name', 'Name')) ?></th><th>Slug</th><th></th></tr></thead>
+    <tbody>
+    <?php foreach ($categories as $cat): ?>
+    <tr>
+        <td><?= e($cat['name']) ?></td>
+        <td><code><?= e($cat['slug']) ?></code></td>
+        <td>
+            <form method="post" action="/admin/blog/categories/<?= $cat['id'] ?>/delete" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('<?= e(t('blog.confirm_delete_cat', 'Diese Kategorie löschen?')) ?>')">
+                    <?= e(t('btn.delete', 'Löschen')) ?>
+                </button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+</div>
+
+</div>
+""")
+
+# ── media/index ───────────────────────────────────────────────────────────────
+write('admin/views/media/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.media', 'Medien')) ?></h3>
+</div>
+
+<?php if (!empty($error)): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif; ?>
+
+<div class="vcms-upload-box">
+    <form method="post" action="/admin/media/upload" enctype="multipart/form-data" class="vcms-form">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <div class="vcms-form-row">
+            <div class="vcms-form-group">
+                <label for="upload-file"><?= e(t('media.file', 'Datei')) ?> <span class="vcms-required">*</span></label>
+                <input type="file" id="upload-file" name="file" required
+                       accept="image/*,application/pdf,video/mp4,video/webm">
+            </div>
+            <div class="vcms-form-group">
+                <label for="upload-alt"><?= e(t('media.alt', 'Alt-Text')) ?></label>
+                <input type="text" id="upload-alt" name="alt" placeholder="<?= e(t('media.alt_placeholder', 'Bild beschreiben')) ?>">
+            </div>
+            <div class="vcms-form-group">
+                <label for="upload-caption"><?= e(t('media.caption', 'Bildunterschrift')) ?></label>
+                <input type="text" id="upload-caption" name="caption" placeholder="<?= e(t('media.caption_placeholder', 'Optional')) ?>">
+            </div>
+            <div class="vcms-form-group" style="align-self:flex-end">
+                <button type="submit" class="vcms-btn"><?= e(t('media.upload', 'Hochladen')) ?></button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<?php if (empty($files)): ?>
+    <p class="vcms-empty"><?= e(t('media.empty', 'Noch keine Dateien hochgeladen.')) ?></p>
+<?php else: ?>
+<div class="vcms-media-grid">
+    <?php foreach ($files as $f):
+        $isImage = str_starts_with($f['mime_type'], 'image/');
+        $filename = basename($f['disk_path']);
+        $url = '/storage/uploads/' . $filename;
+    ?>
+    <div class="vcms-media-card">
+        <?php if ($isImage): ?>
+            <div class="vcms-media-thumb">
+                <img src="<?= e($url) ?>" alt="<?= e($f['alt']) ?>">
+            </div>
+        <?php else: ?>
+            <div class="vcms-media-thumb vcms-media-thumb--file">
+                <span><?= e(strtoupper(pathinfo($f['filename'], PATHINFO_EXTENSION))) ?></span>
+            </div>
+        <?php endif; ?>
+        <div class="vcms-media-info">
+            <p class="vcms-media-name" title="<?= e($f['filename']) ?>"><?= e($f['filename']) ?></p>
+            <p class="vcms-media-meta"><?= e(number_format($f['size'] / 1024, 1)) ?> KB</p>
+            <div class="vcms-media-actions">
+                <a href="<?= e($url) ?>" target="_blank" class="vcms-btn vcms-btn--sm"><?= e(t('btn.view', 'Ansehen')) ?></a>
+                <form method="post" action="/admin/media/<?= $f['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('<?= e(t('media.confirm_delete', 'Diese Datei wirklich löschen?')) ?>')">
+                        <?= e(t('btn.delete', 'Löschen')) ?>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <?php endforeach; ?>
+</div>
+<?php endif; ?>
+""")
+
+# ── navigation ────────────────────────────────────────────────────────────────
+write('admin/views/navigation/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.navigation', 'Navigation')) ?></h3>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem"><?= e(t('navigation.create', 'Menü erstellen')) ?></h4>
+<form method="post" action="/admin/navigation" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label for="menu-name"><?= e(t('navigation.menu_name', 'Menüname')) ?></label>
+        <input type="text" id="menu-name" name="name" placeholder="<?= e(t('navigation.menu_name_placeholder', 'z. B. Hauptnavigation')) ?>" required>
+    </div>
+    <button type="submit" class="vcms-btn"><?= e(t('navigation.create', 'Menü erstellen')) ?></button>
+</form>
+</div>
+
+<div>
+<?php if (empty($menus)): ?>
+    <p class="vcms-empty"><?= e(t('navigation.empty', 'Noch keine Menüs.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead><tr><th><?= e(t('label.name', 'Name')) ?></th><th>Slug</th><th><?= e(t('label.actions', 'Aktionen')) ?></th></tr></thead>
+    <tbody>
+    <?php foreach ($menus as $m): ?>
+    <tr>
+        <td><?= e($m['name']) ?></td>
+        <td><code><?= e($m['slug']) ?></code></td>
+        <td class="vcms-actions">
+            <a href="/admin/navigation/<?= $m['id'] ?>/edit" class="vcms-btn vcms-btn--sm"><?= e(t('navigation.edit_items', 'Einträge bearbeiten')) ?></a>
+            <form method="post" action="/admin/navigation/<?= $m['id'] ?>/delete" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('<?= e(t('navigation.confirm_delete', 'Dieses Menü löschen?')) ?>')">
+                    <?= e(t('btn.delete', 'Löschen')) ?>
+                </button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+</div>
+
+</div>
+""")
+
+write('admin/views/navigation/edit.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('navigation.edit_menu', 'Menü bearbeiten')) ?>: <?= e($menu['name']) ?></h3>
+    <a href="/admin/navigation" class="vcms-btn vcms-btn--secondary">← <?= e(t('nav.navigation', 'Menüs')) ?></a>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem"><?= e(t('navigation.add_item', 'Eintrag hinzufügen')) ?></h4>
+<form method="post" action="/admin/navigation/<?= $menu['id'] ?>/items" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label for="item-label"><?= e(t('navigation.item_label', 'Bezeichnung')) ?></label>
+        <input type="text" id="item-label" name="label" placeholder="<?= e(t('navigation.item_label_placeholder', 'z. B. Startseite')) ?>" required>
+    </div>
+    <div class="vcms-form-group">
+        <label for="item-url">URL</label>
+        <input type="text" id="item-url" name="url" placeholder="<?= e(t('navigation.item_url_placeholder', 'z. B. / oder /ueber-uns')) ?>">
+    </div>
+    <button type="submit" class="vcms-btn"><?= e(t('navigation.add_item', 'Eintrag hinzufügen')) ?></button>
+</form>
+</div>
+
+<div>
+<?php if (empty($items)): ?>
+    <p class="vcms-empty"><?= e(t('navigation.no_items', 'Noch keine Einträge in diesem Menü.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead><tr><th><?= e(t('navigation.item_label', 'Bezeichnung')) ?></th><th>URL</th><th></th></tr></thead>
+    <tbody>
+    <?php foreach ($items as $item): ?>
+    <tr>
+        <td><?= e($item['label']) ?></td>
+        <td><code><?= e($item['url']) ?></code></td>
+        <td>
+            <form method="post"
+                  action="/admin/navigation/<?= $menu['id'] ?>/items/<?= $item['id'] ?>/delete"
+                  style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('<?= e(t('navigation.confirm_remove', 'Diesen Eintrag entfernen?')) ?>')">
+                    <?= e(t('navigation.remove', 'Entfernen')) ?>
+                </button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+</div>
+
+</div>
+""")
+
+# ── audit/index ───────────────────────────────────────────────────────────────
+write('admin/views/audit/index.php', r"""<?php
+$actionLabels = [
+    'page.create' => t('audit.page_create','Seite erstellt'), 'page.update' => t('audit.page_update','Seite aktualisiert'), 'page.delete' => t('audit.page_delete','Seite gelöscht'),
+    'post.create' => t('audit.post_create','Beitrag erstellt'), 'post.update' => t('audit.post_update','Beitrag aktualisiert'), 'post.delete' => t('audit.post_delete','Beitrag gelöscht'),
+    'form.create' => t('audit.form_create','Formular erstellt'), 'form.update' => t('audit.form_update','Formular aktualisiert'), 'form.delete' => t('audit.form_delete','Formular gelöscht'),
+    'form.submission' => t('audit.form_submission','Formular gesendet'),
+    'api_key.create' => t('audit.api_key_create','API-Schlüssel erstellt'), 'api_key.revoke' => t('audit.api_key_revoke','API-Schlüssel widerrufen'),
+    'settings.update' => t('audit.settings_update','Einstellungen aktualisiert'),
+    'user.create' => t('audit.user_create','Benutzer erstellt'), 'user.login' => t('audit.user_login','Anmeldung'), 'user.logout' => t('audit.user_logout','Abmeldung'),
+];
+?>
+<div class="vcms-page-header">
+    <h2><?= e(t('nav.audit_log', 'Audit-Protokoll')) ?></h2>
+    <span class="vcms-badge"><?= number_format($total) ?> <?= e(t('audit.entries', 'Einträge')) ?></span>
+</div>
+
+<form method="get" class="vcms-filter-bar">
+    <input type="text" name="action" value="<?= e($filters['action']) ?>"
+           placeholder="<?= e(t('audit.filter_placeholder', 'Nach Aktion filtern…')) ?>" style="width:220px">
+    <button type="submit" class="vcms-btn vcms-btn--sm"><?= e(t('audit.filter', 'Filtern')) ?></button>
+    <?php if ($filters['action'] || $filters['user_id']): ?>
+        <a href="/admin/audit" class="vcms-btn vcms-btn--sm vcms-btn--ghost"><?= e(t('audit.clear', 'Zurücksetzen')) ?></a>
+    <?php endif ?>
+</form>
+
+<div class="vcms-card" style="padding:0">
+    <div class="vcms-table-wrap">
+<table class="vcms-table">
+        <thead>
+            <tr>
+                <th><?= e(t('audit.when', 'Zeitpunkt')) ?></th>
+                <th><?= e(t('nav.users', 'Benutzer')) ?></th>
+                <th><?= e(t('audit.action', 'Aktion')) ?></th>
+                <th><?= e(t('audit.entity', 'Objekt')) ?></th>
+                <th>IP</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($items)): ?>
+            <tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:2rem"><?= e(t('audit.empty', 'Keine Protokolleinträge.')) ?></td></tr>
+        <?php else: ?>
+            <?php foreach ($items as $item): ?>
+            <tr>
+                <td style="white-space:nowrap;color:#64748b;font-size:.8rem">
+                    <?= e(date('d M Y H:i', strtotime($item['created_at']))) ?>
+                </td>
+                <td><?= e($item['user_name'] ?? '—') ?></td>
+                <td>
+                    <span class="vcms-badge vcms-badge--action">
+                        <?= e($actionLabels[$item['action']] ?? $item['action']) ?>
+                    </span>
+                </td>
+                <td>
+                    <?php if ($item['entity_type']): ?>
+                        <span style="color:#64748b;font-size:.8rem">
+                            <?= e($item['entity_type']) ?> #<?= e($item['entity_id']) ?>
+                        </span>
+                    <?php else: ?>—<?php endif ?>
+                </td>
+                <td style="color:#94a3b8;font-size:.8rem"><?= e($item['ip']) ?></td>
+            </tr>
+            <?php endforeach ?>
+        <?php endif ?>
+        </tbody>
+    </table>
+</div>
+
+<?php if ($pages > 1): ?>
+<div class="vcms-pagination">
+    <?php for ($i = 1; $i <= $pages; $i++): ?>
+        <a href="?p=<?= (int)$i ?>&action=<?= e($filters['action']) ?>"
+           class="vcms-page-link <?= $i === $curPage ? 'active' : '' ?>"><?= (int)$i ?></a>
+    <?php endfor ?>
+</div>
+<?php endif ?>
+""")
+
+# ── seo/index ─────────────────────────────────────────────────────────────────
+write('admin/views/seo/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.seo', 'SEO')) ?> &amp; <?= e(t('seo.redirects', 'Weiterleitungen')) ?></h3>
+</div>
+
+<div style="display:grid;grid-template-columns:350px 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem"><?= e(t('seo.add_redirect', 'Weiterleitung hinzufügen')) ?></h4>
+<form method="post" action="/admin/seo" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label><?= e(t('seo.from_path', 'Von Pfad')) ?></label>
+        <input type="text" name="from_path" placeholder="/alte-seite" required>
+    </div>
+    <div class="vcms-form-group">
+        <label><?= e(t('seo.to_url', 'Zu URL')) ?></label>
+        <input type="text" name="to_url" placeholder="/neue-seite <?= e(t('seo.or', 'oder')) ?> https://..." required>
+    </div>
+    <div class="vcms-form-group">
+        <label><?= e(t('seo.type', 'Typ')) ?></label>
+        <select name="code">
+            <option value="301">301 <?= e(t('seo.permanent', 'Permanent')) ?></option>
+            <option value="302">302 <?= e(t('seo.temporary', 'Temporär')) ?></option>
+        </select>
+    </div>
+    <button type="submit" class="vcms-btn"><?= e(t('seo.add_redirect', 'Weiterleitung hinzufügen')) ?></button>
+</form>
+
+<div style="margin-top:2rem">
+<h4><?= e(t('seo.quick_links', 'Schnellzugriff')) ?></h4>
+<p><a href="/sitemap.xml" target="_blank"><?= e(t('seo.view_sitemap', 'sitemap.xml ansehen')) ?></a></p>
+<p><a href="/robots.txt" target="_blank"><?= e(t('seo.view_robots', 'robots.txt ansehen')) ?></a></p>
+</div>
+</div>
+
+<div>
+<?php if (empty($redirects)): ?>
+    <p class="vcms-empty"><?= e(t('seo.no_redirects', 'Keine Weiterleitungen konfiguriert.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr><th><?= e(t('seo.from', 'Von')) ?></th><th><?= e(t('seo.to', 'Nach')) ?></th><th><?= e(t('seo.type', 'Typ')) ?></th><th><?= e(t('label.created', 'Erstellt')) ?></th><th></th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($redirects as $r): ?>
+    <tr>
+        <td><code><?= e($r['from_path']) ?></code></td>
+        <td><?= e($r['to_url']) ?></td>
+        <td><span class="vcms-badge"><?= $r['code'] ?></span></td>
+        <td><?= e(substr($r['created_at'], 0, 10)) ?></td>
+        <td>
+            <form method="post" action="/admin/seo/<?= $r['id'] ?>/delete" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('<?= e(t('seo.confirm_delete', 'Diese Weiterleitung löschen?')) ?>')">
+                    <?= e(t('btn.delete', 'Löschen')) ?>
+                </button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+</div>
+
+</div>
+""")
+
+# ── cron/index ────────────────────────────────────────────────────────────────
+write('admin/views/cron/index.php', r"""<div class="vcms-page-header">
+    <h2><?= e(t('nav.cron_jobs', 'Cron-Jobs')) ?></h2>
+    <small style="color:#64748b"><?= e(t('cron.hint', 'Fügen Sie')) ?> <code>* * * * * php /var/www/velocms/cli/velocms cron:run</code> <?= e(t('cron.hint_end', 'zur System-Crontab hinzu.')) ?></small>
+</div>
+
+<div class="vcms-card" style="padding:0">
+    <div class="vcms-table-wrap">
+<table class="vcms-table">
+        <thead>
+            <tr>
+                <th><?= e(t('cron.job', 'Job')) ?></th>
+                <th><?= e(t('cron.interval', 'Intervall')) ?></th>
+                <th><?= e(t('cron.last_run', 'Letzter Lauf')) ?></th>
+                <th><?= e(t('cron.next_run', 'Nächster Lauf')) ?></th>
+                <th><?= e(t('label.status', 'Status')) ?></th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($jobs as $job): ?>
+            <tr>
+                <td>
+                    <strong><?= e($job['label']) ?></strong>
+                    <div style="font-size:.75rem;color:#94a3b8"><?= e($job['name']) ?></div>
+                </td>
+                <td><?= e($job['interval_minutes']) ?> <?= e(t('cron.min', 'Min.')) ?></td>
+                <td style="color:#64748b;font-size:.85rem">
+                    <?= $job['last_run_at'] ? e(date('d M Y H:i', strtotime($job['last_run_at']))) : '—' ?>
+                </td>
+                <td style="color:#64748b;font-size:.85rem">
+                    <?= e(date('d M Y H:i', strtotime($job['next_run_at']))) ?>
+                </td>
+                <td>
+                    <?php if ($job['enabled']): ?>
+                        <span class="vcms-badge" style="background:#dcfce7;color:#166534"><?= e(t('cron.enabled', 'Aktiv')) ?></span>
+                    <?php else: ?>
+                        <span class="vcms-badge" style="background:#fee2e2;color:#991b1b"><?= e(t('cron.disabled', 'Inaktiv')) ?></span>
+                    <?php endif ?>
+                </td>
+                <td>
+                    <form method="post" action="/admin/cron/<?= $job['id'] ?>/toggle">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <input type="hidden" name="enabled" value="<?= $job['enabled'] ? '0' : '1' ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--ghost">
+                            <?= $job['enabled'] ? e(t('cron.disable', 'Deaktivieren')) : e(t('cron.enable', 'Aktivieren')) ?>
+                        </button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+</div>
+""")
+
+# ── api/index ─────────────────────────────────────────────────────────────────
+write('admin/views/api/index.php', r"""<div class="vcms-section-header">
+    <h3><?= e(t('nav.api_keys', 'API-Schlüssel')) ?></h3>
+</div>
+
+<?php if (!empty($newKey)): ?>
+<div class="vcms-alert vcms-alert--success">
+    <strong><?= e(t('api.key_created', 'Neuer API-Schlüssel erstellt.')) ?></strong>
+    <?= e(t('api.copy_now', 'Jetzt kopieren — er wird nicht erneut angezeigt.')) ?><br>
+    <code style="font-size:0.85rem;word-break:break-all"><?= e($newKey) ?></code>
+</div>
+<?php endif; ?>
+
+<div style="display:grid;grid-template-columns:300px 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem"><?= e(t('api.create', 'API-Schlüssel erstellen')) ?></h4>
+<form method="post" action="/admin/api" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label><?= e(t('api.key_name', 'Schlüsselname')) ?></label>
+        <input type="text" name="name" placeholder="<?= e(t('api.key_name_placeholder', 'z. B. Mobile App')) ?>" required>
+    </div>
+    <button type="submit" class="vcms-btn"><?= e(t('api.generate', 'Schlüssel generieren')) ?></button>
+</form>
+
+<div style="margin-top:2rem">
+<h4><?= e(t('api.base_url', 'API-Basis-URL')) ?></h4>
+<p><code><?= e('http://' . ($_SERVER['HTTP_HOST'] ?? 'your-domain.com') . '/api/v1/') ?></code></p>
+<p style="font-size:.85rem;color:#64748b">
+    <?= e(t('api.auth_hint', 'Anfragen mit Header senden:')) ?><br>
+    <code>Authorization: Bearer &lt;token&gt;</code>
+</p>
+<h4 style="margin-top:1rem"><?= e(t('api.endpoints', 'Endpunkte')) ?></h4>
+<ul style="font-size:.85rem;color:#475569;padding-left:1.25rem">
+    <li>GET /api/v1/pages</li>
+    <li>GET /api/v1/pages/{id}</li>
+    <li>GET /api/v1/posts</li>
+    <li>GET /api/v1/posts/{id}</li>
+    <li>GET /api/v1/media</li>
+    <li>GET /api/v1/search?q=term</li>
+</ul>
+</div>
+</div>
+
+<div>
+<?php if (empty($keys)): ?>
+    <p class="vcms-empty"><?= e(t('api.empty', 'Noch keine API-Schlüssel erstellt.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th><?= e(t('label.name', 'Name')) ?></th>
+            <th><?= e(t('api.created_by', 'Erstellt von')) ?></th>
+            <th><?= e(t('api.last_used', 'Zuletzt verwendet')) ?></th>
+            <th><?= e(t('label.created', 'Erstellt')) ?></th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($keys as $k): ?>
+    <tr>
+        <td><?= e($k['name']) ?></td>
+        <td><?= e($k['user_name'] ?? '—') ?></td>
+        <td><?= $k['last_used_at'] ? e(substr($k['last_used_at'], 0, 16)) : '<em>' . e(t('api.never', 'Nie')) . '</em>' ?></td>
+        <td><?= e(substr($k['created_at'], 0, 10)) ?></td>
+        <td>
+            <form method="post" action="/admin/api/<?= $k['id'] ?>/revoke" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('<?= e(t('api.confirm_revoke', 'Diesen Schlüssel widerrufen?')) ?>')">
+                    <?= e(t('api.revoke', 'Widerrufen')) ?>
+                </button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+</div>
+
+</div>
+""")
+
+# ── forms/index ───────────────────────────────────────────────────────────────
+write('admin/views/forms/index.php', r"""<?php
+$flash = $flash ?? null;
+unset($_SESSION['_flash']);
+?>
+<div class="vcms-page-header">
+    <h2><?= e(t('nav.forms', 'Formulare')) ?></h2>
+    <a href="/admin/forms/create" class="vcms-btn vcms-btn--primary">+ <?= e(t('forms.new', 'Neues Formular')) ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<?php if (empty($forms)): ?>
+    <div class="vcms-empty"><?= e(t('forms.empty', 'Noch keine Formulare.')) ?> <a href="/admin/forms/create"><?= e(t('forms.create_first', 'Erstes Formular erstellen.')) ?></a></div>
+<?php else: ?>
+<div class="vcms-card" style="padding:0">
+    <div class="vcms-table-wrap">
+<table class="vcms-table">
+        <thead>
+            <tr>
+                <th><?= e(t('label.name', 'Name')) ?></th>
+                <th>Slug</th>
+                <th><?= e(t('forms.fields', 'Felder')) ?></th>
+                <th><?= e(t('forms.submissions', 'Einsendungen')) ?></th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($forms as $form): ?>
+            <tr>
+                <td><strong><?= e($form['name']) ?></strong></td>
+                <td><code>/forms/<?= e($form['slug']) ?></code></td>
+                <td><?= count(json_decode($form['fields_json'] ?? '[]', true) ?: []) ?></td>
+                <td>
+                    <a href="/admin/forms/<?= $form['id'] ?>/submissions">
+                        <?= (int) $form['submission_count'] ?>
+                    </a>
+                </td>
+                <td class="vcms-actions">
+                    <a href="/admin/forms/<?= $form['id'] ?>/edit" class="vcms-btn vcms-btn--sm"><?= e(t('btn.edit', 'Bearbeiten')) ?></a>
+                    <a href="/forms/<?= e($form['slug']) ?>" target="_blank"
+                       class="vcms-btn vcms-btn--sm vcms-btn--ghost"><?= e(t('btn.view', 'Ansehen')) ?></a>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+</div>
+<?php endif ?>
+""")
+
+# ── forms/submissions ─────────────────────────────────────────────────────────
+write('admin/views/forms/submissions.php', r"""<div class="vcms-page-header">
+    <h2><?= e(t('forms.submissions', 'Einsendungen')) ?>: <?= e($form['name']) ?></h2>
+    <div style="display:flex;gap:.5rem">
+        <a href="/admin/forms/<?= $form['id'] ?>/submissions/export"
+           class="vcms-btn vcms-btn--ghost"><?= e(t('forms.export_csv', 'CSV exportieren')) ?></a>
+        <a href="/admin/forms/<?= $form['id'] ?>/edit"
+           class="vcms-btn vcms-btn--ghost"><?= e(t('forms.edit_form', 'Formular bearbeiten')) ?></a>
+    </div>
+</div>
+
+<p style="color:#64748b;margin-bottom:1rem"><?= number_format($total) ?> <?= e(t('forms.submissions_total', 'Einsendungen insgesamt.')) ?></p>
+
+<?php if (empty($items)): ?>
+    <div class="vcms-empty"><?= e(t('forms.no_submissions', 'Noch keine Einsendungen.')) ?></div>
+<?php else: ?>
+<div class="vcms-card" style="padding:0;overflow-x:auto">
+    <div class="vcms-table-wrap">
+<table class="vcms-table">
+        <thead>
+            <tr>
+                <?php foreach ($form['fields'] as $f): ?>
+                    <th><?= e($f['label'] ?? $f['name']) ?></th>
+                <?php endforeach ?>
+                <th>IP</th>
+                <th><?= e(t('forms.submitted', 'Eingereicht')) ?></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($items as $item):
+            $data = json_decode($item['data_json'], true) ?: [];
+        ?>
+            <tr>
+                <?php foreach ($form['fields'] as $f): ?>
+                    <td><?= e($data[$f['name']] ?? '') ?></td>
+                <?php endforeach ?>
+                <td style="color:#94a3b8;font-size:.8rem"><?= e($item['ip']) ?></td>
+                <td style="color:#64748b;font-size:.8rem;white-space:nowrap">
+                    <?= e(date('d M Y H:i', strtotime($item['created_at']))) ?>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+</div>
+
+<?php if ($pages > 1): ?>
+<div class="vcms-pagination">
+    <?php for ($i = 1; $i <= $pages; $i++): ?>
+        <a href="?p=<?= (int)$i ?>" class="vcms-page-link <?= $i === $curPage ? 'active' : '' ?>"><?= $i ?></a>
+    <?php endfor ?>
+</div>
+<?php endif ?>
+<?php endif ?>
+""")
+
+print('\nBatch 2 done — all non-booking admin views written.')

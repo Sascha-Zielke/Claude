@@ -1,0 +1,54 @@
+base = '/var/www/velocms'
+
+resume = open(base + '/RESUME.md').read()
+
+old_last_done = "### What was last done (Session 13)"
+new_last_done = "### What was last done (Session 14)"
+
+old_session13_detail = """- **Daily/Hourly mutually exclusive**: Enabling Daily automatically disables Hourly (and hides slot-row); enabling Hourly automatically disables Daily (and hides daily-row); amber warning notice shown between the two toggles; PHP server-side enforcement added (Daily takes precedence if both somehow set)
+- **Resource form cleanup**: Min duration, Max duration, Advance booking hours, Sort order fields removed from the UI (DB columns kept; fields will return in industry-specific templates)"""
+
+new_session14_detail = """- **Booking detail daily display**: Time row replaced with "20 May 2026 → 21 May 2026" format for daily bookings; Duration shows "N night(s)"; amber warning if resource has no daily rate; `Booking::findById()` joins `r.daily_rate AS resource_daily_rate`
+- **Edit Booking**: new `/admin/booking/{id}/edit` page — admin can change resource, dates (check-in/out for daily, date+start+end for hourly), status, admin notes; price recalculated on save; modification email sent to customer
+- **Cancel Booking**: POST `/admin/booking/{id}/cancel` — sets status to cancelled, sends cancellation email; both buttons in new Actions card on detail view
+- **Cancel/modify email templates**: new fields in Settings → Booking → Email Notifications (`cancel_email_subject/body`, `modify_email_subject/body`); editable with same placeholder syntax as other email templates
+- **Date/time validation**: Client-side: start-time change sets end-time min, inline error + submit disabled when end ≤ start (admin create form + edit form); Server-side: end>start checked before saving in both admin and frontend controllers; all DB writes wrapped in try/catch with friendly error messages and server-side error_log"""
+
+if old_last_done in resume:
+    resume = resume.replace(old_last_done, new_last_done)
+    resume = resume.replace(old_session13_detail, new_session14_detail)
+    open(base + '/RESUME.md', 'w').write(resume)
+    print('OK  RESUME.md')
+else:
+    print('SKIP RESUME.md — pattern not found')
+
+log = open(base + '/SESSION_LOG.md').read()
+session14 = """
+---
+
+## Session 14 — Booking detail daily display, edit/cancel, date validation
+**Date:** 2026-05-19
+**Built / Done:**
+- **Booking::findById()**: added `r.daily_rate AS resource_daily_rate` to JOIN
+- **Booking::update()**: new method — UPDATE bookings SET resource_id/booking_date/end_date/nights/start_time/end_time/duration_mins/pricing_type/subtotal/total_amount/booking_status/admin_notes
+- **detail.php**: Date row → "Dates" with "20 May 2026 → 21 May 2026" format for daily; Time row hidden for daily; Duration shows "N night(s)" for daily; amber daily-rate-zero warning; Actions card with Edit + Cancel buttons
+- **admin/views/booking/edit.php**: new view — resource selector, status selector, date range (daily) or date+time (hourly), admin notes, client-side end-time validation
+- **BookingAdminController**: `editForm()`, `editStore()` (validates dates, recalculates price, calls `update()`, sends modification email, friendly error), `cancel()` (calls `updateStatus()` to cancelled, sends cancellation email), private `replacePlaceholders()`/`sendCancellationEmail()`/`sendModificationEmail()`; `EmailQueue` imported
+- **admin/routes.php**: GET/POST `/admin/booking/{id}/edit` and POST `/admin/booking/{id}/cancel` added before wildcard
+- **settings/index.php**: cancel_email_subject/body + modify_email_subject/body fields in Email Notifications section
+- **SettingsAdminController**: cancel_email_subject/body + modify_email_subject/body added to scalar keys
+- **create.php (admin)**: `validateHourlyTime()` JS function; b-end min set on b-start change; inline error + submit disabled; settings passed from createForm()
+- **BookingAdminController::createStore()**: validates checkout>checkin and endTime>startTime; wrapped create() in try/catch
+- **BookingController::bookStore()**: checkout>checkin and endTime>startTime validated; create() wrapped in try/catch with friendly form re-render
+- PHPUnit: 23/23
+- Commit: 29c6fd6
+"""
+
+if 'Session 14' not in log:
+    log = log.rstrip() + '\n' + session14.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(log)
+    print('OK  SESSION_LOG.md (Session 14 appended)')
+else:
+    print('SKIP SESSION_LOG.md')
+
+print('\nDone.')

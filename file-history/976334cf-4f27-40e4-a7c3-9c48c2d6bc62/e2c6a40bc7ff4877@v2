@@ -1,0 +1,27 @@
+---
+tags: [projekt]
+status: aktiv
+erstellt: 2026-05-25
+---
+
+# veloSolutions-Verwaltungsplattform
+
+## Ziel
+
+Eine zentrale Plattform entwickeln, über die alle mit dem veloCMS erstellten Kundenseiten verwaltet und bearbeitet werden können. Teil des Life OS.
+
+## Module
+
+- [[Dashboard/_index|Dashboard-Plattform]] — Zentrale Verwaltung
+  - [[Dashboard/veloCMS/veloCMS|veloCMS]] — Content Management System
+  - [[Dashboard/Finanzen, Steuern, Buchhaltung/_index|Finanzen & Buchhaltung]]
+  - [[Dashboard/Marketing/_index|Marketing]]
+  - [[Dashboard/Sicherheit/_index|Sicherheit]]
+  - [[Dashboard/Kundenbetreuung/_index|Kundenbetreuung]]
+
+## Nächste Schritte
+
+- [ ] Dashboard MVP planen
+- [ ] veloCMS Technical Spec
+
+## Notizen

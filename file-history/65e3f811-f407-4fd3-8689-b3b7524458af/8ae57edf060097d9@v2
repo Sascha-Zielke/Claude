@@ -1,0 +1,806 @@
+#!/usr/bin/env python3
+"""Batch 1 — t() wrapping: all frontend theme views"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    full = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── 404 ──────────────────────────────────────────────────────────────────────
+write('themes/default/layouts/404.php', r"""<?php
+$bodyContent = '<div class="not-found">
+    <h1>404</h1>
+    <h2>' . e(t('404.heading', 'Seite nicht gefunden')) . '</h2>
+    <p>' . e(t('404.message', 'Die gesuchte Seite existiert nicht oder wurde verschoben.')) . '</p>
+    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
+        <a href="/" class="btn btn-primary">' . e(t('404.go_home', 'Zur Startseite')) . '</a>
+        <a href="/search" class="btn btn-outline">' . e(t('label.search', 'Suchen')) . '</a>
+    </div>
+</div>';
+$metaTitle = '404 — ' . t('404.heading', 'Seite nicht gefunden');
+require __DIR__ . '/main.php';
+""")
+
+# ── welcome ───────────────────────────────────────────────────────────────────
+write('themes/default/layouts/welcome.php', r"""<?php
+$siteName    = setting('site', 'name', 'VeloCMS');
+$bodyContent = '<div class="welcome">
+    <h1>' . e(t('welcome.heading', 'Willkommen bei') . ' ' . $siteName) . '</h1>
+    <p>' . e(t('welcome.subheading', 'Ihre Website ist live. Gehen Sie ins Admin-Panel, um Ihre erste Seite zu erstellen.')) . '</p>
+    <a href="/admin" class="btn btn-primary">' . e(t('welcome.open_admin', 'Admin-Panel öffnen')) . '</a>
+</div>';
+$metaTitle = $siteName;
+require __DIR__ . '/main.php';
+""")
+
+# ── page ──────────────────────────────────────────────────────────────────────
+write('themes/default/layouts/page.php', r"""<?php
+$translatedTitle = t('content.page.' . ($page['slug'] ?? ''), $page['title'] ?? '');
+$bodyContent  = '<div class="container--sm"><article class="page-content prose"><h1>'
+              . e($translatedTitle)
+              . '</h1>'
+              . ($page['body'] ?? '')
+              . '</article></div>';
+$metaTitle    = $translatedTitle;
+$metaDesc     = excerpt($page['body'] ?? '', 155);
+$jsonLd = json_encode([
+    '@context' => 'https://schema.org',
+    '@type'    => 'WebPage',
+    'name'     => $translatedTitle,
+    'url'      => $canonical ?? '',
+]);
+require __DIR__ . '/main.php';
+""")
+
+# ── search ────────────────────────────────────────────────────────────────────
+write('themes/default/layouts/search.php', r"""<?php ob_start(); ?>
+<div class="search-page">
+    <h1><?= e(t('search.heading', 'Suche')) ?></h1>
+    <form class="search-bar" action="/search" method="get" role="search">
+        <input type="search" name="q" value="<?= e($query ?? '') ?>"
+               placeholder="<?= e(t('search.placeholder', 'Seiten und Beiträge suchen…')) ?>"
+               autocomplete="off" aria-label="<?= e(t('search.heading', 'Suche')) ?>" autofocus>
+        <button type="submit"><?= e(t('label.search', 'Suchen')) ?></button>
+    </form>
+
+    <?php if (!empty($query) && empty($results)): ?>
+        <p class="search-empty">
+            <?= e(t('search.no_results', 'Keine Ergebnisse für')) ?>
+            <strong><?= e($query) ?></strong>.
+        </p>
+    <?php elseif (!empty($results)): ?>
+        <p class="search-summary">
+            <?= count($results) ?>
+            <?= e(count($results) !== 1 ? t('search.results_plural', 'Ergebnisse') : t('search.results_singular', 'Ergebnis')) ?>
+            <?= e(t('search.for', 'für')) ?> <strong><?= e($query) ?></strong>
+        </p>
+        <ul class="search-results">
+        <?php foreach ($results as $r): ?>
+            <li class="search-result">
+                <a href="<?= e($r['url']) ?>"><?= e($r['title']) ?></a>
+                <span class="tag tag--gray"><?= e($r['entity_type']) ?></span>
+            </li>
+        <?php endforeach ?>
+        </ul>
+    <?php endif ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = !empty($query)
+    ? t('search.heading', 'Suche') . ': ' . $query
+    : t('search.heading', 'Suche');
+require __DIR__ . '/main.php';
+""")
+
+# ── blog-index ────────────────────────────────────────────────────────────────
+write('themes/default/layouts/blog-index.php', r"""<?php
+ob_start(); ?>
+<div class="blog-header">
+    <h1><?= e(t('blog.heading', 'Blog')) ?></h1>
+    <?php if ($category ?? null): ?>
+    <p style="color:var(--color-muted)">
+        <?= e(t('blog.category_prefix', 'Kategorie')) ?>:
+        <strong><?= e($category['name']) ?></strong>
+    </p>
+    <?php endif ?>
+</div>
+
+<?php if (empty($posts)): ?>
+    <div class="vcms-empty"><?= e(t('blog.no_posts', 'Noch keine Beiträge veröffentlicht.')) ?></div>
+<?php else: ?>
+<div class="blog-grid">
+    <?php foreach ($posts as $post):
+        $origExcerpt = excerpt($post['body'] ?? '', 185);
+        $exc  = t('content.blog.' . $post['slug'] . '.excerpt', $origExcerpt);
+        $ptitle = t('content.blog.' . $post['slug'] . '.title', $post['title']);
+        $date = date('j F Y', strtotime($post['published_at'] ?? $post['created_at']));
+    ?>
+    <article class="post-card">
+        <div class="post-card__meta">
+            <time datetime="<?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>">
+                <?= e($date) ?>
+            </time>
+            <span>&middot;</span>
+            <span><?= e($post['author_name'] ?? t('blog.unknown_author', 'Unbekannt')) ?></span>
+        </div>
+        <h2 class="post-card__title">
+            <a href="/blog/<?= e($post['slug']) ?>"><?= e($ptitle) ?></a>
+        </h2>
+        <?php if ($exc): ?>
+        <p class="post-card__excerpt"><?= e($exc) ?></p>
+        <?php endif ?>
+        <div class="post-card__footer">
+            <a href="/blog/<?= e($post['slug']) ?>" class="read-more">
+                <?= e(t('blog.read_more', 'Artikel lesen')) ?> &rarr;
+            </a>
+        </div>
+    </article>
+    <?php endforeach ?>
+</div>
+<?php endif ?>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = t('blog.heading', 'Blog');
+require __DIR__ . '/main.php';
+""")
+
+# ── blog-post ─────────────────────────────────────────────────────────────────
+write('themes/default/layouts/blog-post.php', r"""<?php
+ob_start();
+$date = date('j F Y', strtotime($post['published_at'] ?? $post['created_at']));
+$ptitle = t('content.blog.' . $post['slug'] . '.title', $post['title']);
+?>
+<div class="container--sm">
+    <article class="blog-post" itemscope itemtype="https://schema.org/Article">
+        <header class="post-header">
+            <h1 itemprop="headline"><?= e($ptitle) ?></h1>
+            <div class="post-meta">
+                <span><?= e(t('blog.by', 'Von')) ?> <span itemprop="author"><?= e($post['author_name'] ?? t('blog.unknown_author', 'Unbekannt')) ?></span></span>
+                <span>&middot;</span>
+                <time itemprop="datePublished"
+                      datetime="<?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>">
+                    <?= e($date) ?>
+                </time>
+                <?php if (!empty($post['categories'])): ?>
+                <span>&middot;</span>
+                <?php foreach ($post['categories'] as $cat): ?>
+                    <a href="/blog/category/<?= e($cat['slug']) ?>" class="tag"><?= e($cat['name']) ?></a>
+                <?php endforeach ?>
+                <?php endif ?>
+            </div>
+        </header>
+
+        <div class="post-body prose" itemprop="articleBody">
+            <?= $post['body'] ?>
+        </div>
+
+        <?php if (!empty($post['tags'])): ?>
+        <footer class="post-footer">
+            <div class="post-tags">
+                <?php foreach ($post['tags'] as $tag): ?>
+                    <span class="tag tag--gray">#<?= e($tag['name']) ?></span>
+                <?php endforeach ?>
+            </div>
+        </footer>
+        <?php endif ?>
+    </article>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $ptitle;
+$metaDesc    = excerpt($post['body'], 155);
+$ogType      = 'article';
+$jsonLd = json_encode([
+    '@context'      => 'https://schema.org',
+    '@type'         => 'Article',
+    'headline'      => $ptitle,
+    'description'   => $metaDesc,
+    'author'        => ['@type' => 'Person', 'name' => $post['author_name'] ?? ''],
+    'datePublished' => $post['published_at'] ?? $post['created_at'],
+    'publisher'     => ['@type' => 'Organization', 'name' => setting('site', 'name', 'VeloCMS')],
+]);
+require __DIR__ . '/main.php';
+""")
+
+# ── form layout ───────────────────────────────────────────────────────────────
+write('themes/default/layouts/form.php', r"""<?php
+ob_start(); ?>
+<div class="form-page">
+    <h1><?= e($form['name']) ?></h1>
+
+    <?php if ($success ?? false): ?>
+        <div class="form-success">
+            <p><?= e(t('form.success', 'Vielen Dank! Ihre Nachricht wurde gesendet.')) ?></p>
+        </div>
+    <?php else: ?>
+        <form class="vcms-form" method="post" action="/forms/<?= e($form['slug']) ?>">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div style="display:none"><input type="text" name="_hp" tabindex="-1" autocomplete="off"></div>
+
+            <?php foreach ($form['fields'] as $field):
+                $name    = $field['name'];
+                $label   = $field['label'] ?? $name;
+                $type    = $field['type'] ?? 'text';
+                $req     = !empty($field['required']);
+                $options = $field['options'] ?? [];
+                $posted  = $posted ?? [];
+                $val     = e($posted[$name] ?? '');
+                $err     = $errors[$name] ?? null;
+            ?>
+            <div class="form-field <?= $err ? 'has-error' : '' ?>">
+                <label for="f-<?= e($name) ?>">
+                    <?= e($label) ?><?= $req ? ' <span class="required">*</span>' : '' ?>
+                </label>
+
+                <?php if ($type === 'textarea'): ?>
+                    <textarea id="f-<?= e($name) ?>" name="<?= e($name) ?>"
+                              rows="5" <?= $req ? 'required' : '' ?>><?= e($val) ?></textarea>
+
+                <?php elseif ($type === 'select'): ?>
+                    <select id="f-<?= e($name) ?>" name="<?= e($name) ?>" <?= $req ? 'required' : '' ?>>
+                        <option value=""><?= e(t('form.select_placeholder', '— Bitte wählen —')) ?></option>
+                        <?php foreach ($options as $opt): ?>
+                            <option value="<?= e($opt) ?>" <?= ($posted[$name] ?? '') === $opt ? 'selected' : '' ?>>
+                                <?= e($opt) ?>
+                            </option>
+                        <?php endforeach ?>
+                    </select>
+
+                <?php elseif ($type === 'checkbox'): ?>
+                    <div class="form-checkbox">
+                        <input type="checkbox" id="f-<?= e($name) ?>" name="<?= e($name) ?>"
+                               value="1" <?= !empty($posted[$name]) ? 'checked' : '' ?>>
+                        <label for="f-<?= e($name) ?>"><?= e($label) ?></label>
+                    </div>
+
+                <?php elseif ($type === 'radio'): ?>
+                    <?php foreach ($options as $opt): ?>
+                    <div class="form-radio">
+                        <input type="radio" id="f-<?= e($name) ?>-<?= e($opt) ?>"
+                               name="<?= e($name) ?>" value="<?= e($opt) ?>"
+                               <?= ($posted[$name] ?? '') === $opt ? 'checked' : '' ?>>
+                        <label for="f-<?= e($name) ?>-<?= e($opt) ?>"><?= e($opt) ?></label>
+                    </div>
+                    <?php endforeach ?>
+
+                <?php else: ?>
+                    <input type="<?= e($type) ?>" id="f-<?= e($name) ?>"
+                           name="<?= e($name) ?>" value="<?= e($val) ?>"
+                           <?= $req ? 'required' : '' ?>>
+                <?php endif ?>
+
+                <?php if ($err): ?>
+                    <span class="form-error"><?= e($err) ?></span>
+                <?php endif ?>
+            </div>
+            <?php endforeach ?>
+
+            <button type="submit" class="form-submit"><?= e(t('form.send', 'Absenden')) ?></button>
+        </form>
+    <?php endif ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $title ?? $form['name'];
+require __DIR__ . '/main.php';
+""")
+
+# ── booking/index ─────────────────────────────────────────────────────────────
+write('themes/default/booking/index.php', r"""<?php
+ob_start();
+$resources = $resources ?? [];
+$settings  = $settings  ?? [];
+?>
+<div class="booking-page">
+    <h1><?= e(t('booking.heading', 'Jetzt buchen')) ?></h1>
+    <?php if (empty($resources)): ?>
+        <p><?= e(t('booking.no_resources', 'Derzeit sind keine Ressourcen verfügbar.')) ?></p>
+    <?php else: ?>
+    <div class="booking-resources">
+        <?php foreach ($resources as $r): ?>
+        <a href="/booking/<?= e($r['slug']) ?>" class="booking-resource-card">
+            <?php if ($r['image']): ?>
+            <div class="booking-resource-img" style="background-image:url(<?= e($r['image']) ?>)"></div>
+            <?php endif ?>
+            <div class="booking-resource-body">
+                <h2><?= e($r['name']) ?></h2>
+                <?php if ($r['description']): ?>
+                <p><?= e(mb_substr($r['description'], 0, 140)) ?>…</p>
+                <?php endif ?>
+                <div class="booking-resource-meta">
+                    <?php if ($r['hourly_rate']): ?>
+                    <span><?= e(t('booking.from', 'Ab')) ?> €<?= number_format((float)$r['hourly_rate'], 2) ?>/<?= e(t('booking.per_hour', 'Std.')) ?></span>
+                    <?php endif ?>
+                </div>
+                <span class="booking-cta"><?= e(t('booking.book_now', 'Jetzt buchen')) ?> →</span>
+            </div>
+        </a>
+        <?php endforeach ?>
+    </div>
+    <?php endif ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = t('booking.heading', 'Jetzt buchen');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ── booking/confirm ───────────────────────────────────────────────────────────
+write('themes/default/booking/confirm.php', r"""<?php
+ob_start();
+$booking  = $booking  ?? [];
+$settings = $settings ?? [];
+$needsConfirm = !empty($settings['require_confirmation']);
+?>
+<div class="booking-page booking-confirm-page">
+
+    <div class="booking-confirm-icon">✓</div>
+    <h1><?= e($needsConfirm
+        ? t('booking.request_received', 'Buchungsanfrage eingegangen')
+        : t('booking.confirmed', 'Buchung bestätigt!')) ?></h1>
+
+    <?php if ($needsConfirm): ?>
+    <p class="booking-confirm-intro">
+        <?= e(t('booking.request_intro', 'Ihre Buchungsanfrage ist eingegangen. Wir werden sie prüfen und eine Bestätigung an')) ?>
+        <strong><?= e($booking['customer_email'] ?? '') ?></strong>
+        <?= e(t('booking.request_intro_end', 'senden.')) ?>
+    </p>
+    <?php else: ?>
+    <p class="booking-confirm-intro">
+        <?= e(t('booking.confirmed_intro', 'Ihre Buchung ist bestätigt! Eine Bestätigungs-E-Mail wurde gesendet an')) ?>
+        <strong><?= e($booking['customer_email'] ?? '') ?></strong>.
+    </p>
+    <?php endif ?>
+
+    <div class="booking-confirm-card">
+        <h2><?= e(t('booking.details_heading', 'Buchungsdetails')) ?></h2>
+        <table class="booking-confirm-table">
+            <tr><th><?= e(t('booking.reference', 'Referenz')) ?></th><td><code><?= e($booking['reference'] ?? '') ?></code></td></tr>
+            <tr><th><?= e(t('booking.resource', 'Ressource')) ?></th><td><?= e($booking['resource_name'] ?? '') ?></td></tr>
+            <tr><th><?= e(t('booking.date', 'Datum')) ?></th><td><?= e($booking['booking_date'] ?? '') ?></td></tr>
+            <tr><th><?= e(t('booking.time', 'Uhrzeit')) ?></th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>
+            <tr><th><?= e(t('booking.duration', 'Dauer')) ?></th><td><?= (int)($booking['duration_mins'] ?? 0) ?> <?= e(t('booking.minutes', 'Min.')) ?></td></tr>
+            <tr><th><?= e(t('booking.total', 'Gesamt')) ?></th><td>€<?= number_format((float)($booking['total_amount'] ?? 0), 2) ?></td></tr>
+            <tr><th><?= e(t('label.status', 'Status')) ?></th><td><?= ucfirst(e($booking['booking_status'] ?? '')) ?></td></tr>
+        </table>
+    </div>
+
+    <div class="booking-confirm-actions">
+        <a href="/booking" class="booking-btn-link">← <?= e(t('booking.back_to_booking', 'Zurück zur Buchung')) ?></a>
+        <a href="/" class="booking-btn-link booking-btn-link--primary"><?= e(t('booking.go_home', 'Zur Startseite')) ?></a>
+    </div>
+
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = t('booking.confirmed', 'Buchung bestätigt') . ' ' . ($booking['reference'] ?? '');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ── booking/form ──────────────────────────────────────────────────────────────
+write('themes/default/booking/form.php', r"""<?php
+ob_start();
+$resource    = $resource    ?? [];
+$packages    = $packages    ?? [];
+$products    = $products    ?? [];
+$package     = $package     ?? null;
+$product     = $product     ?? null;
+$date        = $date        ?? '';
+$start       = $start       ?? '';
+$settings    = $settings    ?? [];
+$error       = $error       ?? null;
+
+$pricingType = $pricingType ?? ($_GET['pricing_type'] ?? 'hourly');
+$checkin     = $checkin     ?? '';
+$checkout    = $checkout    ?? '';
+$dailyNights = $dailyNights ?? 0;
+$dailyTotal  = $dailyTotal  ?? 0.0;
+$slotMins    = (int)($settings['slot_duration_mins'] ?? 60);
+$endTs       = ($date && $start) ? strtotime("{$date} {$start}") + $slotMins * 60 : null;
+$endTime     = $endTs ? date('H:i', $endTs) : '';
+
+if ($package) {
+    $endTs   = ($date && $start) ? strtotime("{$date} {$start}") + ((int)$package['duration_mins'] * 60) : null;
+    $endTime = $endTs ? date('H:i', $endTs) : '';
+    $slotMins = (int)$package['duration_mins'];
+}
+
+$paymentMode  = $settings['payment_mode'] ?? 'none';
+$depPct       = (float)($settings['deposit_percent'] ?? 30);
+$needsConfirm = !empty($settings['require_confirmation']);
+?>
+<div class="booking-page booking-form-page">
+
+    <div class="booking-breadcrumb">
+        <a href="/booking"><?= e(t('booking.heading', 'Buchung')) ?></a> ›
+        <a href="/booking/<?= e($resource['slug'] ?? '') ?>"><?= e($resource['name'] ?? '') ?></a> ›
+        <?= e(t('booking.complete', 'Buchung abschließen')) ?>
+    </div>
+
+    <?php if ($error): ?>
+    <div class="booking-alert booking-alert--error"><?= e($error) ?></div>
+    <?php endif ?>
+
+    <div class="booking-form-grid">
+
+        <div class="booking-form-main">
+            <h1><?= e(t('booking.your_details', 'Ihre Angaben')) ?></h1>
+            <form method="post" action="/booking/<?= e($resource['slug'] ?? '') ?>/book" class="booking-form">
+
+                <input type="hidden" name="booking_date"  value="<?= e($date) ?>">
+                <input type="hidden" name="start_time"    value="<?= e($start) ?>">
+                <input type="hidden" name="pricing_type"  value="<?= e($pricingType) ?>">
+                <?php if ($pricingType === 'daily'): ?>
+                <input type="hidden" name="checkin_date"   value="<?= e($checkin) ?>">
+                <input type="hidden" name="checkout_date"  value="<?= e($checkout) ?>">
+                <?php endif ?>
+                <?php if ($package): ?>
+                <input type="hidden" name="package_id"   value="<?= (int)$package['id'] ?>">
+                <?php endif ?>
+                <?php if ($product): ?>
+                <input type="hidden" name="product_id"   value="<?= (int)$product['id'] ?>">
+                <?php endif ?>
+
+                <div class="booking-field">
+                    <label for="bf-name"><?= e(t('booking.full_name', 'Vollständiger Name')) ?> <span>*</span></label>
+                    <input type="text" id="bf-name" name="customer_name" required
+                           value="<?= e($_POST['customer_name'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-email"><?= e(t('booking.email', 'E-Mail-Adresse')) ?> <span>*</span></label>
+                    <input type="email" id="bf-email" name="customer_email" required
+                           value="<?= e($_POST['customer_email'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-phone"><?= e(t('booking.phone', 'Telefonnummer')) ?></label>
+                    <input type="tel" id="bf-phone" name="customer_phone"
+                           value="<?= e($_POST['customer_phone'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-notes"><?= e(t('booking.notes_optional', 'Anmerkungen (optional)')) ?></label>
+                    <textarea id="bf-notes" name="notes" rows="3"><?= e($_POST['notes'] ?? '') ?></textarea>
+                </div>
+
+                <?php if ($paymentMode === 'deposit'): ?>
+                <div class="booking-payment-notice">
+                    <strong><?= e(t('booking.deposit_required', 'Anzahlung erforderlich')) ?>:</strong>
+                    <?= e(t('booking.deposit_text', 'Eine Anzahlung von')) ?>
+                    <?= (int)$depPct ?>%
+                    <?= e(t('booking.deposit_text_end', 'ist zur Bestätigung Ihrer Buchung erforderlich.')) ?>
+                </div>
+                <?php elseif ($paymentMode === 'full'): ?>
+                <div class="booking-payment-notice">
+                    <?= e(t('booking.full_payment', 'Die vollständige Zahlung ist beim Checkout fällig. Stripe-Zahlung kommt bald — Sie werden kontaktiert.')) ?>
+                </div>
+                <?php endif ?>
+
+                <button type="submit" class="booking-submit">
+                    <?= e($needsConfirm
+                        ? t('booking.request_btn', 'Buchung anfragen')
+                        : t('booking.confirm_btn', 'Buchung bestätigen')) ?>
+                </button>
+            </form>
+        </div>
+
+        <div class="booking-form-summary">
+            <div class="booking-summary-card">
+                <h3><?= e(t('booking.summary', 'Buchungsübersicht')) ?></h3>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.resource', 'Ressource')) ?></span>
+                    <span><?= e($resource['name'] ?? '') ?></span>
+                </div>
+                <?php if ($pricingType === 'daily' && $checkin): ?>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.checkin', 'Anreise')) ?></span>
+                    <span><?= e($checkin) ?></span>
+                </div>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.checkout', 'Abreise')) ?></span>
+                    <span><?= e($checkout) ?></span>
+                </div>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.duration', 'Dauer')) ?></span>
+                    <span><?= (int)$dailyNights ?> <?= e($dailyNights !== 1 ? t('booking.nights', 'Nächte') : t('booking.night', 'Nacht')) ?></span>
+                </div>
+                <div class="booking-summary-row booking-summary-total">
+                    <span><?= e(t('booking.total', 'Gesamt')) ?></span>
+                    <span>&euro;<?= number_format($dailyTotal, 2) ?></span>
+                </div>
+                <?php elseif ($date): ?>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.date', 'Datum')) ?></span>
+                    <span><?= e($date) ?></span>
+                </div>
+                <?php endif ?>
+                <?php if ($start): ?>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.time', 'Uhrzeit')) ?></span>
+                    <span><?= e($start) ?><?= $endTime ? ' – ' . e($endTime) : '' ?></span>
+                </div>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.duration', 'Dauer')) ?></span>
+                    <span><?= $slotMins ?> <?= e(t('booking.minutes', 'Min.')) ?></span>
+                </div>
+                <?php endif ?>
+                <?php if ($package): ?>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.package', 'Paket')) ?></span>
+                    <span><?= e($package['name']) ?></span>
+                </div>
+                <div class="booking-summary-row booking-summary-total">
+                    <span><?= e(t('booking.total', 'Gesamt')) ?></span>
+                    <span>€<?= number_format((float)$package['price'], 2) ?></span>
+                </div>
+                <?php elseif ($product): ?>
+                <div class="booking-summary-row">
+                    <span><?= e(t('booking.service', 'Leistung')) ?></span>
+                    <span><?= e($product['name']) ?></span>
+                </div>
+                <div class="booking-summary-row booking-summary-total">
+                    <span><?= e(t('booking.total', 'Gesamt')) ?></span>
+                    <span>€<?= number_format((float)$product['price'], 2) ?></span>
+                </div>
+                <?php elseif ($resource['hourly_rate'] ?? null): ?>
+                <div class="booking-summary-row booking-summary-total">
+                    <span><?= e(t('booking.total', 'Gesamt')) ?></span>
+                    <span>€<?= number_format((float)$resource['hourly_rate'] * ($slotMins / 60), 2) ?></span>
+                </div>
+                <?php endif ?>
+                <?php if ($paymentMode === 'none'): ?>
+                <p class="booking-summary-note"><?= e(t('booking.inquiry_only', 'Nur Anfrage — keine Zahlung erforderlich.')) ?></p>
+                <?php endif ?>
+            </div>
+        </div>
+
+    </div>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = t('booking.book', 'Buchen') . ' ' . ($resource['name'] ?? '');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ── booking/resource ──────────────────────────────────────────────────────────
+write('themes/default/booking/resource.php', r"""<?php
+ob_start();
+$resource = $resource ?? [];
+$packages = $packages ?? [];
+$products = $products ?? [];
+$settings = $settings ?? [];
+
+$pricingMode  = $resource['pricing_mode'] ?? 'hourly';
+$bookingTypes = json_decode($settings['booking_types'] ?? '["hourly"]', true) ?: ['hourly'];
+$showHourly   = in_array('hourly',  $bookingTypes) && ($pricingMode === 'hourly'  || $pricingMode === 'combined');
+$showPackage  = in_array('package', $bookingTypes) && ($pricingMode === 'package' || $pricingMode === 'combined');
+$showProduct  = in_array('product', $bookingTypes) && ($pricingMode === 'product' || $pricingMode === 'combined');
+$showDaily    = in_array('daily',   $bookingTypes) && ($pricingMode === 'daily'   || $pricingMode === 'combined');
+?>
+<div class="booking-page">
+
+    <?php if ($resource['image'] ?? ''): ?>
+    <div class="booking-hero" style="background-image:url(<?= e($resource['image']) ?>)"></div>
+    <?php endif ?>
+
+    <h1><?= e($resource['name'] ?? '') ?></h1>
+    <?php if ($resource['description'] ?? ''): ?>
+    <p class="booking-resource-desc"><?= e($resource['description']) ?></p>
+    <?php endif ?>
+
+    <div class="booking-pricing-info">
+        <?php if ($showHourly && $resource['hourly_rate']): ?>
+        <div class="booking-price-chip">€<?= number_format((float)$resource['hourly_rate'], 2) ?>/<?= e(t('booking.per_hour', 'Std.')) ?></div>
+        <?php endif ?>
+        <div class="booking-price-chip"><?= e(t('booking.min', 'Min.')) ?> <?= (int)$resource['min_duration_mins'] ?> <?= e(t('booking.minutes', 'Min.')) ?></div>
+        <div class="booking-price-chip"><?= e(t('booking.advance', 'Buchbar')) ?> <?= (int)$resource['advance_booking_hours'] ?>h <?= e(t('booking.in_advance', 'im Voraus')) ?></div>
+    </div>
+
+    <?php if ($showPackage && !empty($packages)): ?>
+    <div class="booking-packages">
+        <h2><?= e(t('booking.packages', 'Pakete')) ?></h2>
+        <div class="booking-option-grid">
+        <?php foreach ($packages as $pkg): ?>
+            <?php if (!$pkg['active']) continue; ?>
+            <a href="/booking/<?= e($resource['slug']) ?>/book?pricing_type=package&package_id=<?= (int)$pkg['id'] ?>" class="booking-option-card">
+                <strong><?= e($pkg['name']) ?></strong>
+                <?php if ($pkg['description']): ?><p><?= e($pkg['description']) ?></p><?php endif ?>
+                <div class="booking-option-meta">
+                    <span><?= (int)$pkg['duration_mins'] ?> <?= e(t('booking.minutes', 'Min.')) ?></span>
+                    <span class="booking-option-price">€<?= number_format((float)$pkg['price'], 2) ?></span>
+                </div>
+            </a>
+        <?php endforeach ?>
+        </div>
+    </div>
+    <?php endif ?>
+
+    <?php if ($showProduct && !empty($products)): ?>
+    <div class="booking-products">
+        <h2><?= e(t('booking.services', 'Leistungen')) ?></h2>
+        <div class="booking-option-grid">
+        <?php foreach ($products as $prod): ?>
+            <?php if (!$prod['active']) continue; ?>
+            <a href="/booking/<?= e($resource['slug']) ?>/book?pricing_type=product&product_id=<?= (int)$prod['id'] ?>" class="booking-option-card">
+                <strong><?= e($prod['name']) ?></strong>
+                <?php if ($prod['description']): ?><p><?= e($prod['description']) ?></p><?php endif ?>
+                <div class="booking-option-meta">
+                    <span class="booking-option-price">€<?= number_format((float)$prod['price'], 2) ?></span>
+                </div>
+            </a>
+        <?php endforeach ?>
+        </div>
+    </div>
+    <?php endif ?>
+
+    <?php if ($showDaily): ?>
+    <section class="booking-daily-section">
+        <h2><?= e(t('booking.select_dates', 'Daten auswählen')) ?></h2>
+        <div class="bk-daily-form">
+            <div class="bk-daily-fields">
+                <label><?= e(t('booking.checkin', 'Anreise')) ?><br>
+                    <input type="date" id="bk-checkin" min="<?= date('Y-m-d') ?>"
+                           onchange="updateDailyUrl()">
+                </label>
+                <label><?= e(t('booking.checkout', 'Abreise')) ?><br>
+                    <input type="date" id="bk-checkout"
+                           onchange="updateDailyUrl()">
+                </label>
+            </div>
+            <p id="bk-daily-summary" class="bk-daily-summary"><?= e(t('booking.select_dates_hint', 'Wählen Sie Daten, um den Gesamtpreis zu sehen.')) ?></p>
+            <a id="bk-daily-btn" href="#" class="booking-slot-btn" style="display:none"><?= e(t('booking.book_now', 'Jetzt buchen')) ?></a>
+        </div>
+        <?php if ((int)($resource['min_stay_nights'] ?? 1) > 1): ?>
+        <p class="bk-min-stay"><?= e(t('booking.min_stay', 'Mindestaufenthalt')) ?>: <?= (int)$resource['min_stay_nights'] ?> <?= e(t('booking.nights', 'Nächte')) ?></p>
+        <?php endif ?>
+        <script>
+        (function(){
+            var rate     = <?= (float)($resource['daily_rate'] ?? 0) ?>;
+            var minNights= <?= (int)($resource['min_stay_nights'] ?? 1) ?>;
+            var slug     = '<?= e($resource['slug']) ?>';
+            var msgSelect  = <?= json_encode(t('booking.select_dates_hint', 'Wählen Sie Daten, um den Gesamtpreis zu sehen.')) ?>;
+            var msgAfter   = <?= json_encode(t('booking.checkout_after_checkin', 'Abreise muss nach Anreise liegen.')) ?>;
+            var msgMinStay = <?= json_encode(t('booking.min_stay', 'Mindestaufenthalt')) ?>;
+            var msgNight   = <?= json_encode(t('booking.night', 'Nacht')) ?>;
+            var msgNights  = <?= json_encode(t('booking.nights', 'Nächte')) ?>;
+            function updateDailyUrl() {
+                var ci  = document.getElementById('bk-checkin').value;
+                var co  = document.getElementById('bk-checkout').value;
+                var sum = document.getElementById('bk-daily-summary');
+                var btn = document.getElementById('bk-daily-btn');
+                btn.style.display = 'none';
+                if (!ci || !co) { sum.textContent = msgSelect; return; }
+                var n = Math.round((new Date(co) - new Date(ci)) / 86400000);
+                if (n < 1)        { sum.textContent = msgAfter; return; }
+                if (n < minNights){ sum.textContent = msgMinStay + ': ' + minNights + ' ' + msgNights + '.'; return; }
+                document.getElementById('bk-checkout').min =
+                    new Date(new Date(ci).getTime() + 86400000).toISOString().slice(0,10);
+                var total = rate ? ' — Total: €' + (rate * n).toFixed(2) : '';
+                sum.textContent = n + ' ' + (n !== 1 ? msgNights : msgNight) + total;
+                btn.href = '/booking/' + slug + '/book?pricing_type=daily&checkin=' + ci + '&checkout=' + co;
+                btn.style.display = '';
+            }
+            window.updateDailyUrl = updateDailyUrl;
+        }());
+        </script>
+    </section>
+    <?php endif ?>
+
+    <?php if ($showHourly): ?>
+    <div class="booking-calendar-section">
+        <h2><?= e(t('booking.select_date', 'Datum auswählen')) ?></h2>
+        <div id="booking-calendar" class="booking-calendar"
+             data-resource="<?= e($resource['slug']) ?>"
+             data-slot-mins="<?= (int)($settings['slot_duration_mins'] ?? 60) ?>">
+        </div>
+        <div id="booking-slots" class="booking-slots" style="display:none">
+            <h3 id="booking-slots-heading"></h3>
+            <div id="booking-slots-list"></div>
+        </div>
+    </div>
+    <?php endif ?>
+
+</div>
+
+<script>
+(function () {
+    const cal = document.getElementById('booking-calendar');
+    if (!cal) return;
+    const resource = cal.dataset.resource;
+    const slotMins = parseInt(cal.dataset.slotMins, 10) || 60;
+    const today    = new Date();
+    let viewYear   = today.getFullYear();
+    let viewMonth  = today.getMonth();
+
+    const MONTHS = <?= json_encode([
+        t('month.jan','Januar'), t('month.feb','Februar'), t('month.mar','März'),
+        t('month.apr','April'),  t('month.may','Mai'),     t('month.jun','Juni'),
+        t('month.jul','Juli'),   t('month.aug','August'),  t('month.sep','September'),
+        t('month.oct','Oktober'),t('month.nov','November'),t('month.dec','Dezember'),
+    ]) ?>;
+    const DAYS = <?= json_encode([
+        t('day.mo','Mo'), t('day.tu','Di'), t('day.we','Mi'),
+        t('day.th','Do'), t('day.fr','Fr'), t('day.sa','Sa'), t('day.su','So'),
+    ]) ?>;
+    const MSG_LOADING = <?= json_encode(t('booking.loading', 'Lädt…')) ?>;
+    const MSG_NO_SLOTS = <?= json_encode(t('booking.no_slots', 'Keine Verfügbarkeit an diesem Tag.')) ?>;
+    const MSG_ERROR = <?= json_encode(t('booking.slots_error', 'Fehler beim Laden der Zeiten.')) ?>;
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function fmtDate(y, m, d) { return `${y}-${pad(m+1)}-${pad(d)}`; }
+
+    function renderCalendar(year, month) {
+        const firstDay  = new Date(year, month, 1).getDay();
+        const daysInMon = new Date(year, month + 1, 0).getDate();
+        const startOfWeek = (firstDay === 0) ? 6 : firstDay - 1;
+
+        let html = `<div class="cal-header">
+            <button class="cal-nav" id="cal-prev">‹</button>
+            <span class="cal-title">${MONTHS[month]} ${year}</span>
+            <button class="cal-nav" id="cal-next">›</button>
+        </div>
+        <div class="cal-grid">`;
+        DAYS.forEach(d => { html += `<div class="cal-dow">${d}</div>`; });
+
+        for (let i = 0; i < startOfWeek; i++) html += '<div class="cal-cell cal-empty"></div>';
+        const todayStr = fmtDate(today.getFullYear(), today.getMonth(), today.getDate());
+        for (let d = 1; d <= daysInMon; d++) {
+            const dateStr = fmtDate(year, month, d);
+            const isPast  = dateStr < todayStr;
+            html += isPast
+                ? `<div class="cal-cell cal-past">${d}</div>`
+                : `<button class="cal-cell cal-avail" data-date="${dateStr}">${d}</button>`;
+        }
+        html += '</div>';
+        cal.innerHTML = html;
+
+        document.getElementById('cal-prev').addEventListener('click', () => {
+            viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+            renderCalendar(viewYear, viewMonth);
+        });
+        document.getElementById('cal-next').addEventListener('click', () => {
+            viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+            renderCalendar(viewYear, viewMonth);
+        });
+        cal.querySelectorAll('.cal-avail').forEach(btn => {
+            btn.addEventListener('click', () => loadSlots(btn.dataset.date));
+        });
+    }
+
+    function loadSlots(date) {
+        const slotsDiv  = document.getElementById('booking-slots');
+        const slotsHead = document.getElementById('booking-slots-heading');
+        const slotsList = document.getElementById('booking-slots-list');
+        slotsHead.textContent = date;
+        slotsList.innerHTML   = `<p>${MSG_LOADING}</p>`;
+        slotsDiv.style.display = '';
+        slotsDiv.scrollIntoView({ behavior: 'smooth' });
+
+        fetch(`/booking/${resource}/availability?date=${date}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.slots || data.slots.length === 0) {
+                    slotsList.innerHTML = `<p class="booking-no-slots">${MSG_NO_SLOTS}</p>`;
+                    return;
+                }
+                slotsList.innerHTML = data.slots.map(s =>
+                    `<a href="/booking/${resource}/book?date=${date}&start=${s.start}&pricing_type=hourly"
+                        class="booking-slot-btn">${s.start} – ${s.end}</a>`
+                ).join('');
+            })
+            .catch(() => { slotsList.innerHTML = `<p>${MSG_ERROR}</p>`; });
+    }
+
+    renderCalendar(viewYear, viewMonth);
+}());
+</script>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = t('booking.book', 'Buchen') . ' ' . ($resource['name'] ?? '');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+print('\nBatch 1 done — all frontend theme views written.')

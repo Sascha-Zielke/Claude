@@ -1,0 +1,126 @@
+name: Lint, Test & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: PHP syntax check ────────────────────────────────────────────────
+  lint:
+    name: PHP Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.5
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: none
+
+      - name: Check syntax of all PHP files
+        run: |
+          find . -name "*.php" \
+            -not -path "./vendor/*" \
+            -not -path "./.git/*" \
+            | sort \
+            | xargs -P4 -I{} php -l {} \
+            | grep -v "^No syntax errors" \
+            && echo "SYNTAX ERRORS FOUND" && exit 1 \
+            || echo "All PHP files OK"
+
+  # ── Job 2: PHPUnit tests ───────────────────────────────────────────────────
+  test:
+    name: PHPUnit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: velocms_core
+          MYSQL_USER: velocms
+          MYSQL_PASSWORD: test_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.5
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          tools: composer
+          extensions: pdo_mysql, mbstring
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Run migrations
+        env:
+          CORE_DB_HOST: 127.0.0.1
+          CORE_DB_NAME: velocms_core
+          CORE_DB_USER: velocms
+          CORE_DB_PASS: test_pass
+        run: |
+          export $(grep -v '^#' .env.example 2>/dev/null | xargs) || true
+          php cli/velocms migrate
+
+      - name: Run PHPUnit
+        env:
+          CORE_DB_HOST: 127.0.0.1
+          CORE_DB_NAME: velocms_core
+          CORE_DB_USER: velocms
+          CORE_DB_PASS: test_pass
+        run: ./vendor/bin/phpunit --testdox
+
+  # ── Job 3: Deploy to production (main branch only) ─────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host:        ${{ secrets.DEPLOY_HOST }}
+          username:    ${{ secrets.DEPLOY_USER }}
+          key:         ${{ secrets.DEPLOY_KEY }}
+          port:        ${{ secrets.DEPLOY_PORT }}
+          known_hosts: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          script: |
+            set -e
+            cd /var/www/velocms
+
+            echo "=== Pulling latest code ==="
+            git pull origin main
+
+            echo "=== Installing Composer dependencies ==="
+            composer install \
+              --no-dev \
+              --optimize-autoloader \
+              --no-interaction \
+              --no-progress
+
+            echo "=== Reloading PHP-FPM ==="
+            sudo systemctl reload php8.5-fpm
+
+            echo "=== Refreshing search index ==="
+            php cli/velocms search:reindex
+
+            echo "=== Deploy complete ==="
+            git log --oneline -1

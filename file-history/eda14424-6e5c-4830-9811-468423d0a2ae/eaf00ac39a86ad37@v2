@@ -1,0 +1,1433 @@
+"""
+vcms_booking_views.py — Write all admin and theme views for the Booking module.
+"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(path, content):
+    full = BASE + '/' + path
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w') as f:
+        f.write(content)
+    print(f'  OK  {path}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/index.php ===')
+write('admin/views/booking/index.php', r"""<?php
+$flash = $flash ?? null;
+$counts = $counts ?? ['pending' => 0, 'confirmed' => 0, 'cancelled' => 0];
+$filters = $filters ?? [];
+?>
+<div class="vcms-section-header">
+    <h3>Bookings</h3>
+    <a href="/admin/booking/create" class="vcms-btn">+ New Booking</a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div class="vcms-stat-row" style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap">
+    <?php foreach (['pending' => '#f59e0b', 'confirmed' => '#10b981', 'cancelled' => '#6b7280'] as $s => $col): ?>
+    <a href="?status=<?= $s ?>" style="flex:1;min-width:120px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;text-align:center;text-decoration:none;color:inherit">
+        <div style="font-size:1.75rem;font-weight:700;color:<?= $col ?>"><?= (int)($counts[$s] ?? 0) ?></div>
+        <div style="font-size:.8rem;color:#6b7280;text-transform:capitalize"><?= $s ?></div>
+    </a>
+    <?php endforeach ?>
+</div>
+
+<form method="get" class="vcms-filter-bar" style="display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.5rem;align-items:flex-end">
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block">Status</label>
+        <select name="status">
+            <option value="">All</option>
+            <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>
+            <option value="<?= $s ?>" <?= ($filters['status'] ?? '') === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block">Resource</label>
+        <select name="resource_id">
+            <option value="">All resources</option>
+            <?php foreach ($resources as $r): ?>
+            <option value="<?= $r['id'] ?>" <?= ($filters['resource_id'] ?? '') == $r['id'] ? 'selected' : '' ?>><?= e($r['name']) ?></option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block">From</label>
+        <input type="date" name="date_from" value="<?= e($filters['date_from'] ?? '') ?>">
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block">To</label>
+        <input type="date" name="date_to" value="<?= e($filters['date_to'] ?? '') ?>">
+    </div>
+    <div>
+        <button type="submit" class="vcms-btn vcms-btn--secondary">Filter</button>
+        <a href="/admin/booking" class="vcms-btn vcms-btn--ghost">Clear</a>
+    </div>
+</form>
+
+<?php if (empty($bookings)): ?>
+    <p class="vcms-empty">No bookings found.</p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th>Reference</th>
+            <th>Resource</th>
+            <th>Customer</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($bookings as $b): ?>
+        <tr>
+            <td><code><?= e($b['reference']) ?></code></td>
+            <td><?= e($b['resource_name'] ?? '—') ?></td>
+            <td>
+                <strong><?= e($b['customer_name']) ?></strong><br>
+                <small><?= e($b['customer_email']) ?></small>
+            </td>
+            <td><?= e($b['booking_date']) ?></td>
+            <td><?= e(substr($b['start_time'], 0, 5)) ?> – <?= e(substr($b['end_time'], 0, 5)) ?></td>
+            <td>€<?= number_format((float)$b['total_amount'], 2) ?></td>
+            <td>
+                <span class="vcms-badge vcms-badge--<?= e($b['booking_status']) ?>">
+                    <?= ucfirst(e($b['booking_status'])) ?>
+                </span>
+            </td>
+            <td class="vcms-actions">
+                <a href="/admin/booking/<?= (int)$b['id'] ?>" class="vcms-btn vcms-btn--sm">View</a>
+            </td>
+        </tr>
+    <?php endforeach ?>
+    </tbody>
+</table>
+</div>
+<?php endif ?>
+
+<div style="margin-top:2rem;display:flex;gap:1rem">
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary">Manage Resources</a>
+    <a href="/admin/booking/settings"  class="vcms-btn vcms-btn--secondary">Booking Settings</a>
+</div>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/detail.php ===')
+write('admin/views/booking/detail.php', r"""<?php
+$flash   = $flash ?? null;
+$booking = $booking ?? [];
+$statusColors = ['pending' => '#f59e0b', 'confirmed' => '#10b981', 'cancelled' => '#6b7280'];
+?>
+<div class="vcms-section-header">
+    <h3>Booking <?= e($booking['reference'] ?? '') ?></h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← All Bookings</a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div style="display:grid;grid-template-columns:1fr 320px;gap:1.5rem;align-items:start" class="vcms-detail-grid">
+
+    <!-- Left: booking info -->
+    <div>
+        <div class="vcms-card">
+            <h4 style="margin:0 0 1rem">Booking Details</h4>
+            <table class="vcms-table vcms-table--form">
+                <tr><th>Reference</th><td><code><?= e($booking['reference'] ?? '') ?></code></td></tr>
+                <tr><th>Resource</th><td><?= e($booking['resource_name'] ?? '—') ?></td></tr>
+                <tr><th>Date</th><td><?= e($booking['booking_date'] ?? '') ?></td></tr>
+                <tr><th>Time</th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>
+                <tr><th>Duration</th><td><?= (int)($booking['duration_mins'] ?? 0) ?> min</td></tr>
+                <tr><th>Pricing type</th><td><?= ucfirst(e($booking['pricing_type'] ?? '')) ?></td></tr>
+                <?php if ($booking['package_name'] ?? null): ?>
+                <tr><th>Package</th><td><?= e($booking['package_name']) ?> (<?= (int)$booking['package_duration'] ?> min)</td></tr>
+                <?php endif ?>
+                <?php if ($booking['product_name'] ?? null): ?>
+                <tr><th>Product</th><td><?= e($booking['product_name']) ?></td></tr>
+                <?php endif ?>
+                <tr><th>Subtotal</th><td>€<?= number_format((float)($booking['subtotal'] ?? 0), 2) ?></td></tr>
+                <?php if ((float)($booking['deposit_amount'] ?? 0) > 0): ?>
+                <tr><th>Deposit</th><td>€<?= number_format((float)$booking['deposit_amount'], 2) ?></td></tr>
+                <?php endif ?>
+                <tr><th>Total</th><td><strong>€<?= number_format((float)($booking['total_amount'] ?? 0), 2) ?></strong></td></tr>
+                <tr><th>Payment</th><td><?= ucfirst(str_replace('_', ' ', e($booking['payment_status'] ?? 'none'))) ?></td></tr>
+                <tr><th>Booked at</th><td><?= e($booking['created_at'] ?? '') ?></td></tr>
+            </table>
+        </div>
+
+        <div class="vcms-card" style="margin-top:1rem">
+            <h4 style="margin:0 0 1rem">Customer</h4>
+            <table class="vcms-table vcms-table--form">
+                <tr><th>Name</th><td><?= e($booking['customer_name'] ?? '') ?></td></tr>
+                <tr><th>Email</th><td><a href="mailto:<?= e($booking['customer_email'] ?? '') ?>"><?= e($booking['customer_email'] ?? '') ?></a></td></tr>
+                <tr><th>Phone</th><td><?= e($booking['customer_phone'] ?? '—') ?></td></tr>
+                <?php if ($booking['notes'] ?? ''): ?>
+                <tr><th>Notes</th><td><?= e($booking['notes']) ?></td></tr>
+                <?php endif ?>
+            </table>
+        </div>
+    </div>
+
+    <!-- Right: status panel -->
+    <div>
+        <div class="vcms-card">
+            <h4 style="margin:0 0 1rem">Status</h4>
+            <div style="text-align:center;padding:.5rem 0 1rem">
+                <span style="display:inline-block;padding:.4rem 1.2rem;border-radius:999px;background:<?= $statusColors[$booking['booking_status'] ?? 'pending'] ?? '#ccc' ?>;color:#fff;font-weight:600;font-size:.9rem">
+                    <?= ucfirst(e($booking['booking_status'] ?? 'pending')) ?>
+                </span>
+            </div>
+
+            <form method="post" action="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/status">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+                <div class="vcms-form-group">
+                    <label>Change status</label>
+                    <select name="booking_status">
+                        <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>
+                        <option value="<?= $s ?>" <?= ($booking['booking_status'] ?? '') === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
+                        <?php endforeach ?>
+                    </select>
+                </div>
+
+                <div class="vcms-form-group">
+                    <label>Admin notes</label>
+                    <textarea name="admin_notes" rows="4" placeholder="Internal notes…"><?= e($booking['admin_notes'] ?? '') ?></textarea>
+                </div>
+
+                <button type="submit" class="vcms-btn" style="width:100%">Update Status</button>
+            </form>
+        </div>
+
+        <?php if ($booking['ip_address'] ?? null): ?>
+        <div class="vcms-card" style="margin-top:1rem">
+            <small style="color:#6b7280">IP: <?= e($booking['ip_address']) ?></small>
+        </div>
+        <?php endif ?>
+    </div>
+
+</div>
+
+<style>
+@media (max-width:767px) {
+    .vcms-detail-grid { grid-template-columns: 1fr !important; }
+}
+</style>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/create.php ===')
+write('admin/views/booking/create.php', r"""<?php $error = $error ?? null; ?>
+
+<div class="vcms-section-header">
+    <h3>New Booking</h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← Bookings</a>
+</div>
+
+<?php if ($error): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif ?>
+
+<div class="vcms-card">
+<form method="post" action="/admin/booking/create" class="vcms-form" id="manual-booking-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="b-resource">Resource <span class="vcms-required">*</span></label>
+            <select id="b-resource" name="resource_id" required onchange="loadResourceOptions(this.value)">
+                <option value="">— Select resource —</option>
+                <?php foreach ($resources as $r): ?>
+                <option value="<?= $r['id'] ?>"><?= e($r['name']) ?></option>
+                <?php endforeach ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-pricing">Pricing type <span class="vcms-required">*</span></label>
+            <select id="b-pricing" name="pricing_type" onchange="togglePricingFields()">
+                <option value="hourly">Hourly</option>
+                <option value="package">Package</option>
+                <option value="product">Product</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="pkg-field" style="display:none" class="vcms-form-group">
+        <label>Package</label>
+        <select name="package_id" id="b-package">
+            <option value="">— select resource first —</option>
+        </select>
+    </div>
+
+    <div id="prod-field" style="display:none" class="vcms-form-group">
+        <label>Product</label>
+        <select name="product_id" id="b-product">
+            <option value="">— select resource first —</option>
+        </select>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="b-date">Date <span class="vcms-required">*</span></label>
+            <input type="date" id="b-date" name="booking_date"
+                   min="<?= date('Y-m-d') ?>" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-start">Start time <span class="vcms-required">*</span></label>
+            <input type="time" id="b-start" name="start_time" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-end">End time <span class="vcms-required">*</span></label>
+            <input type="time" id="b-end" name="end_time" required>
+        </div>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="b-name">Customer name <span class="vcms-required">*</span></label>
+            <input type="text" id="b-name" name="customer_name" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-email">Customer email <span class="vcms-required">*</span></label>
+            <input type="email" id="b-email" name="customer_email" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-phone">Phone</label>
+            <input type="tel" id="b-phone" name="customer_phone">
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label for="b-notes">Notes</label>
+        <textarea id="b-notes" name="notes" rows="3"></textarea>
+    </div>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn">Create Booking</button>
+        <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">Cancel</a>
+    </div>
+</form>
+</div>
+
+<script>
+const resourceData = <?= json_encode(array_column($resources, null, 'id')) ?>;
+
+function togglePricingFields() {
+    const type = document.getElementById('b-pricing').value;
+    document.getElementById('pkg-field').style.display  = type === 'package' ? '' : 'none';
+    document.getElementById('prod-field').style.display = type === 'product' ? '' : 'none';
+}
+
+function loadResourceOptions(resourceId) {
+    const pkgSel  = document.getElementById('b-package');
+    const prodSel = document.getElementById('b-product');
+    pkgSel.innerHTML  = '<option value="">— none —</option>';
+    prodSel.innerHTML = '<option value="">— none —</option>';
+    if (!resourceId) return;
+    fetch(`/booking-admin-data/resource/${resourceId}/options`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data) return;
+            (data.packages || []).forEach(p => {
+                pkgSel.innerHTML  += `<option value="${p.id}">${p.name} — €${p.price} (${p.duration_mins} min)</option>`;
+            });
+            (data.products || []).forEach(p => {
+                prodSel.innerHTML += `<option value="${p.id}">${p.name} — €${p.price}</option>`;
+            });
+        });
+}
+</script>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/resources/index.php ===')
+write('admin/views/booking/resources/index.php', r"""<?php
+$flash = $flash ?? null;
+?>
+<div class="vcms-section-header">
+    <h3>Booking Resources</h3>
+    <a href="/admin/booking/resources/create" class="vcms-btn">+ New Resource</a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<p style="color:#6b7280;margin-bottom:1.5rem">
+    Resources are the rooms, studios, or spaces that can be booked.
+    <a href="/admin/booking/settings">Configure booking settings →</a>
+</p>
+
+<?php if (empty($resources)): ?>
+    <p class="vcms-empty">No resources yet. <a href="/admin/booking/resources/create">Add your first resource.</a></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Pricing mode</th>
+            <th>Rate</th>
+            <th>Min/Max</th>
+            <th>Advance notice</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($resources as $r): ?>
+        <tr>
+            <td><strong><?= e($r['name']) ?></strong><br><small>/booking/<?= e($r['slug']) ?></small></td>
+            <td><?= ucfirst(e($r['pricing_mode'])) ?></td>
+            <td>
+                <?php if ($r['hourly_rate'] !== null): ?>
+                    €<?= number_format((float)$r['hourly_rate'], 2) ?>/hr
+                <?php else: ?>—<?php endif ?>
+            </td>
+            <td><?= (int)$r['min_duration_mins'] ?>–<?= (int)$r['max_duration_mins'] ?> min</td>
+            <td><?= (int)$r['advance_booking_hours'] ?>h</td>
+            <td>
+                <span class="vcms-badge <?= $r['active'] ? 'vcms-badge--published' : 'vcms-badge--draft' ?>">
+                    <?= $r['active'] ? 'Active' : 'Inactive' ?>
+                </span>
+            </td>
+            <td class="vcms-actions">
+                <a href="/admin/booking/resources/<?= (int)$r['id'] ?>/edit" class="vcms-btn vcms-btn--sm">Edit</a>
+                <form method="post" action="/admin/booking/resources/<?= (int)$r['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('Delete this resource and all its packages/products?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach ?>
+    </tbody>
+</table>
+</div>
+<?php endif ?>
+<div style="margin-top:1.5rem">
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← Bookings</a>
+</div>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/resources/form.php ===')
+write('admin/views/booking/resources/form.php', r"""<?php
+$flash  = $flash  ?? null;
+$error  = $error  ?? null;
+$record = $record ?? null;
+$isEdit = $record && !empty($record['id']);
+?>
+<div class="vcms-section-header">
+    <h3><?= e($formTitle ?? 'Resource') ?></h3>
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary">← Resources</a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+<?php if ($error): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif ?>
+
+<!-- Resource form -->
+<div class="vcms-card">
+    <h4 style="margin:0 0 1.25rem">Resource Details</h4>
+    <form method="post" action="<?= e($action) ?>" class="vcms-form">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+        <div class="vcms-form-row">
+            <div class="vcms-form-group vcms-form-group--wide">
+                <label for="r-name">Name <span class="vcms-required">*</span></label>
+                <input type="text" id="r-name" name="name"
+                       value="<?= e($record['name'] ?? '') ?>" required autofocus>
+            </div>
+            <div class="vcms-form-group">
+                <label for="r-slug">Slug</label>
+                <input type="text" id="r-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>" placeholder="auto-generated">
+            </div>
+        </div>
+
+        <div class="vcms-form-group">
+            <label for="r-desc">Description</label>
+            <textarea id="r-desc" name="description" rows="3"><?= e($record['description'] ?? '') ?></textarea>
+        </div>
+
+        <div class="vcms-form-group">
+            <label for="r-image">Image URL</label>
+            <input type="url" id="r-image" name="image" value="<?= e($record['image'] ?? '') ?>" placeholder="https://…">
+        </div>
+
+        <div class="vcms-form-row">
+            <div class="vcms-form-group">
+                <label for="r-pricing">Pricing mode</label>
+                <select id="r-pricing" name="pricing_mode" onchange="toggleHourlyRate()">
+                    <?php foreach (['hourly' => 'Hourly', 'package' => 'Package only', 'product' => 'Product only', 'combined' => 'Combined (all types)'] as $v => $l): ?>
+                    <option value="<?= $v ?>" <?= ($record['pricing_mode'] ?? 'hourly') === $v ? 'selected' : '' ?>><?= $l ?></option>
+                    <?php endforeach ?>
+                </select>
+            </div>
+            <div class="vcms-form-group" id="hourly-rate-group">
+                <label for="r-rate">Hourly rate (€)</label>
+                <input type="number" id="r-rate" name="hourly_rate" step="0.01" min="0"
+                       value="<?= e($record['hourly_rate'] ?? '') ?>" placeholder="0.00">
+            </div>
+        </div>
+
+        <div class="vcms-form-row">
+            <div class="vcms-form-group">
+                <label for="r-min">Min duration (min)</label>
+                <input type="number" id="r-min" name="min_duration_mins" min="15" step="15"
+                       value="<?= (int)($record['min_duration_mins'] ?? 60) ?>">
+            </div>
+            <div class="vcms-form-group">
+                <label for="r-max">Max duration (min)</label>
+                <input type="number" id="r-max" name="max_duration_mins" min="15" step="15"
+                       value="<?= (int)($record['max_duration_mins'] ?? 480) ?>">
+            </div>
+            <div class="vcms-form-group">
+                <label for="r-adv">Advance booking (hours)</label>
+                <input type="number" id="r-adv" name="advance_booking_hours" min="0"
+                       value="<?= (int)($record['advance_booking_hours'] ?? 24) ?>">
+            </div>
+            <div class="vcms-form-group">
+                <label for="r-sort">Sort order</label>
+                <input type="number" id="r-sort" name="sort_order" min="0"
+                       value="<?= (int)($record['sort_order'] ?? 0) ?>">
+            </div>
+        </div>
+
+        <div class="vcms-form-group">
+            <label class="vcms-checkbox">
+                <input type="checkbox" name="active" value="1"
+                    <?= ($record['active'] ?? 1) ? 'checked' : '' ?>>
+                Active (visible to customers)
+            </label>
+        </div>
+
+        <div class="vcms-form-actions">
+            <button type="submit" class="vcms-btn"><?= $isEdit ? 'Save Changes' : 'Create Resource' ?></button>
+        </div>
+    </form>
+</div>
+
+<?php if ($isEdit): ?>
+
+<!-- Packages -->
+<div class="vcms-card" style="margin-top:1.5rem">
+    <h4 style="margin:0 0 1rem">Packages</h4>
+    <p style="color:#6b7280;font-size:.88rem;margin-bottom:1rem">Fixed-duration, fixed-price time blocks (e.g. "Half Day — 4h — €200").</p>
+
+    <?php if (!empty($packages)): ?>
+    <div class="vcms-table-wrap" style="margin-bottom:1rem">
+    <table class="vcms-table">
+        <thead><tr><th>Name</th><th>Duration</th><th>Price</th><th>Active</th><th></th></tr></thead>
+        <tbody>
+        <?php foreach ($packages as $pkg): ?>
+            <tr>
+                <td><strong><?= e($pkg['name']) ?></strong>
+                    <?php if ($pkg['description']): ?><br><small><?= e(mb_substr($pkg['description'], 0, 60)) ?></small><?php endif ?>
+                </td>
+                <td><?= (int)$pkg['duration_mins'] ?> min</td>
+                <td>€<?= number_format((float)$pkg['price'], 2) ?></td>
+                <td><?= $pkg['active'] ? '✓' : '—' ?></td>
+                <td class="vcms-actions">
+                    <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/packages/<?= (int)$pkg['id'] ?>/delete" style="display:inline">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                                onclick="return confirm('Remove this package?')">Remove</button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif ?>
+
+    <details>
+        <summary class="vcms-btn vcms-btn--secondary vcms-btn--sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:.4rem">+ Add Package</summary>
+        <div style="margin-top:1rem;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem">
+        <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/packages" class="vcms-form">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="vcms-form-row">
+                <div class="vcms-form-group vcms-form-group--wide">
+                    <label>Package name <span class="vcms-required">*</span></label>
+                    <input type="text" name="pkg_name" placeholder="Half Day Session" required>
+                </div>
+                <div class="vcms-form-group">
+                    <label>Duration (min)</label>
+                    <input type="number" name="pkg_duration_mins" min="15" step="15" value="240">
+                </div>
+                <div class="vcms-form-group">
+                    <label>Price (€)</label>
+                    <input type="number" name="pkg_price" step="0.01" min="0" value="0">
+                </div>
+            </div>
+            <div class="vcms-form-group">
+                <label>Description</label>
+                <input type="text" name="pkg_description" placeholder="What's included?">
+            </div>
+            <div class="vcms-form-row">
+                <div class="vcms-form-group">
+                    <label class="vcms-checkbox">
+                        <input type="checkbox" name="pkg_active" value="1" checked> Active
+                    </label>
+                </div>
+                <div class="vcms-form-group">
+                    <label>Sort order</label>
+                    <input type="number" name="pkg_sort_order" value="0" min="0" style="width:80px">
+                </div>
+            </div>
+            <button type="submit" class="vcms-btn">Add Package</button>
+        </form>
+        </div>
+    </details>
+</div>
+
+<!-- Products / Services -->
+<div class="vcms-card" style="margin-top:1.5rem">
+    <h4 style="margin:0 0 1rem">Products / Services</h4>
+    <p style="color:#6b7280;font-size:.88rem;margin-bottom:1rem">Add-on services with a fixed price (e.g. "Mixing — €150", "Mastering — €80").</p>
+
+    <?php if (!empty($products)): ?>
+    <div class="vcms-table-wrap" style="margin-bottom:1rem">
+    <table class="vcms-table">
+        <thead><tr><th>Name</th><th>Price</th><th>Active</th><th></th></tr></thead>
+        <tbody>
+        <?php foreach ($products as $prod): ?>
+            <tr>
+                <td><strong><?= e($prod['name']) ?></strong>
+                    <?php if ($prod['description']): ?><br><small><?= e(mb_substr($prod['description'], 0, 60)) ?></small><?php endif ?>
+                </td>
+                <td>€<?= number_format((float)$prod['price'], 2) ?></td>
+                <td><?= $prod['active'] ? '✓' : '—' ?></td>
+                <td class="vcms-actions">
+                    <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/products/<?= (int)$prod['id'] ?>/delete" style="display:inline">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                                onclick="return confirm('Remove this product?')">Remove</button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif ?>
+
+    <details>
+        <summary class="vcms-btn vcms-btn--secondary vcms-btn--sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:.4rem">+ Add Product</summary>
+        <div style="margin-top:1rem;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem">
+        <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/products" class="vcms-form">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="vcms-form-row">
+                <div class="vcms-form-group vcms-form-group--wide">
+                    <label>Service name <span class="vcms-required">*</span></label>
+                    <input type="text" name="prod_name" placeholder="Mixing Session" required>
+                </div>
+                <div class="vcms-form-group">
+                    <label>Price (€)</label>
+                    <input type="number" name="prod_price" step="0.01" min="0" value="0">
+                </div>
+            </div>
+            <div class="vcms-form-group">
+                <label>Description</label>
+                <input type="text" name="prod_description" placeholder="What's included?">
+            </div>
+            <div class="vcms-form-row">
+                <div class="vcms-form-group">
+                    <label class="vcms-checkbox">
+                        <input type="checkbox" name="prod_active" value="1" checked> Active
+                    </label>
+                </div>
+                <div class="vcms-form-group">
+                    <label>Sort order</label>
+                    <input type="number" name="prod_sort_order" value="0" min="0" style="width:80px">
+                </div>
+            </div>
+            <button type="submit" class="vcms-btn">Add Product</button>
+        </form>
+        </div>
+    </details>
+</div>
+
+<?php endif ?>
+
+<script>
+function toggleHourlyRate() {
+    const mode  = document.getElementById('r-pricing').value;
+    const group = document.getElementById('hourly-rate-group');
+    group.style.display = (mode === 'hourly' || mode === 'combined') ? '' : 'none';
+}
+toggleHourlyRate();
+</script>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: booking/settings.php ===')
+write('admin/views/booking/settings.php', r"""<?php
+$flash   = $flash   ?? null;
+$current = $current ?? [];
+
+$boolField = function(string $key, string $label) use ($current): void {
+    $checked = !empty($current[$key]) && $current[$key] !== '0' ? 'checked' : '';
+    echo "<tr><th><label for=\"{$key}\">{$label}</label></th><td>"
+        . "<input type=\"hidden\" name=\"{$key}\" value=\"0\">"
+        . "<input type=\"checkbox\" id=\"{$key}\" name=\"{$key}\" value=\"1\" {$checked}>"
+        . "</td></tr>\n";
+};
+?>
+<div class="vcms-section-header">
+    <h3>Booking Settings</h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← Bookings</a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<form method="post" action="/admin/booking/settings">
+<input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+<!-- General -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">General</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <?php $boolField('enabled', 'Enable booking module') ?>
+        <?php $boolField('guest_booking', 'Allow guest bookings (no account required)') ?>
+        <?php $boolField('require_confirmation', 'Require manual confirmation before confirming') ?>
+        <tr>
+            <th><label>Booking types available</label></th>
+            <td>
+                <?php
+                $types = json_decode($current['booking_types'] ?? '["hourly","package","product"]', true) ?: [];
+                foreach (['hourly' => 'Hourly', 'package' => 'Packages', 'product' => 'Products / Services'] as $v => $l): ?>
+                <label class="vcms-checkbox" style="display:block;margin-bottom:.3rem">
+                    <input type="checkbox" name="booking_types[]" value="<?= $v ?>"
+                        <?= in_array($v, $types) ? 'checked' : '' ?>>
+                    <?= $l ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="slot_duration_mins">Slot duration (min)</label></th>
+            <td><input type="number" id="slot_duration_mins" name="slot_duration_mins" min="15" step="15"
+                       value="<?= (int)($current['slot_duration_mins'] ?? 60) ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="timezone">Timezone</label></th>
+            <td><input type="text" id="timezone" name="timezone"
+                       value="<?= e($current['timezone'] ?? 'Europe/Berlin') ?>"
+                       placeholder="Europe/Berlin"></td>
+        </tr>
+    </table></div>
+</div>
+
+<!-- Business hours -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Business Hours</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="business_hours_start">Opening time</label></th>
+            <td><input type="time" id="business_hours_start" name="business_hours_start"
+                       value="<?= e($current['business_hours_start'] ?? '09:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="business_hours_end">Closing time</label></th>
+            <td><input type="time" id="business_hours_end" name="business_hours_end"
+                       value="<?= e($current['business_hours_end'] ?? '21:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label>Open days</label></th>
+            <td>
+                <?php
+                $days = json_decode($current['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1,2,3,4,5,6];
+                $dayNames = [1=>'Mon',2=>'Tue',3=>'Wed',4=>'Thu',5=>'Fri',6=>'Sat',7=>'Sun'];
+                foreach ($dayNames as $num => $name): ?>
+                <label class="vcms-checkbox" style="display:inline-flex;margin-right:.75rem">
+                    <input type="checkbox" name="business_days[]" value="<?= $num ?>"
+                        <?= in_array($num, $days) ? 'checked' : '' ?>>
+                    <?= $name ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<!-- Payment -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Payment</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="payment_mode">Payment mode</label></th>
+            <td>
+                <select id="payment_mode" name="payment_mode" onchange="togglePaymentFields()">
+                    <option value="none"    <?= ($current['payment_mode'] ?? 'none') === 'none'    ? 'selected' : '' ?>>No payment (inquiry only)</option>
+                    <option value="deposit" <?= ($current['payment_mode'] ?? '') === 'deposit' ? 'selected' : '' ?>>Deposit required</option>
+                    <option value="full"    <?= ($current['payment_mode'] ?? '') === 'full'    ? 'selected' : '' ?>>Full payment via Stripe</option>
+                </select>
+            </td>
+        </tr>
+        <tr id="deposit-row" style="display:none">
+            <th><label for="deposit_percent">Deposit %</label></th>
+            <td><input type="number" id="deposit_percent" name="deposit_percent" min="1" max="100"
+                       value="<?= (int)($current['deposit_percent'] ?? 30) ?>"></td>
+        </tr>
+        <tr id="stripe-row" style="display:none">
+            <th>Stripe</th>
+            <td>
+                <?php $boolField('stripe_enabled', 'Enable Stripe') ?>
+                <div style="margin-top:.5rem">
+                    <input type="text" name="stripe_pk" placeholder="Publishable key (pk_…)"
+                           value="<?= e($current['stripe_pk'] ?? '') ?>" style="margin-bottom:.5rem">
+                    <input type="password" name="stripe_sk" placeholder="Secret key (sk_…) — leave blank to keep"
+                           value="">
+                </div>
+                <small style="color:#6b7280">Stripe integration is prepared but not yet active. Contact support to enable live payments.</small>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<!-- Notifications -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Email Notifications</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="notification_email">Notify owner at</label></th>
+            <td><input type="email" id="notification_email" name="notification_email"
+                       value="<?= e($current['notification_email'] ?? '') ?>"
+                       placeholder="studio@example.com"></td>
+        </tr>
+        <tr>
+            <th><label for="customer_email_subject">Customer email subject</label></th>
+            <td><input type="text" id="customer_email_subject" name="customer_email_subject"
+                       value="<?= e($current['customer_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="customer_email_body">Customer email body</label></th>
+            <td>
+                <textarea id="customer_email_body" name="customer_email_body" rows="6"><?= e($current['customer_email_body'] ?? '') ?></textarea>
+                <small style="color:#6b7280">Placeholders: {reference} {customer_name} {customer_email} {resource} {date} {start_time} {end_time} {status} {total}</small>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="owner_email_subject">Owner email subject</label></th>
+            <td><input type="text" id="owner_email_subject" name="owner_email_subject"
+                       value="<?= e($current['owner_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="owner_email_body">Owner email body</label></th>
+            <td>
+                <textarea id="owner_email_body" name="owner_email_body" rows="5"><?= e($current['owner_email_body'] ?? '') ?></textarea>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<!-- Integrations -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Integrations</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <?php $boolField('calendar_sync', 'Google Calendar sync (configure OAuth in Site Settings)') ?>
+    </table></div>
+</div>
+
+<div class="vcms-form-actions">
+    <button type="submit" class="vcms-btn">Save Booking Settings</button>
+</div>
+</form>
+
+<script>
+function togglePaymentFields() {
+    const mode = document.getElementById('payment_mode').value;
+    document.getElementById('deposit-row').style.display = mode === 'deposit' ? '' : 'none';
+    document.getElementById('stripe-row').style.display  = (mode === 'deposit' || mode === 'full') ? '' : 'none';
+}
+togglePaymentFields();
+</script>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Theme: booking/index.php ===')
+os.makedirs(BASE + '/themes/default/booking', exist_ok=True)
+write('themes/default/booking/index.php', r"""<?php
+ob_start();
+$resources = $resources ?? [];
+$settings  = $settings  ?? [];
+?>
+<div class="booking-page">
+    <h1>Book a Session</h1>
+    <?php if (empty($resources)): ?>
+        <p>No resources are available at this time.</p>
+    <?php else: ?>
+    <div class="booking-resources">
+        <?php foreach ($resources as $r): ?>
+        <a href="/booking/<?= e($r['slug']) ?>" class="booking-resource-card">
+            <?php if ($r['image']): ?>
+            <div class="booking-resource-img" style="background-image:url(<?= e($r['image']) ?>)"></div>
+            <?php endif ?>
+            <div class="booking-resource-body">
+                <h2><?= e($r['name']) ?></h2>
+                <?php if ($r['description']): ?>
+                <p><?= e(mb_substr($r['description'], 0, 140)) ?>…</p>
+                <?php endif ?>
+                <div class="booking-resource-meta">
+                    <?php if ($r['hourly_rate']): ?>
+                    <span>From €<?= number_format((float)$r['hourly_rate'], 2) ?>/hr</span>
+                    <?php endif ?>
+                </div>
+                <span class="booking-cta">Book now →</span>
+            </div>
+        </a>
+        <?php endforeach ?>
+    </div>
+    <?php endif ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = 'Book a Session';
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Theme: booking/resource.php ===')
+write('themes/default/booking/resource.php', r"""<?php
+ob_start();
+$resource = $resource ?? [];
+$packages = $packages ?? [];
+$products = $products ?? [];
+$settings = $settings ?? [];
+
+$pricingMode  = $resource['pricing_mode'] ?? 'hourly';
+$bookingTypes = json_decode($settings['booking_types'] ?? '["hourly"]', true) ?: ['hourly'];
+$showHourly   = in_array('hourly',  $bookingTypes) && ($pricingMode === 'hourly'  || $pricingMode === 'combined');
+$showPackage  = in_array('package', $bookingTypes) && ($pricingMode === 'package' || $pricingMode === 'combined');
+$showProduct  = in_array('product', $bookingTypes) && ($pricingMode === 'product' || $pricingMode === 'combined');
+?>
+<div class="booking-page">
+
+    <?php if ($resource['image'] ?? ''): ?>
+    <div class="booking-hero" style="background-image:url(<?= e($resource['image']) ?>)"></div>
+    <?php endif ?>
+
+    <h1><?= e($resource['name'] ?? '') ?></h1>
+    <?php if ($resource['description'] ?? ''): ?>
+    <p class="booking-resource-desc"><?= e($resource['description']) ?></p>
+    <?php endif ?>
+
+    <!-- Pricing info -->
+    <div class="booking-pricing-info">
+        <?php if ($showHourly && $resource['hourly_rate']): ?>
+        <div class="booking-price-chip">€<?= number_format((float)$resource['hourly_rate'], 2) ?>/hr</div>
+        <?php endif ?>
+        <div class="booking-price-chip">Min <?= (int)$resource['min_duration_mins'] ?> min</div>
+        <div class="booking-price-chip">Book <?= (int)$resource['advance_booking_hours'] ?>h in advance</div>
+    </div>
+
+    <?php if ($showPackage && !empty($packages)): ?>
+    <div class="booking-packages">
+        <h2>Packages</h2>
+        <div class="booking-option-grid">
+        <?php foreach ($packages as $pkg): ?>
+            <?php if (!$pkg['active']) continue; ?>
+            <a href="/booking/<?= e($resource['slug']) ?>/book?pricing_type=package&package_id=<?= (int)$pkg['id'] ?>" class="booking-option-card">
+                <strong><?= e($pkg['name']) ?></strong>
+                <?php if ($pkg['description']): ?><p><?= e($pkg['description']) ?></p><?php endif ?>
+                <div class="booking-option-meta">
+                    <span><?= (int)$pkg['duration_mins'] ?> min</span>
+                    <span class="booking-option-price">€<?= number_format((float)$pkg['price'], 2) ?></span>
+                </div>
+            </a>
+        <?php endforeach ?>
+        </div>
+    </div>
+    <?php endif ?>
+
+    <?php if ($showProduct && !empty($products)): ?>
+    <div class="booking-products">
+        <h2>Services</h2>
+        <div class="booking-option-grid">
+        <?php foreach ($products as $prod): ?>
+            <?php if (!$prod['active']) continue; ?>
+            <a href="/booking/<?= e($resource['slug']) ?>/book?pricing_type=product&product_id=<?= (int)$prod['id'] ?>" class="booking-option-card">
+                <strong><?= e($prod['name']) ?></strong>
+                <?php if ($prod['description']): ?><p><?= e($prod['description']) ?></p><?php endif ?>
+                <div class="booking-option-meta">
+                    <span class="booking-option-price">€<?= number_format((float)$prod['price'], 2) ?></span>
+                </div>
+            </a>
+        <?php endforeach ?>
+        </div>
+    </div>
+    <?php endif ?>
+
+    <?php if ($showHourly): ?>
+    <div class="booking-calendar-section">
+        <h2>Select a Date</h2>
+        <div id="booking-calendar" class="booking-calendar"
+             data-resource="<?= e($resource['slug']) ?>"
+             data-slot-mins="<?= (int)($settings['slot_duration_mins'] ?? 60) ?>">
+        </div>
+        <div id="booking-slots" class="booking-slots" style="display:none">
+            <h3 id="booking-slots-heading"></h3>
+            <div id="booking-slots-list"></div>
+        </div>
+    </div>
+    <?php endif ?>
+
+</div>
+
+<script>
+(function () {
+    const cal     = document.getElementById('booking-calendar');
+    if (!cal) return;
+    const resource   = cal.dataset.resource;
+    const slotMins   = parseInt(cal.dataset.slotMins, 10) || 60;
+    const today      = new Date();
+    let   viewYear   = today.getFullYear();
+    let   viewMonth  = today.getMonth(); // 0-based
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function fmtDate(y, m, d) { return `${y}-${pad(m+1)}-${pad(d)}`; }
+    function monthName(m) {
+        return ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'][m];
+    }
+
+    function renderCalendar(year, month) {
+        const firstDay  = new Date(year, month, 1).getDay(); // 0=Sun
+        const daysInMon = new Date(year, month + 1, 0).getDate();
+        const startOfWeek = (firstDay === 0) ? 6 : firstDay - 1; // Mon=0
+
+        let html = `<div class="cal-header">
+            <button class="cal-nav" id="cal-prev">‹</button>
+            <span class="cal-title">${monthName(month)} ${year}</span>
+            <button class="cal-nav" id="cal-next">›</button>
+        </div>
+        <div class="cal-grid">
+            <div class="cal-dow">Mo</div><div class="cal-dow">Tu</div>
+            <div class="cal-dow">We</div><div class="cal-dow">Th</div>
+            <div class="cal-dow">Fr</div><div class="cal-dow">Sa</div>
+            <div class="cal-dow">Su</div>`;
+
+        for (let i = 0; i < startOfWeek; i++) {
+            html += '<div class="cal-cell cal-empty"></div>';
+        }
+        const todayStr = fmtDate(today.getFullYear(), today.getMonth(), today.getDate());
+        for (let d = 1; d <= daysInMon; d++) {
+            const dateStr = fmtDate(year, month, d);
+            const isPast  = dateStr < todayStr;
+            const cls     = isPast ? 'cal-cell cal-past' : 'cal-cell cal-avail';
+            const btn     = isPast
+                ? `<div class="${cls}">${d}</div>`
+                : `<button class="${cls}" data-date="${dateStr}">${d}</button>`;
+            html += btn;
+        }
+        html += '</div>';
+        cal.innerHTML = html;
+
+        document.getElementById('cal-prev').addEventListener('click', () => {
+            viewMonth--;
+            if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+            renderCalendar(viewYear, viewMonth);
+        });
+        document.getElementById('cal-next').addEventListener('click', () => {
+            viewMonth++;
+            if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+            renderCalendar(viewYear, viewMonth);
+        });
+
+        cal.querySelectorAll('.cal-avail').forEach(btn => {
+            btn.addEventListener('click', () => loadSlots(btn.dataset.date));
+        });
+    }
+
+    function loadSlots(date) {
+        const slotsDiv   = document.getElementById('booking-slots');
+        const slotsHead  = document.getElementById('booking-slots-heading');
+        const slotsList  = document.getElementById('booking-slots-list');
+        slotsHead.textContent = date;
+        slotsList.innerHTML   = '<p>Loading…</p>';
+        slotsDiv.style.display = '';
+        slotsDiv.scrollIntoView({ behavior: 'smooth' });
+
+        fetch(`/booking/${resource}/availability?date=${date}`)
+            .then(r => r.json())
+            .then(data => {
+                if (!data.slots || data.slots.length === 0) {
+                    slotsList.innerHTML = '<p class="booking-no-slots">No availability on this date.</p>';
+                    return;
+                }
+                slotsList.innerHTML = data.slots.map(s =>
+                    `<a href="/booking/${resource}/book?date=${date}&start=${s.start}&pricing_type=hourly"
+                        class="booking-slot-btn">${s.start} – ${s.end}</a>`
+                ).join('');
+            })
+            .catch(() => { slotsList.innerHTML = '<p>Error loading slots.</p>'; });
+    }
+
+    renderCalendar(viewYear, viewMonth);
+}());
+</script>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = 'Book ' . ($resource['name'] ?? '');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Theme: booking/form.php ===')
+write('themes/default/booking/form.php', r"""<?php
+ob_start();
+$resource    = $resource    ?? [];
+$packages    = $packages    ?? [];
+$products    = $products    ?? [];
+$package     = $package     ?? null;
+$product     = $product     ?? null;
+$date        = $date        ?? '';
+$start       = $start       ?? '';
+$settings    = $settings    ?? [];
+$error       = $error       ?? null;
+
+$slotMins    = (int)($settings['slot_duration_mins'] ?? 60);
+$endTs       = ($date && $start) ? strtotime("{$date} {$start}") + $slotMins * 60 : null;
+$endTime     = $endTs ? date('H:i', $endTs) : '';
+
+if ($package) {
+    $endTs   = ($date && $start) ? strtotime("{$date} {$start}") + ((int)$package['duration_mins'] * 60) : null;
+    $endTime = $endTs ? date('H:i', $endTs) : '';
+    $slotMins = (int)$package['duration_mins'];
+}
+
+$paymentMode = $settings['payment_mode'] ?? 'none';
+$depPct      = (float)($settings['deposit_percent'] ?? 30);
+$needsConfirm = !empty($settings['require_confirmation']);
+?>
+<div class="booking-page booking-form-page">
+
+    <div class="booking-breadcrumb">
+        <a href="/booking">Booking</a> ›
+        <a href="/booking/<?= e($resource['slug'] ?? '') ?>"><?= e($resource['name'] ?? '') ?></a> ›
+        Complete Booking
+    </div>
+
+    <?php if ($error): ?>
+    <div class="booking-alert booking-alert--error"><?= e($error) ?></div>
+    <?php endif ?>
+
+    <div class="booking-form-grid">
+
+        <!-- Form -->
+        <div class="booking-form-main">
+            <h1>Your Details</h1>
+            <form method="post" action="/booking/<?= e($resource['slug'] ?? '') ?>/book" class="booking-form">
+
+                <input type="hidden" name="booking_date"  value="<?= e($date) ?>">
+                <input type="hidden" name="start_time"    value="<?= e($start) ?>">
+                <input type="hidden" name="pricing_type"  value="<?= e($_GET['pricing_type'] ?? 'hourly') ?>">
+                <?php if ($package): ?>
+                <input type="hidden" name="package_id"   value="<?= (int)$package['id'] ?>">
+                <?php endif ?>
+                <?php if ($product): ?>
+                <input type="hidden" name="product_id"   value="<?= (int)$product['id'] ?>">
+                <?php endif ?>
+
+                <div class="booking-field">
+                    <label for="bf-name">Full name <span>*</span></label>
+                    <input type="text" id="bf-name" name="customer_name" required
+                           value="<?= e($_POST['customer_name'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-email">Email address <span>*</span></label>
+                    <input type="email" id="bf-email" name="customer_email" required
+                           value="<?= e($_POST['customer_email'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-phone">Phone number</label>
+                    <input type="tel" id="bf-phone" name="customer_phone"
+                           value="<?= e($_POST['customer_phone'] ?? '') ?>">
+                </div>
+                <div class="booking-field">
+                    <label for="bf-notes">Notes (optional)</label>
+                    <textarea id="bf-notes" name="notes" rows="3"><?= e($_POST['notes'] ?? '') ?></textarea>
+                </div>
+
+                <?php if ($paymentMode === 'deposit'): ?>
+                <div class="booking-payment-notice">
+                    <strong>Deposit required:</strong>
+                    A deposit of <?= (int)$depPct ?>% is required to confirm your booking.
+                    You will be contacted with payment instructions.
+                </div>
+                <?php elseif ($paymentMode === 'full'): ?>
+                <div class="booking-payment-notice">
+                    Full payment is required at checkout.
+                    Stripe payment is coming soon — you will be contacted.
+                </div>
+                <?php endif ?>
+
+                <button type="submit" class="booking-submit">
+                    <?= $needsConfirm ? 'Request Booking' : 'Confirm Booking' ?>
+                </button>
+            </form>
+        </div>
+
+        <!-- Summary sidebar -->
+        <div class="booking-form-summary">
+            <div class="booking-summary-card">
+                <h3>Booking Summary</h3>
+                <div class="booking-summary-row">
+                    <span>Resource</span>
+                    <span><?= e($resource['name'] ?? '') ?></span>
+                </div>
+                <?php if ($date): ?>
+                <div class="booking-summary-row">
+                    <span>Date</span>
+                    <span><?= e($date) ?></span>
+                </div>
+                <?php endif ?>
+                <?php if ($start): ?>
+                <div class="booking-summary-row">
+                    <span>Time</span>
+                    <span><?= e($start) ?><?= $endTime ? ' – ' . e($endTime) : '' ?></span>
+                </div>
+                <div class="booking-summary-row">
+                    <span>Duration</span>
+                    <span><?= $slotMins ?> min</span>
+                </div>
+                <?php endif ?>
+                <?php if ($package): ?>
+                <div class="booking-summary-row">
+                    <span>Package</span>
+                    <span><?= e($package['name']) ?></span>
+                </div>
+                <div class="booking-summary-row booking-summary-total">
+                    <span>Total</span>
+                    <span>€<?= number_format((float)$package['price'], 2) ?></span>
+                </div>
+                <?php elseif ($product): ?>
+                <div class="booking-summary-row">
+                    <span>Service</span>
+                    <span><?= e($product['name']) ?></span>
+                </div>
+                <div class="booking-summary-row booking-summary-total">
+                    <span>Total</span>
+                    <span>€<?= number_format((float)$product['price'], 2) ?></span>
+                </div>
+                <?php elseif ($resource['hourly_rate'] ?? null): ?>
+                <div class="booking-summary-row booking-summary-total">
+                    <span>Total</span>
+                    <span>€<?= number_format((float)$resource['hourly_rate'] * ($slotMins / 60), 2) ?></span>
+                </div>
+                <?php endif ?>
+                <?php if ($paymentMode === 'none'): ?>
+                <p class="booking-summary-note">Inquiry only — no payment required.</p>
+                <?php endif ?>
+            </div>
+        </div>
+
+    </div>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = 'Book ' . ($resource['name'] ?? '');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Theme: booking/confirm.php ===')
+write('themes/default/booking/confirm.php', r"""<?php
+ob_start();
+$booking  = $booking  ?? [];
+$settings = $settings ?? [];
+$needsConfirm = !empty($settings['require_confirmation']);
+?>
+<div class="booking-page booking-confirm-page">
+
+    <div class="booking-confirm-icon">✓</div>
+    <h1><?= $needsConfirm ? 'Booking Request Received' : 'Booking Confirmed!' ?></h1>
+
+    <?php if ($needsConfirm): ?>
+    <p class="booking-confirm-intro">
+        Your booking request has been received. We will review it and send a confirmation email to
+        <strong><?= e($booking['customer_email'] ?? '') ?></strong> shortly.
+    </p>
+    <?php else: ?>
+    <p class="booking-confirm-intro">
+        Your booking is confirmed! A confirmation email has been sent to
+        <strong><?= e($booking['customer_email'] ?? '') ?></strong>.
+    </p>
+    <?php endif ?>
+
+    <div class="booking-confirm-card">
+        <h2>Booking Details</h2>
+        <table class="booking-confirm-table">
+            <tr><th>Reference</th><td><code><?= e($booking['reference'] ?? '') ?></code></td></tr>
+            <tr><th>Resource</th><td><?= e($booking['resource_name'] ?? '') ?></td></tr>
+            <tr><th>Date</th><td><?= e($booking['booking_date'] ?? '') ?></td></tr>
+            <tr><th>Time</th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>
+            <tr><th>Duration</th><td><?= (int)($booking['duration_mins'] ?? 0) ?> min</td></tr>
+            <tr><th>Total</th><td>€<?= number_format((float)($booking['total_amount'] ?? 0), 2) ?></td></tr>
+            <tr><th>Status</th><td><?= ucfirst(e($booking['booking_status'] ?? '')) ?></td></tr>
+        </table>
+    </div>
+
+    <div class="booking-confirm-actions">
+        <a href="/booking" class="booking-btn-link">← Back to Booking</a>
+        <a href="/" class="booking-btn-link booking-btn-link--primary">Go to homepage</a>
+    </div>
+
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = 'Booking ' . ($booking['reference'] ?? 'Confirmed');
+require __DIR__ . '/../layouts/main.php';
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Theme: booking CSS (append to theme style.css) ===')
+booking_css = """
+
+/* ── Booking Module ─────────────────────────────────────────────────────────── */
+.booking-page { max-width: 900px; margin: 0 auto; padding: 2rem 0; }
+.booking-page h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1rem; }
+.booking-page h2 { font-size: 1.3rem; font-weight: 600; margin: 2rem 0 1rem; }
+
+/* Resource cards */
+.booking-resources { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; }
+.booking-resource-card { display:flex; flex-direction:column; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; text-decoration:none; color:inherit; transition:box-shadow .15s; }
+.booking-resource-card:hover { box-shadow:0 4px 20px rgba(0,0,0,.12); }
+.booking-resource-img { height:180px; background-size:cover; background-position:center; }
+.booking-resource-body { padding:1.25rem; flex:1; display:flex; flex-direction:column; gap:.5rem; }
+.booking-resource-body h2 { font-size:1.1rem; margin:0; }
+.booking-resource-body p { color:#6b7280; font-size:.9rem; margin:0; }
+.booking-resource-meta { color:#374151; font-size:.85rem; }
+.booking-cta { margin-top:auto; color:#2563eb; font-weight:600; }
+
+/* Pricing chips */
+.booking-pricing-info { display:flex; flex-wrap:wrap; gap:.5rem; margin-bottom:1.5rem; }
+.booking-price-chip { background:#f1f5f9; border:1px solid #e2e8f0; border-radius:999px; padding:.25rem .85rem; font-size:.85rem; color:#374151; }
+
+/* Options grid (packages/products) */
+.booking-option-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:1rem; }
+.booking-option-card { display:flex; flex-direction:column; border:1px solid #e5e7eb; border-radius:10px; padding:1.1rem; text-decoration:none; color:inherit; transition:border-color .15s, box-shadow .15s; }
+.booking-option-card:hover { border-color:#2563eb; box-shadow:0 2px 10px rgba(37,99,235,.12); }
+.booking-option-card strong { font-size:1rem; margin-bottom:.4rem; }
+.booking-option-card p { color:#6b7280; font-size:.85rem; flex:1; margin:.25rem 0 .75rem; }
+.booking-option-meta { display:flex; justify-content:space-between; font-size:.85rem; color:#374151; }
+.booking-option-price { font-weight:700; color:#2563eb; }
+
+/* Calendar */
+.booking-calendar-section { margin-top:2rem; }
+.booking-calendar { max-width:380px; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden; }
+.cal-header { display:flex; align-items:center; justify-content:space-between; background:#2563eb; color:#fff; padding:.75rem 1rem; }
+.cal-title { font-weight:600; }
+.cal-nav { background:transparent; border:none; color:#fff; font-size:1.2rem; cursor:pointer; padding:.2rem .5rem; border-radius:4px; }
+.cal-nav:hover { background:rgba(255,255,255,.2); }
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:1px; background:#e5e7eb; padding:1px; }
+.cal-dow { background:#f8fafc; text-align:center; font-size:.75rem; font-weight:600; color:#6b7280; padding:.4rem 0; }
+.cal-cell { background:#fff; text-align:center; padding:.5rem; font-size:.88rem; }
+.cal-empty { background:#f9fafb; }
+.cal-past { color:#d1d5db; cursor:default; border:none; width:100%; }
+.cal-avail { border:none; width:100%; cursor:pointer; border-radius:4px; transition:background .1s; }
+.cal-avail:hover { background:#dbeafe; color:#1d4ed8; font-weight:600; }
+
+/* Time slots */
+.booking-slots { margin-top:1.5rem; }
+.booking-slots h3 { font-size:1rem; font-weight:600; margin-bottom:.75rem; color:#374151; }
+.booking-slot-btn { display:inline-block; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:.5rem 1rem; margin:.3rem; font-size:.9rem; text-decoration:none; color:#374151; transition:background .1s, border-color .1s; }
+.booking-slot-btn:hover { background:#dbeafe; border-color:#2563eb; color:#1d4ed8; }
+.booking-no-slots { color:#6b7280; font-style:italic; }
+
+/* Booking form page */
+.booking-breadcrumb { font-size:.85rem; color:#6b7280; margin-bottom:1.5rem; }
+.booking-breadcrumb a { color:#2563eb; text-decoration:none; }
+.booking-alert--error { background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; border-radius:8px; padding:1rem; margin-bottom:1.5rem; }
+.booking-form-grid { display:grid; grid-template-columns:1fr 320px; gap:2rem; align-items:start; }
+.booking-form-main h1 { font-size:1.5rem; margin-bottom:1.5rem; }
+.booking-field { margin-bottom:1.2rem; }
+.booking-field label { display:block; font-weight:500; margin-bottom:.4rem; font-size:.9rem; }
+.booking-field label span { color:#ef4444; }
+.booking-field input, .booking-field textarea { width:100%; border:1px solid #d1d5db; border-radius:8px; padding:.6rem .85rem; font-size:.95rem; box-sizing:border-box; }
+.booking-field textarea { resize:vertical; }
+.booking-payment-notice { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:.85rem 1rem; font-size:.88rem; margin-bottom:1.25rem; }
+.booking-submit { width:100%; background:#2563eb; color:#fff; border:none; border-radius:10px; padding:.85rem; font-size:1rem; font-weight:600; cursor:pointer; transition:background .15s; }
+.booking-submit:hover { background:#1d4ed8; }
+.booking-summary-card { background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:1.25rem; }
+.booking-summary-card h3 { font-size:1rem; font-weight:600; margin-bottom:1rem; }
+.booking-summary-row { display:flex; justify-content:space-between; font-size:.9rem; padding:.35rem 0; border-bottom:1px solid #e5e7eb; color:#374151; }
+.booking-summary-total { font-weight:700; font-size:1rem; border-bottom:none; margin-top:.25rem; color:#111827; }
+.booking-summary-note { font-size:.8rem; color:#6b7280; margin-top:.75rem; }
+
+/* Confirmation page */
+.booking-confirm-page { text-align:center; max-width:600px; margin:0 auto; }
+.booking-confirm-icon { width:80px; height:80px; background:#10b981; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:2rem; color:#fff; margin:0 auto 1.5rem; }
+.booking-confirm-intro { color:#374151; font-size:1.05rem; margin-bottom:2rem; }
+.booking-confirm-card { background:#f8fafc; border:1px solid #e5e7eb; border-radius:12px; padding:1.5rem; text-align:left; margin-bottom:2rem; }
+.booking-confirm-card h2 { font-size:1.1rem; margin-bottom:1rem; }
+.booking-confirm-table { width:100%; border-collapse:collapse; }
+.booking-confirm-table th, .booking-confirm-table td { padding:.5rem .75rem; border-bottom:1px solid #e5e7eb; font-size:.9rem; }
+.booking-confirm-table th { width:35%; color:#6b7280; font-weight:500; text-align:left; }
+.booking-confirm-actions { display:flex; gap:1rem; justify-content:center; flex-wrap:wrap; }
+.booking-btn-link { padding:.65rem 1.5rem; border-radius:8px; text-decoration:none; font-weight:500; border:1px solid #d1d5db; color:#374151; transition:background .1s; }
+.booking-btn-link:hover { background:#f3f4f6; }
+.booking-btn-link--primary { background:#2563eb; color:#fff; border-color:#2563eb; }
+.booking-btn-link--primary:hover { background:#1d4ed8; }
+
+/* Hero image */
+.booking-hero { height:240px; background-size:cover; background-position:center; border-radius:12px; margin-bottom:1.5rem; }
+.booking-resource-desc { color:#4b5563; font-size:1rem; margin-bottom:1.5rem; }
+
+@media (max-width:767px) {
+    .booking-form-grid { grid-template-columns:1fr; }
+    .booking-form-summary { order:-1; }
+    .booking-resources { grid-template-columns:1fr; }
+    .booking-option-grid { grid-template-columns:1fr; }
+    .booking-calendar { max-width:100%; }
+}
+"""
+
+with open(BASE + '/themes/default/assets/style.css') as f:
+    theme_css = f.read()
+
+if 'booking-page' not in theme_css:
+    with open(BASE + '/themes/default/assets/style.css', 'a') as f:
+        f.write(booking_css)
+    print('  OK  themes/default/assets/style.css (booking CSS appended)')
+else:
+    print('  SKIP themes/default/assets/style.css (already has booking CSS)')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Admin: add booking badge colours to admin CSS ===')
+admin_badge_css = """
+/* Booking status badges */
+.vcms-badge--pending   { background: #fef3c7; color: #92400e; }
+.vcms-badge--confirmed { background: #d1fae5; color: #065f46; }
+.vcms-badge--cancelled { background: #f3f4f6; color: #6b7280; }
+"""
+
+with open(BASE + '/public/assets/admin/style.css') as f:
+    admin_css = f.read()
+
+if 'vcms-badge--pending' not in admin_css:
+    with open(BASE + '/public/assets/admin/style.css', 'a') as f:
+        f.write(admin_badge_css)
+    print('  OK  public/assets/admin/style.css (booking badges appended)')
+else:
+    print('  SKIP public/assets/admin/style.css (already patched)')
+
+print('\nDone.')

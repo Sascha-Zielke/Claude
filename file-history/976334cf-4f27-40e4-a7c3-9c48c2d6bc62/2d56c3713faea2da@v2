@@ -1,0 +1,29 @@
+---
+tags: [projekt]
+status: aktiv
+erstellt: 2026-05-25
+---
+
+# Lernplattform
+
+## Ziel
+
+Eine digitale Lernumgebung für die Ausbildung zum Binnenschifffahrtskapitän entwickeln — strukturiertes Lernen, Prüfungsvorbereitung und Wissensdokumentation an einem Ort. Teil des Life OS.
+
+## Kontext
+
+Teil der [[../../Life OS|Life OS]]. Unterstützt die [[../../Ausbildung/_index|Ausbildung zum Binnenschifffahrtskapitän]].
+
+## Module
+
+- Modulare Lerneinheiten nach Lehrplan
+- Abfrage-Systeme (Wiederholung & Vertiefung)
+- Prüfungsvorbereitung
+
+## Nächste Schritte
+
+- [ ] Lernmodule strukturieren
+- [ ] Abfrage-System planen
+- [ ] Prüfungsfragen katalogisieren
+
+## Notizen

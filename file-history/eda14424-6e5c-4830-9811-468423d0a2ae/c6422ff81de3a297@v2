@@ -1,0 +1,56 @@
+base = '/var/www/velocms'
+
+resume = open(base + '/RESUME.md').read()
+
+old_last_done = "### What was last done (Session 11)"
+new_last_done = "### What was last done (Session 12)"
+
+old_session11_detail = """- **Route fix**: `/admin/booking/resources/*` routes moved BEFORE `/{id}` wildcard — resource CRUD is now reachable
+- **Daily booking type**: "Daily (overnight / multi-day)" toggle added to Booking Types; when enabled, check-in time + check-out time pickers appear; stored as `daily_checkin_time`/`daily_checkout_time` settings
+- **Daily rate on resources**: `daily_rate` column added to `booking_resources` table; 'daily' added to `pricing_mode` ENUM; resource form shows/hides hourly/daily rate fields based on selected pricing mode
+- **Resource list view**: shows separate Hourly rate and Daily rate columns
+- Resources CRUD fully working: /admin/booking/resources → list, /create → form, /{id}/edit → edit, /{id}/delete → delete"""
+
+new_session12_detail = """- **Daily booking date range**: Full daily booking flow — admin create form + frontend resource page both show check-in/check-out date pickers when Daily type is active; automatic nights count + total price preview; minimum stay per resource enforced; `end_date` and `nights` stored in bookings table
+- **DB**: `bookings` table — `end_date` DATE NULL, `nights` SMALLINT NULL added; `pricing_type` ENUM updated to include 'daily'; `booking_resources` — `min_stay_nights` TINYINT (default 1) added
+- **Timezone dropdown**: Settings → Booking timezone field replaced with PHP-generated `<select>`; Europe/Berlin listed first, then all Europe/* alphabetically, then rest; each option shows GMT offset
+- **Slug field**: Resource create/edit form slug field now has helper text ("auto-generated from name, used in /booking/{slug}"); name input auto-generates slug as admin types; manual edit locks the slug"""
+
+if old_last_done in resume:
+    resume = resume.replace(old_last_done, new_last_done)
+    resume = resume.replace(old_session11_detail, new_session12_detail)
+    open(base + '/RESUME.md', 'w').write(resume)
+    print('OK  RESUME.md')
+else:
+    print('SKIP RESUME.md — pattern not found')
+
+# SESSION_LOG.md
+log = open(base + '/SESSION_LOG.md').read()
+session12 = """
+---
+
+## Session 12 — Daily booking date range, timezone dropdown, slug auto-gen
+**Date:** 2026-05-19
+**Built / Done:**
+- **DB**: `bookings` — ADD `end_date` DATE NULL AFTER booking_date, ADD `nights` SMALLINT NULL; MODIFY `pricing_type` ENUM to include 'daily'; `booking_resources` — ADD `min_stay_nights` TINYINT UNSIGNED DEFAULT 1
+- **Booking::create()**: INSERT now includes `end_date` and `nights` columns
+- **Admin booking create view** (`admin/views/booking/create.php`): 'Daily' option in pricing_type select; `hourly-date-row` (existing date/time, hidden for daily) and `daily-date-row` (check-in/out date pickers); JS `updateDailySummary()` calculates nights + total from resource's daily_rate
+- **BookingAdminController::createStore()**: handles daily type — reads checkin_date/checkout_date, calculates nights, uses daily_rate, sets start/end_time from settings, stores end_date+nights
+- **BookingController::bookForm()**: reads pricing_type/checkin/checkout GET params; calculates dailyNights/dailyTotal; passes all to form view
+- **BookingController::bookStore()**: daily validation branch (checkin/checkout instead of date/startTime); calculates nights from date diff; stores end_date+nights; min_stay_nights enforced in frontend JS
+- **themes/default/booking/resource.php**: `$showDaily` var; daily picker section with check-in/out date inputs, nights+total JS preview, Book Now button; min_stay_nights displayed when >1
+- **themes/default/booking/form.php**: PHP vars for pricingType/checkin/checkout/dailyNights/dailyTotal; daily hidden inputs (checkin_date/checkout_date); summary sidebar shows daily check-in/check-out/nights/total instead of date/time block
+- **Settings timezone dropdown**: `admin/views/settings/index.php` — text input replaced with PHP `<select>` using `DateTimeZone::listIdentifiers()`; sorted Europe/Berlin first, then Europe/* alpha, then rest; label format "Zone (GMT+N)"
+- **Slug auto-gen**: `admin/views/booking/resources/form.php` — helper text added below slug field; JS listens to name input and auto-generates slug (lowercase, hyphens); manual edit of slug field stops auto-gen
+- PHPUnit: 23/23
+- Commit: ae2911c
+"""
+
+if 'Session 12' not in log:
+    log = log.rstrip() + '\n' + session12.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(log)
+    print('OK  SESSION_LOG.md (Session 12 appended)')
+else:
+    print('SKIP SESSION_LOG.md')
+
+print('\nDone.')

@@ -1,0 +1,208 @@
+"""vcms_s10a_css_js.py — CSS additions + autosave.js + layout.php update"""
+BASE = '/var/www/velocms'
+
+# ── 1. Append CSS to style.css ───────────────────────────────────────────────
+css_additions = """
+/* ── Session 10 additions ── */
+
+/* Autosave banner */
+.vcms-autosave-banner { font-size:.82rem; padding:.3rem .75rem; border-radius:4px; margin-bottom:.75rem; min-height:1.6rem; transition:opacity .3s; }
+.vcms-autosave-banner--ok  { background:#dcfce7; color:#15803d; }
+.vcms-autosave-banner--error { background:#fee2e2; color:#b91c1c; }
+
+/* Collapsible section header */
+.vcms-section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:.75rem; }
+.vcms-section-header h4 { margin:0; }
+.vcms-section-body { overflow:hidden; max-height:4000px; opacity:1; transition:max-height .35s ease, opacity .25s; }
+.vcms-section-body.vcms-collapsed { max-height:0 !important; opacity:0; pointer-events:none; }
+
+/* Business hours day grid */
+.bh-days-grid { display:flex; flex-direction:column; gap:.1rem; padding:.25rem 0; }
+.bh-day-row { display:flex; align-items:center; gap:.85rem; padding:.4rem .25rem; border-bottom:1px solid #f3f4f6; }
+.bh-day-row:last-child { border-bottom:none; }
+.bh-day-label { width:38px; font-size:.875rem; font-weight:500; color:#374151; flex-shrink:0; }
+.bh-day-times { display:flex; align-items:center; gap:.5rem; font-size:.875rem; }
+.bh-day-times input[type="time"] { width:108px; padding:.28rem .5rem; font-size:.875rem; }
+.bh-day-times.bh-hidden { visibility:hidden; pointer-events:none; }
+
+/* Inline package / product cards */
+.vcms-inline-card { margin-top:1rem; padding:1rem 1.1rem; background:#f8fafc; border:1px solid #e5e7eb; border-radius:6px; }
+.vcms-inline-card h5 { margin:0 0 .65rem; font-size:.88rem; color:#374151; font-weight:600; }
+.vcms-inline-table { width:100%; border-collapse:collapse; font-size:.84rem; }
+.vcms-inline-table th { background:#f1f5f9; font-weight:600; padding:.35rem .55rem; text-align:left; border-bottom:1px solid #e5e7eb; }
+.vcms-inline-table td { padding:.35rem .55rem; vertical-align:middle; }
+.vcms-inline-table tr + tr td { border-top:1px solid #f1f5f9; }
+.vcms-inline-add-row { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem; align-items:flex-end; }
+.vcms-inline-add-row input, .vcms-inline-add-row select { min-width:0; width:auto; flex:1 1 120px; }
+.vcms-inline-add-row .vcms-btn { flex-shrink:0; }
+
+/* Slot row toggle */
+#bk-slot-row { padding:.25rem 0 .25rem 3.6rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; font-size:.875rem; }
+#bk-slot-row select { width:auto; min-width:160px; }
+"""
+
+style_path = BASE + '/public/assets/admin/style.css'
+css = open(style_path).read()
+if 'Session 10 additions' not in css:
+    with open(style_path, 'a') as f:
+        f.write(css_additions)
+    print('OK  style.css — Session 10 CSS added')
+else:
+    print('SKIP style.css — already patched')
+
+# ── 2. Write autosave.js ────────────────────────────────────────────────────
+autosave_js = r"""/* VeloCMS admin autosave + UI helpers */
+(function () {
+  'use strict';
+
+  var debounceTimers = {};
+
+  function banner(form, msg, err) {
+    var el = form._asBanner;
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'vcms-autosave-banner';
+      form.parentNode.insertBefore(el, form);
+      form._asBanner = el;
+    }
+    el.textContent = msg;
+    el.className = 'vcms-autosave-banner ' + (err ? 'vcms-autosave-banner--error' : 'vcms-autosave-banner--ok');
+    clearTimeout(el._t);
+    el._t = setTimeout(function () {
+      el.textContent = '';
+      el.className = 'vcms-autosave-banner';
+    }, 3000);
+  }
+
+  function saveForm(form) {
+    var fd = new FormData(form);
+    fetch(form.getAttribute('action'), {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      body: fd
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { banner(form, d.ok ? '✓ Saved' : '✗ Error', !d.ok); })
+    .catch(function () { banner(form, '✗ Save failed', true); });
+  }
+
+  function initAutosave(form, idx) {
+    form._asId = idx;
+    form.querySelectorAll('input, select, textarea').forEach(function (el) {
+      if (el.type === 'hidden') return;
+      var ev = (el.type === 'checkbox' || el.type === 'radio' || el.tagName === 'SELECT') ? 'change' : 'blur';
+      el.addEventListener(ev, function () {
+        clearTimeout(debounceTimers[idx]);
+        debounceTimers[idx] = setTimeout(function () { saveForm(form); }, 400);
+      });
+    });
+  }
+
+  function initCollapsibles() {
+    document.querySelectorAll('[data-section]').forEach(function (cb) {
+      var body = document.getElementById(cb.getAttribute('data-section'));
+      if (!body) return;
+      cb.addEventListener('change', function () {
+        body.classList.toggle('vcms-collapsed', !cb.checked);
+      });
+    });
+  }
+
+  function initBookingTypeToggles() {
+    var hourly = document.getElementById('bk-type-hourly');
+    var slotRow = document.getElementById('bk-slot-row');
+    if (hourly && slotRow) {
+      hourly.addEventListener('change', function () {
+        slotRow.style.display = hourly.checked ? '' : 'none';
+      });
+    }
+    ['package', 'product'].forEach(function (t) {
+      var cb  = document.getElementById('bk-type-' + t);
+      var sec = document.getElementById('bk-inline-' + t + 's');
+      if (cb && sec) {
+        cb.addEventListener('change', function () {
+          sec.style.display = cb.checked ? '' : 'none';
+        });
+      }
+    });
+  }
+
+  function initDayToggles() {
+    document.querySelectorAll('.bh-day-toggle').forEach(function (cb) {
+      var timesEl = document.getElementById('bh-times-' + cb.getAttribute('data-day'));
+      if (!timesEl) return;
+      cb.addEventListener('change', function () {
+        timesEl.classList.toggle('bh-hidden', !cb.checked);
+      });
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('form[data-autosave]').forEach(initAutosave);
+    initCollapsibles();
+    initBookingTypeToggles();
+    initDayToggles();
+  });
+
+  /* ── Inline AJAX helpers (called from inline package/product cards) ── */
+  window.vcmsDelete = function (url, csrf, rowId) {
+    if (!confirm('Delete this item?')) return;
+    var fd = new FormData();
+    fd.append('_csrf', csrf);
+    fetch(url, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: fd })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok) {
+        var row = document.getElementById(rowId);
+        if (row) row.remove();
+      } else { alert('Error: ' + (d.error || 'unknown')); }
+    })
+    .catch(function () { alert('Network error'); });
+  };
+
+  window.vcmsAddRow = function (formEl, tbodyId) {
+    var fd = new FormData(formEl);
+    var action = formEl.getAttribute('action');
+    fetch(action, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: fd })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.ok && d.html) {
+        document.getElementById(tbodyId).insertAdjacentHTML('beforeend', d.html);
+        formEl.reset();
+        // Restore hidden CSRF field value (reset() clears it too)
+        formEl.querySelectorAll('input[name="_csrf"]').forEach(function(i){ i.value = fd.get('_csrf'); });
+      } else { alert('Error: ' + (d.error || 'unknown')); }
+    })
+    .catch(function () { alert('Network error'); });
+    return false;
+  };
+})();
+"""
+
+js_path = BASE + '/public/assets/admin/autosave.js'
+with open(js_path, 'w') as f:
+    f.write(autosave_js)
+print('OK  autosave.js written')
+
+# ── 3. Add autosave.js to layout.php ────────────────────────────────────────
+layout_path = BASE + '/admin/views/layout.php'
+layout = open(layout_path).read()
+
+old_script = '<script src="/assets/admin/app.js" defer></script>\n</body>'
+new_script = '<script src="/assets/admin/app.js" defer></script>\n<script src="/assets/admin/autosave.js" defer></script>\n</body>'
+
+if 'autosave.js' not in layout:
+    layout = layout.replace(old_script, new_script)
+    with open(layout_path, 'w') as f:
+        f.write(layout)
+    print('OK  layout.php — autosave.js included')
+else:
+    print('SKIP layout.php — already included')
+
+# ── 4. PHP syntax check (layout is PHP) ─────────────────────────────────────
+import subprocess
+r = subprocess.run(['php', '-l', layout_path], capture_output=True, text=True)
+print(('OK ' if r.returncode == 0 else 'ERR') + ' php -l admin/views/layout.php')
+if r.returncode != 0: print(r.stderr)
+
+print('\nDone.')

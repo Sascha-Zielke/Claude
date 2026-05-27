@@ -1,0 +1,53 @@
+BASE = '/var/www/velocms'
+
+# ── CLAUDE_START.md — add /clear rule to Critical Rules ─────────────────────
+with open(BASE + '/CLAUDE_START.md') as f:
+    cs = f.read()
+
+old_rules = """## Critical Rules
+
+1. **Never put credentials in shell commands** — they appear in bash history.
+2. **Admin routes must be registered before PagesModule** — `/{slug}` is a catch-all.
+3. **`Auth` methods are instance-only** — `$auth->csrfToken()`, not `Auth::csrfToken()`.
+4. **CSRF token in every POST form** — pass `'csrf' => $auth->csrfToken()` from controller.
+5. **All DB queries use PDO prepared statements** — no string interpolation in SQL.
+6. **All output uses `e()`** — never echo user data raw.
+7. **Run PHPUnit after every change** — `cd /var/www/velocms && CORE_DB_PASS=... ./vendor/bin/phpunit`"""
+
+new_rules = """## Critical Rules
+
+1. **Never put credentials in shell commands** — they appear in bash history.
+2. **Admin routes must be registered before PagesModule** — `/{slug}` is a catch-all.
+3. **`Auth` methods are instance-only** — `$auth->csrfToken()`, not `Auth::csrfToken()`.
+4. **CSRF token in every POST form** — pass `'csrf' => $auth->csrfToken()` from controller.
+5. **All DB queries use PDO prepared statements** — no string interpolation in SQL.
+6. **All output uses `e()`** — never echo user data raw.
+7. **Run PHPUnit after every change** — `cd /var/www/velocms && CORE_DB_PASS=... ./vendor/bin/phpunit`
+8. **Run `/clear` between phases** — when the user confirms a phase or module is complete, run `/clear` before starting the next phase to reset context."""
+
+if old_rules in cs:
+    cs = cs.replace(old_rules, new_rules)
+    with open(BASE + '/CLAUDE_START.md', 'w') as f:
+        f.write(cs)
+    print('OK  CLAUDE_START.md — /clear rule added')
+else:
+    print('SKIP CLAUDE_START.md — pattern not found')
+
+# ── VELOCMS_MASTERPLAN.md — add /clear rule to Session Workflow ──────────────
+with open(BASE + '/VELOCMS_MASTERPLAN.md') as f:
+    mp = f.read()
+
+old_workflow_end = """4. If the masterplan feature checklist changed, update it too."""
+
+new_workflow_end = """4. If the masterplan feature checklist changed, update it too.
+5. **Run `/clear`** — once the user confirms the phase/module is complete, run `/clear` before starting the next phase to reset context and avoid carry-over from the previous session."""
+
+if old_workflow_end in mp:
+    mp = mp.replace(old_workflow_end, new_workflow_end)
+    with open(BASE + '/VELOCMS_MASTERPLAN.md', 'w') as f:
+        f.write(mp)
+    print('OK  VELOCMS_MASTERPLAN.md — /clear rule added to session workflow')
+else:
+    print('SKIP VELOCMS_MASTERPLAN.md — pattern not found')
+
+print('\nDone.')

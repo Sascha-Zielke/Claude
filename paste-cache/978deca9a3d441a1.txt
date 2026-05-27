@@ -1,0 +1,34 @@
+Three fixes needed:
+
+1. BOOKING DATE RANGE:
+When "Daily" booking type is active, the booking 
+creation form (both admin and frontend) must include:
+- Start date picker (check-in date)
+- End date picker (check-out date)
+- Automatic calculation of total nights and total price
+- Minimum stay configurable per resource
+Both admin manual booking creation and frontend booking 
+flow must support date range selection for daily bookings.
+
+2. TIMEZONE DROPDOWN:
+Replace the timezone text input with a proper dropdown 
+containing all PHP timezones. Sort order:
+- Europe/Berlin at the very top (selected by default)
+- All other Europe/* timezones next (alphabetical)
+- Then America/*, Asia/*, Pacific/*, etc. (alphabetical)
+- Display format: "Europe/Berlin (GMT+2)" with current 
+  UTC offset shown
+Auto-save on change like all other settings fields.
+
+3. SLUG FIELD — Add explanation:
+Next to the Slug field on the Resource create/edit form, 
+add a small helper text below the field explaining:
+"The slug is the URL-friendly identifier for this 
+resource. It is auto-generated from the name and used 
+in the booking URL: /booking/{slug}"
+Also make the slug auto-generate from the resource name 
+as the admin types, with option to manually override.
+
+After all fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

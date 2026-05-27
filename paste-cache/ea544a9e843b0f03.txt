@@ -1,0 +1,50 @@
+Before continuing with any new modules, implement the 
+translation system for VeloCMS. Requirements:
+
+CORE ARCHITECTURE:
+- Translation function t('key') available everywhere in 
+  PHP (frontend + backend)
+- Translations stored in database table: translations 
+  (id, lang, key, value, auto_translated, updated_at)
+- Fallback: if translation missing, show the key or 
+  German original
+- Languages: de (default), en — expandable later
+
+ADMIN INTERFACE:
+- New section in Admin: Settings → Translations
+- List all translation keys with DE and EN values
+- Admin edits German text → EN is auto-translated via 
+  Anthropic API
+- Manual override possible for EN text
+- Search/filter by key or content
+
+LANGUAGE TOGGLE (no page reload):
+- Toggle button in admin topbar (DE | EN)
+- Toggle button in frontend (configurable position)
+- JavaScript swaps all text instantly via data-i18n 
+  attributes
+- Selected language stored in cookie + localStorage
+- Works identically in frontend AND backend
+
+AUTO-TRANSLATION:
+- When German text is saved → Anthropic API translates 
+  to EN automatically
+- Translation stored in DB
+- Admin can review and override
+- Bulk translate all missing EN translations (one button)
+
+INTEGRATION:
+- All existing admin views updated to use t() function
+- All new modules must use t() from the start
+- PHP helper: t('key', ['placeholder' => 'value'])
+- JS helper: window.t('key') for dynamic content
+
+WORKFLOW FOR NEW CONTENT:
+1. Admin writes content in German
+2. Auto-translation runs via Anthropic API
+3. Both versions immediately available
+4. Language toggle switches instantly
+
+Run PHPUnit after implementation. Update RESUME.md and 
+SESSION_LOG.md. Push to GitHub. Then tell me to verify 
+the toggle in both frontend and backend.

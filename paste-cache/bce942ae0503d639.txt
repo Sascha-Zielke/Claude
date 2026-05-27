@@ -1,0 +1,48 @@
+Next task: Build the Booking Module for VeloCMS. It must be fully configurable through the admin panel — no hardcoded values.
+
+The module must support:
+
+RESOURCES (rooms/studios):
+- Admin can add/edit/delete resources (name, description, image, active/inactive status)
+- Pricing configurable per resource:
+  * Hourly rate (price per hour)
+  * Package price (fixed price per defined package)
+  * Product price (fixed price per product/service item)
+- Min/max booking duration per resource
+- Advance booking requirement (e.g. min. 24h in advance)
+
+BOOKING OPTIONS (configurable per installation):
+- Hourly booking, packages, products, or any combination
+- Packages: admin defines name, duration, price, description
+- Products: admin defines name, price, description (e.g. mixing session, mastering)
+
+CUSTOMER OPTIONS (configurable):
+- Toggle: guests can book without account OR account required
+- Confirmation email to customer (configurable template)
+- Notification email to studio owner
+
+PAYMENT OPTIONS (configurable toggle):
+- No payment (inquiry only)
+- Deposit (configurable percentage)
+- Full payment via Stripe (prepare integration, activate via feature flag)
+
+CALENDAR:
+- Admin sees all bookings in calendar view
+- Customer sees availability before booking
+- Google Calendar sync (via existing calendar integration in settings)
+
+BOOKING FLOW (frontend):
+1. Select resource
+2. Select date and available time slots
+3. Select duration, package, or product
+4. Enter customer details
+5. Payment step (if enabled)
+6. Confirmation page + email
+
+ADMIN PANEL:
+- Booking overview (list + calendar)
+- Booking detail view
+- Status management (pending / confirmed / cancelled)
+- Manual booking creation by admin
+
+Build this as a proper VeloCMS module in modules/booking/. Follow all existing module conventions. Run PHPUnit after building. Update RESUME.md and SESSION_LOG.md when done. Push to GitHub.

@@ -1,0 +1,5 @@
+SFTP_HOST=home561252854.1and1-data.host
+SFTP_USER=u79762190-zielke
+SFTP_PASS=u79762190-zielke!#123
+SFTP_PORT=22
+SFTP_REMOTE_PATH=/var/www/html/maxiworx

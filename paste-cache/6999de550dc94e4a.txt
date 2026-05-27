@@ -1,0 +1,19 @@
+Please do the following in order:
+
+1. Create CLAUDE_START.md on the server and in the GitHub repo — this is the master start prompt for every new Claude Code session. It should contain: server details, GitHub repo, tech stack, architecture summary, and the instruction to always read RESUME.md next.
+
+2. Create SESSION_LOG.md — log today's session with everything that was built so far.
+
+3. Create RESUME.md — current status is: Phase 6 complete, password reset done. Next task: full codebase audit (syntax, security, database, tests, cleanup).
+
+4. Update VELOCMS_MASTERPLAN.md to reflect Phase 6 as complete and add the session workflow (always update SESSION_LOG.md and RESUME.md at end of every session).
+
+5. Then start the full codebase audit:
+   - PHP syntax and dead code check
+   - Security audit (input validation, SQL injection, CSRF, no secrets in code)
+   - Database audit (indexes, foreign keys)
+   - Run full PHPUnit test suite
+   - Clean up temp files and placeholders
+   - Final report of what was found and fixed
+
+Push everything to GitHub when done.

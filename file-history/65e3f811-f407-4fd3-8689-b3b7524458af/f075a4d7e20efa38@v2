@@ -1,0 +1,1310 @@
+#!/usr/bin/env python3
+"""VeloCMS i18n v2 — Full overhaul (Session 16 fixes)"""
+import os, subprocess
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    full = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+def append(rel, content):
+    with open(os.path.join(BASE, rel), 'a', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  appended {rel}')
+
+def read(rel):
+    with open(os.path.join(BASE, rel), encoding='utf-8') as f:
+        return f.read()
+
+def patch(rel, old, new):
+    c = read(rel)
+    if old not in c:
+        print(f'  WARN  patch target not found in {rel}')
+        return
+    write(rel, c.replace(old, new, 1))
+    print(f'  patched {rel}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 1. Migration: add manual_override column ===')
+write('migrations/i18n/002_add_manual_override.php', r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec(
+            "ALTER TABLE translations
+             ADD COLUMN IF NOT EXISTS manual_override TINYINT(1) NOT NULL DEFAULT 0
+             AFTER auto_translated,
+             ADD KEY IF NOT EXISTS idx_manual (lang, manual_override)"
+        );
+    }
+    public function down(\PDO $pdo): void
+    {
+        $pdo->exec('ALTER TABLE translations DROP COLUMN IF EXISTS manual_override');
+    }
+};
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 2. core/I18n.php — auto-register, deDefault, pending flush ===')
+write('core/I18n.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Core;
+
+class I18n
+{
+    private string $lang   = 'de';
+    private array  $data   = [];
+    private bool   $loaded = false;
+    private array  $pendingRegistrations = [];
+
+    public function __construct(private readonly \PDO $pdo)
+    {
+        $lang = $_COOKIE['vcms_lang'] ?? 'de';
+        $this->lang = in_array($lang, ['de', 'en'], true) ? $lang : 'de';
+    }
+
+    public function getLang(): string { return $this->lang; }
+
+    /**
+     * Return translated string for $key.
+     * $deDefault is the German fallback — when provided and the key is unknown,
+     * it is auto-registered in the DB at request end via flushPendingRegistrations().
+     */
+    public function t(string $key, string $deDefault = '', array $replace = []): string
+    {
+        $this->load();
+
+        // Auto-register DE default for unknown keys
+        if ($deDefault !== '' && !isset($this->data['de'][$key])) {
+            $this->data['de'][$key]         = $deDefault;
+            $this->pendingRegistrations[$key] = $deDefault;
+        }
+
+        $value = $this->data[$this->lang][$key]
+              ?? $this->data['de'][$key]
+              ?? ($deDefault !== '' ? $deDefault : $key);
+
+        foreach ($replace as $k => $v) {
+            $value = str_replace(':' . $k, (string) $v, $value);
+        }
+        return $value;
+    }
+
+    public function all(): array
+    {
+        $this->load();
+        return $this->data;
+    }
+
+    public function forLang(string $lang): array
+    {
+        $this->load();
+        return $this->data[$lang] ?? [];
+    }
+
+    /** Called by bootstrap shutdown function — writes new DE keys to DB in one batch. */
+    public function flushPendingRegistrations(): void
+    {
+        if (empty($this->pendingRegistrations)) return;
+        try {
+            $stmt = $this->pdo->prepare(
+                'INSERT IGNORE INTO translations (lang, trans_key, value) VALUES ("de", ?, ?)'
+            );
+            foreach ($this->pendingRegistrations as $key => $value) {
+                $stmt->execute([$key, $value]);
+            }
+            $this->pendingRegistrations = [];
+        } catch (\Throwable) {}
+    }
+
+    private function load(): void
+    {
+        if ($this->loaded) return;
+        $this->loaded = true;
+        try {
+            $rows = $this->pdo
+                ->query('SELECT lang, trans_key, value FROM translations ORDER BY lang, trans_key')
+                ->fetchAll(\PDO::FETCH_ASSOC);
+            foreach ($rows as $r) {
+                $this->data[$r['lang']][$r['trans_key']] = $r['value'];
+            }
+        } catch (\Throwable) {}
+    }
+}
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 3. core/helpers.php — update t() signature ===')
+patch('core/helpers.php',
+    r"""if (!function_exists('t')) {
+    /** Return translated string for $key in the current language. Falls back to 'de', then the key itself. */
+    function t(string $key, array $replace = []): string
+    {
+        try {
+            return app(\VeloCMS\Core\I18n::class)->t($key, $replace);
+        } catch (\Throwable) {
+            return $key;
+        }
+    }
+}""",
+    r"""if (!function_exists('t')) {
+    /**
+     * Return translated string for $key in the current language.
+     * $deDefault: German fallback text — auto-registers the key in DB if new.
+     * Falls back: current lang → de → $deDefault → key.
+     */
+    function t(string $key, string $deDefault = '', array $replace = []): string
+    {
+        try {
+            return app(\VeloCMS\Core\I18n::class)->t($key, $deDefault, $replace);
+        } catch (\Throwable) {
+            return $deDefault !== '' ? $deDefault : $key;
+        }
+    }
+}"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 4. core/bootstrap.php — add shutdown function ===')
+patch('core/bootstrap.php',
+    '// I18n (translation system)',
+    r"""// I18n (translation system)
+// Shutdown: flush any new DE keys collected during this request
+register_shutdown_function(static function () use ($app): void {
+    try { $app->make(\VeloCMS\Core\I18n::class)->flushPendingRegistrations(); }
+    catch (\Throwable) {}
+});
+// (singleton registered below)"""
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 5. Translator — add DeepL ===')
+write('modules/i18n/Translator.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\I18n;
+
+class Translator
+{
+    /** @param string $provider 'anthropic' | 'deepl' */
+    public function __construct(
+        private readonly string $provider,
+        private readonly string $apiKey
+    ) {}
+
+    /** @throws \RuntimeException */
+    public function translate(string $text, string $toLang = 'en'): string
+    {
+        return $this->provider === 'deepl'
+            ? $this->translateDeepL($text, $toLang)
+            : $this->translateAnthropic($text, $toLang);
+    }
+
+    private function translateAnthropic(string $text, string $toLang): string
+    {
+        $langs = ['de' => 'German', 'en' => 'English'];
+        $to    = $langs[$toLang] ?? 'English';
+
+        $payload = json_encode([
+            'model'      => 'claude-haiku-4-5-20251001',
+            'max_tokens' => 1024,
+            'messages'   => [[
+                'role'    => 'user',
+                'content' => "Translate the following text to {$to}. "
+                           . "Return ONLY the translation, no explanation, no quotes:\n\n{$text}",
+            ]],
+        ]);
+
+        $ch = curl_init('https://api.anthropic.com/v1/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_HTTPHEADER     => [
+                'Content-Type: application/json',
+                'x-api-key: ' . $this->apiKey,
+                'anthropic-version: 2023-06-01',
+            ],
+            CURLOPT_TIMEOUT => 30,
+        ]);
+
+        $response = curl_exec($ch);
+        $code     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code !== 200 || !$response) {
+            throw new \RuntimeException("Anthropic API error (HTTP {$code})");
+        }
+
+        $data = json_decode((string) $response, true);
+        $out  = trim($data['content'][0]['text'] ?? '');
+        if ($out === '') throw new \RuntimeException('Empty Anthropic translation');
+        return $out;
+    }
+
+    private function translateDeepL(string $text, string $toLang): string
+    {
+        $isFree   = str_ends_with($this->apiKey, ':fx');
+        $endpoint = $isFree
+            ? 'https://api-free.deepl.com/v2/translate'
+            : 'https://api.deepl.com/v2/translate';
+
+        $ch = curl_init($endpoint);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query([
+                'auth_key'    => $this->apiKey,
+                'text'        => $text,
+                'source_lang' => 'DE',
+                'target_lang' => strtoupper($toLang),
+            ]),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
+            CURLOPT_TIMEOUT    => 15,
+        ]);
+
+        $response = curl_exec($ch);
+        $code     = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code !== 200 || !$response) {
+            throw new \RuntimeException("DeepL API error (HTTP {$code})");
+        }
+
+        $data = json_decode((string) $response, true);
+        $out  = trim($data['translations'][0]['text'] ?? '');
+        if ($out === '') throw new \RuntimeException('Empty DeepL translation');
+        return $out;
+    }
+}
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 6. Translation model — manual_override, setWithManualOverride, getAutoTranslateable ===')
+write('modules/i18n/models/Translation.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\I18n\Models;
+
+class Translation
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    /** Insert or update a translation. Does NOT change manual_override on existing rows. */
+    public function set(string $lang, string $key, string $value, bool $auto = false): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO translations (lang, trans_key, value, auto_translated, manual_override)
+             VALUES (?, ?, ?, ?, 0)
+             ON DUPLICATE KEY UPDATE value = VALUES(value),
+             auto_translated = VALUES(auto_translated), updated_at = NOW()'
+        )->execute([$lang, $key, $value, $auto ? 1 : 0]);
+    }
+
+    /** Mark a translation as manually overridden — never re-translated by auto. */
+    public function setWithManualOverride(string $lang, string $key, string $value): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO translations (lang, trans_key, value, auto_translated, manual_override)
+             VALUES (?, ?, ?, 0, 1)
+             ON DUPLICATE KEY UPDATE value = VALUES(value),
+             auto_translated = 0, manual_override = 1, updated_at = NOW()'
+        )->execute([$lang, $key, $value]);
+    }
+
+    /** Delete all language entries for a key. */
+    public function deleteByKey(string $key): void
+    {
+        $this->pdo->prepare('DELETE FROM translations WHERE trans_key = ?')->execute([$key]);
+    }
+
+    /**
+     * Return DE keys that can be auto-translated to $lang:
+     * those without ANY manual_override $lang entry.
+     */
+    public function getAutoTranslateable(string $lang): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT d.trans_key, d.value AS de_value
+             FROM translations d
+             WHERE d.lang = "de"
+             AND d.trans_key NOT IN (
+                 SELECT trans_key FROM translations
+                 WHERE lang = ? AND manual_override = 1
+             )
+             ORDER BY d.trans_key'
+        );
+        $stmt->execute([$lang]);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /** Count manual override entries for a language. */
+    public function countManualOverrides(string $lang): int
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM translations WHERE lang = ? AND manual_override = 1'
+        );
+        $stmt->execute([$lang]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /** Return all keys grouped by key → [lang → {value, auto_translated, manual_override}]. */
+    public function groupedByKey(string $q = ''): array
+    {
+        if ($q !== '') {
+            $like = '%' . $q . '%';
+            $stmt = $this->pdo->prepare(
+                'SELECT lang, trans_key, value, auto_translated, manual_override
+                 FROM translations WHERE trans_key LIKE ? OR value LIKE ?
+                 ORDER BY trans_key, lang'
+            );
+            $stmt->execute([$like, $like]);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        } else {
+            $rows = $this->pdo->query(
+                'SELECT lang, trans_key, value, auto_translated, manual_override
+                 FROM translations ORDER BY trans_key, lang'
+            )->fetchAll(\PDO::FETCH_ASSOC);
+        }
+        $grouped = [];
+        foreach ($rows as $r) {
+            $grouped[$r['trans_key']][$r['lang']] = [
+                'value'          => $r['value'],
+                'auto_translated'=> (int) $r['auto_translated'],
+                'manual_override'=> (int) $r['manual_override'],
+            ];
+        }
+        ksort($grouped);
+        return $grouped;
+    }
+}
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 7. I18nAdminController — remove save(), overhaul translate, add settings ===')
+write('modules/i18n/admin/controllers/I18nAdminController.php', r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\I18n\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\I18n\Models\Translation;
+use VeloCMS\Modules\I18n\Translator;
+use VeloCMS\Modules\Settings\Models\Setting;
+
+class I18nAdminController extends BaseController
+{
+    private const DEFAULTS = [
+        'nav.dashboard'    => ['Übersicht',          'Dashboard'],
+        'nav.booking'      => ['Buchungen',           'Booking'],
+        'nav.pages'        => ['Seiten',              'Pages'],
+        'nav.blog'         => ['Blog',                'Blog'],
+        'nav.media'        => ['Medien',              'Media'],
+        'nav.navigation'   => ['Navigation',          'Navigation'],
+        'nav.seo'          => ['SEO',                 'SEO'],
+        'nav.forms'        => ['Formulare',           'Forms'],
+        'nav.sites'        => ['Websites',            'Sites'],
+        'nav.users'        => ['Benutzer',            'Users'],
+        'nav.api_keys'     => ['API-Schlüssel',       'API Keys'],
+        'nav.audit_log'    => ['Audit-Protokoll',     'Audit Log'],
+        'nav.cron_jobs'    => ['Cron-Jobs',           'Cron Jobs'],
+        'nav.settings'     => ['Einstellungen',       'Settings'],
+        'nav.translations' => ['Übersetzungen',       'Translations'],
+        'nav.profile'      => ['Profil',              'Profile'],
+        'nav.signout'      => ['Abmelden',            'Sign out'],
+        'nav.content'      => ['Inhalt',              'Content'],
+        'nav.system'       => ['System',              'System'],
+        'btn.save'         => ['Speichern',           'Save'],
+        'btn.cancel'       => ['Abbrechen',           'Cancel'],
+        'btn.delete'       => ['Löschen',             'Delete'],
+        'btn.edit'         => ['Bearbeiten',          'Edit'],
+        'btn.create'       => ['Erstellen',           'Create'],
+        'btn.back'         => ['Zurück',              'Back'],
+        'label.search'     => ['Suchen',              'Search'],
+        'label.status'     => ['Status',              'Status'],
+        'label.actions'    => ['Aktionen',            'Actions'],
+        'label.name'       => ['Name',                'Name'],
+        'label.email'      => ['E-Mail',              'Email'],
+        'label.role'       => ['Rolle',               'Role'],
+        'label.created'    => ['Erstellt',            'Created'],
+        'label.updated'    => ['Aktualisiert',        'Updated'],
+        'settings.site'    => ['Website',             'Site'],
+        'settings.email'   => ['E-Mail',              'Email'],
+        'settings.booking' => ['Buchung',             'Booking'],
+    ];
+
+    public function index(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $model   = new Translation($pdo);
+        $setting = new Setting($pdo);
+        $q       = trim($request->get('q', ''));
+
+        $provider    = $setting->get('i18n', 'provider',          'anthropic');
+        $togglePos   = $setting->get('i18n', 'toggle_position',   'bottom-right');
+        $hasAnthropicKey = $setting->get('i18n', 'anthropic_api_key', '') !== '';
+        $hasDeeplKey     = $setting->get('i18n', 'deepl_api_key',     '') !== '';
+
+        return $this->layout('i18n/index.php', [
+            'user'            => $auth->user(),
+            'page'            => 'translations',
+            'grouped'         => $model->groupedByKey($q),
+            'q'               => $q,
+            'provider'        => $provider,
+            'togglePos'       => $togglePos,
+            'hasAnthropicKey' => $hasAnthropicKey,
+            'hasDeeplKey'     => $hasDeeplKey,
+            'csrf'            => $auth->csrfToken(),
+            'flash'           => $_SESSION['_flash']       ?? null,
+            'flashError'      => $_SESSION['_flash_error'] ?? null,
+        ]);
+    }
+
+    /** Inline edit (AJAX) — always marks as manual_override. */
+    public function update(Request $request, array $params): Response
+    {
+        $auth   = $this->auth();
+        $auth->requireLogin();
+        $isAjax = $request->header('X-Requested-With') === 'XMLHttpRequest';
+
+        if (!$auth->verifyCsrf()) {
+            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);
+            return $this->redirect('/admin/translations');
+        }
+
+        $lang = $request->post('lang', '');
+        $key  = trim($request->post('key', ''));
+        $val  = trim($request->post('value', ''));
+
+        if (!in_array($lang, ['de', 'en'], true) || $key === '') {
+            if ($isAjax) return (new Response())->json(['ok' => false]);
+            return $this->redirect('/admin/translations');
+        }
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Translation($pdo);
+
+        if ($lang === 'en') {
+            $model->setWithManualOverride($lang, $key, $val);
+        } else {
+            $model->set($lang, $key, $val);
+        }
+
+        if ($isAjax) return (new Response())->json(['ok' => true]);
+        $_SESSION['_flash'] = 'Translation updated.';
+        return $this->redirect('/admin/translations');
+    }
+
+    public function delete(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $key = trim($request->post('key', ''));
+        if ($key !== '') {
+            (new Translation($this->app->make(Database::class)->core()))->deleteByKey($key);
+        }
+
+        $_SESSION['_flash'] = 'Translation deleted.';
+        return $this->redirect('/admin/translations');
+    }
+
+    /** Per-row auto-translate button (AJAX). */
+    public function translateSingle(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $key  = trim($request->post('key', ''));
+        $text = trim($request->post('text', ''));
+        $lang = trim($request->post('lang', 'en'));
+
+        if ($key === '' || $text === '') {
+            return (new Response())->json(['ok' => false, 'error' => 'Missing key or text']);
+        }
+
+        $pdo        = $this->app->make(Database::class)->core();
+        $translated = $this->callTranslate($pdo, $text, $lang);
+
+        if ($translated === '') {
+            return (new Response())->json([
+                'ok'    => false,
+                'error' => 'Translation failed — check API key in settings.',
+            ]);
+        }
+
+        (new Translation($pdo))->set($lang, $key, $translated, true);
+        return (new Response())->json(['ok' => true, 'translation' => $translated]);
+    }
+
+    /** Re-translate all non-manual-override EN entries (AJAX). */
+    public function retranslateAll(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        set_time_limit(120);
+
+        $pdo         = $this->app->make(Database::class)->core();
+        $model       = new Translation($pdo);
+        $toTranslate = $model->getAutoTranslateable('en');
+
+        $count = 0; $errors = 0;
+        foreach ($toTranslate as $row) {
+            $translated = $this->callTranslate($pdo, $row['de_value'], 'en');
+            if ($translated !== '') {
+                $model->set('en', $row['trans_key'], $translated, true);
+                $count++;
+            } else {
+                $errors++;
+            }
+            usleep(100000);
+        }
+
+        $skipped = $model->countManualOverrides('en');
+        return (new Response())->json([
+            'ok'         => true,
+            'translated' => $count,
+            'skipped'    => $skipped,
+            'errors'     => $errors,
+        ]);
+    }
+
+    public function seedDefaults(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Translation($pdo);
+        foreach (self::DEFAULTS as $key => [$de, $en]) {
+            $model->set('de', $key, $de);
+            $model->set('en', $key, $en);
+        }
+
+        $_SESSION['_flash'] = count(self::DEFAULTS) . ' default translations seeded.';
+        return $this->redirect('/admin/translations');
+    }
+
+    /** Save provider, API keys, and toggle position settings. */
+    public function saveSettings(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+        if (!$auth->verifyCsrf()) return $this->redirect('/admin/translations');
+
+        $pdo     = $this->app->make(Database::class)->core();
+        $setting = new Setting($pdo);
+
+        $provider = $request->post('provider', 'anthropic');
+        if (in_array($provider, ['anthropic', 'deepl'], true)) {
+            $setting->set('i18n', 'provider', $provider);
+        }
+
+        $togglePos = $request->post('toggle_position', 'bottom-right');
+        if (in_array($togglePos, ['bottom-right', 'top-right', 'hidden'], true)) {
+            $setting->set('i18n', 'toggle_position', $togglePos);
+        }
+
+        $anthropicKey = trim($request->post('anthropic_api_key', ''));
+        if ($anthropicKey !== '' && !str_starts_with($anthropicKey, '**')) {
+            $setting->set('i18n', 'anthropic_api_key', $anthropicKey);
+        }
+
+        $deeplKey = trim($request->post('deepl_api_key', ''));
+        if ($deeplKey !== '' && !str_starts_with($deeplKey, '**')) {
+            $setting->set('i18n', 'deepl_api_key', $deeplKey);
+        }
+
+        $_SESSION['_flash'] = 'Translation settings saved.';
+        return $this->redirect('/admin/translations');
+    }
+
+    private function callTranslate(\PDO $pdo, string $text, string $toLang): string
+    {
+        $setting  = new Setting($pdo);
+        $provider = $setting->get('i18n', 'provider', 'anthropic');
+        $apiKey   = $provider === 'deepl'
+            ? $setting->get('i18n', 'deepl_api_key',     '')
+            : $setting->get('i18n', 'anthropic_api_key', '');
+
+        if ($apiKey === '') return '';
+        try {
+            return (new Translator($provider, $apiKey))->translate($text, $toLang);
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+}
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 8. Admin translations view — remove add form, new monitoring UI ===')
+write('admin/views/i18n/index.php', r"""<?php
+$flash      = $flash      ?? null;
+$flashError = $flashError ?? null;
+unset($_SESSION['_flash'], $_SESSION['_flash_error']);
+$provider      = $provider      ?? 'anthropic';
+$togglePos     = $togglePos     ?? 'bottom-right';
+$hasAnthropicKey = $hasAnthropicKey ?? false;
+$hasDeeplKey     = $hasDeeplKey     ?? false;
+?>
+<div class="vcms-page-header">
+    <h2>Translations</h2>
+    <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+        <form method="post" action="/admin/translations/seed" style="display:inline">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <button class="vcms-btn vcms-btn--secondary" type="submit">Seed Defaults</button>
+        </form>
+        <button class="vcms-btn vcms-btn--primary" id="btn-retranslate" type="button">
+            Re-translate all auto entries
+        </button>
+    </div>
+</div>
+
+<?php if ($flash): ?>
+<div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+<?php if ($flashError): ?>
+<div class="vcms-alert vcms-alert--error"><?= e($flashError) ?></div>
+<?php endif ?>
+
+<!-- Settings card -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Translation Settings</h4>
+    <form method="post" action="/admin/translations/settings">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.2rem">
+
+            <!-- Provider -->
+            <div style="flex:1;min-width:200px">
+                <label style="display:block;font-size:.8rem;color:#6b7280;margin-bottom:.4rem;font-weight:600">
+                    Translation Provider
+                </label>
+                <div style="display:flex;gap:.5rem">
+                    <label class="vcms-toggle" style="align-items:center;gap:.5rem">
+                        <input type="radio" name="provider" value="anthropic"
+                               <?= $provider === 'anthropic' ? 'checked' : '' ?>>
+                        <span>Claude (Anthropic)</span>
+                        <?php if ($hasAnthropicKey): ?>
+                            <span class="i18n-badge i18n-badge--ok" style="font-size:.7rem">✓ key set</span>
+                        <?php endif ?>
+                    </label>
+                    <label class="vcms-toggle" style="align-items:center;gap:.5rem">
+                        <input type="radio" name="provider" value="deepl"
+                               <?= $provider === 'deepl' ? 'checked' : '' ?>>
+                        <span>DeepL</span>
+                        <?php if ($hasDeeplKey): ?>
+                            <span class="i18n-badge i18n-badge--ok" style="font-size:.7rem">✓ key set</span>
+                        <?php endif ?>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Toggle position -->
+            <div style="flex:1;min-width:180px">
+                <label for="toggle-pos" style="display:block;font-size:.8rem;color:#6b7280;margin-bottom:.4rem;font-weight:600">
+                    Language Toggle Position (frontend)
+                </label>
+                <select name="toggle_position" id="toggle-pos">
+                    <option value="bottom-right" <?= $togglePos === 'bottom-right' ? 'selected' : '' ?>>Bottom-right (default)</option>
+                    <option value="top-right"    <?= $togglePos === 'top-right'    ? 'selected' : '' ?>>Top-right</option>
+                    <option value="hidden"       <?= $togglePos === 'hidden'       ? 'selected' : '' ?>>Hidden</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+            <label style="display:flex;flex-direction:column;gap:.3rem;flex:1;min-width:220px">
+                <span style="font-size:.8rem;color:#6b7280">
+                    Anthropic API Key<?= $hasAnthropicKey ? ' (configured)' : '' ?>
+                </span>
+                <input type="password" name="anthropic_api_key"
+                       placeholder="<?= $hasAnthropicKey ? 'Paste new key to replace' : 'sk-ant-...' ?>">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:.3rem;flex:1;min-width:220px">
+                <span style="font-size:.8rem;color:#6b7280">
+                    DeepL API Key<?= $hasDeeplKey ? ' (configured)' : '' ?>
+                    <a href="https://www.deepl.com/pro-api" target="_blank" rel="noopener"
+                       style="margin-left:.3rem;font-size:.75rem">(get free key)</a>
+                </span>
+                <input type="password" name="deepl_api_key"
+                       placeholder="<?= $hasDeeplKey ? 'Paste new key to replace' : 'xxxxxxxx:fx (free) or xxxxxxxx (pro)' ?>">
+            </label>
+        </div>
+
+        <button class="vcms-btn vcms-btn--primary" type="submit">Save Settings</button>
+        <small style="margin-left:.75rem;color:#9ca3af">
+            Free keys end with <code>:fx</code> (api-free.deepl.com), pro keys use api.deepl.com.
+        </small>
+    </form>
+</div>
+
+<!-- Search + monitoring table -->
+<div class="vcms-card">
+    <div style="display:flex;gap:.75rem;margin-bottom:1rem;align-items:center;flex-wrap:wrap">
+        <form method="get" action="/admin/translations" style="display:flex;gap:.5rem;flex:1">
+            <input type="text" name="q" value="<?= e($q) ?>"
+                   placeholder="Search keys or values…" style="flex:1;max-width:360px">
+            <button class="vcms-btn vcms-btn--secondary" type="submit">Search</button>
+            <?php if ($q): ?>
+                <a href="/admin/translations" class="vcms-btn vcms-btn--secondary">Clear</a>
+            <?php endif ?>
+        </form>
+        <span style="color:#9ca3af;font-size:.875rem"><?= count($grouped) ?> key(s)</span>
+    </div>
+
+    <?php if (empty($grouped)): ?>
+    <p style="color:#9ca3af;text-align:center;padding:2rem 1rem">
+        No translations yet.<br>
+        Click <strong>Seed Defaults</strong> above, or navigate around the admin — keys register automatically.
+    </p>
+    <?php else: ?>
+    <div class="vcms-table-wrap">
+    <table class="vcms-table" id="i18n-table">
+        <thead>
+            <tr>
+                <th style="width:22%">Key</th>
+                <th style="width:30%">German (DE) — source</th>
+                <th style="width:30%">English (EN)</th>
+                <th style="width:80px">Status</th>
+                <th style="width:54px"></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($grouped as $key => $langs):
+            $de = $langs['de'] ?? null;
+            $en = $langs['en'] ?? null;
+            $isManual  = $en && $en['manual_override'] === 1;
+            $isAuto    = $en && $en['auto_translated'] === 1 && !$isManual;
+            $isPending = !$en;
+        ?>
+        <tr data-key="<?= e($key) ?>">
+            <td style="font-family:monospace;font-size:.78rem;color:#374151;word-break:break-all"><?= e($key) ?></td>
+            <td>
+                <span class="i18n-editable" data-key="<?= e($key) ?>" data-lang="de" title="Click to edit">
+                    <?= e($de['value'] ?? '') ?>
+                </span>
+            </td>
+            <td>
+                <?php if ($en): ?>
+                <span class="i18n-editable <?= $isManual ? 'i18n-editable--manual' : '' ?>"
+                      data-key="<?= e($key) ?>" data-lang="en"
+                      title="<?= $isManual ? 'Manual override — click to edit' : 'Auto-translated — click to edit (sets manual override)' ?>">
+                    <?= e($en['value']) ?>
+                </span>
+                <?php else: ?>
+                <em style="color:#d1d5db;font-size:.8rem;margin-right:.3rem">—</em>
+                <button type="button"
+                        class="vcms-btn vcms-btn--secondary vcms-btn--sm i18n-auto-btn"
+                        data-key="<?= e($key) ?>"
+                        data-de="<?= e($de['value'] ?? '') ?>">✦ Auto</button>
+                <?php endif ?>
+            </td>
+            <td style="text-align:center" class="i18n-status-cell">
+                <?php if ($isManual): ?>
+                    <span class="i18n-badge i18n-badge--manual" title="Manual override — won't be re-translated">🔒</span>
+                <?php elseif ($isAuto): ?>
+                    <span class="i18n-badge i18n-badge--auto">auto</span>
+                <?php elseif ($isPending): ?>
+                    <span class="i18n-badge i18n-badge--pending">pending</span>
+                <?php endif ?>
+            </td>
+            <td>
+                <form method="post" action="/admin/translations/delete"
+                      onsubmit="return confirm('Delete all translations for: <?= e(addslashes($key)) ?>?')">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                    <input type="hidden" name="key" value="<?= e($key) ?>">
+                    <button class="vcms-btn vcms-btn--danger vcms-btn--sm" type="submit">✕</button>
+                </form>
+            </td>
+        </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif ?>
+</div>
+
+<style>
+.i18n-editable{cursor:pointer;display:inline-block;min-width:3rem;padding:.1rem .25rem;border-radius:3px;border:1px solid transparent;transition:.1s}
+.i18n-editable:hover{border-color:#c7d2fe;background:#f5f3ff}
+.i18n-editable--manual{border-left:2px solid #16a34a !important}
+.i18n-badge{display:inline-block;font-size:.7rem;padding:.15rem .4rem;border-radius:3px;font-weight:600}
+.i18n-badge--auto{background:#fef3c7;color:#b45309}
+.i18n-badge--manual{background:#d1fae5;color:#065f46}
+.i18n-badge--pending{background:#f3f4f6;color:#6b7280}
+.i18n-badge--ok{background:#d1fae5;color:#065f46}
+</style>
+
+<script>
+const I18N_CSRF = <?= json_encode($csrf, JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+
+// Inline click-to-edit via event delegation
+document.querySelector('#i18n-table tbody')?.addEventListener('click', function (ev) {
+    const span = ev.target.closest('.i18n-editable');
+    if (!span || span.querySelector('input')) return;
+
+    const key  = span.dataset.key;
+    const lang = span.dataset.lang;
+    const orig = span.textContent.trim();
+
+    const inp = document.createElement('input');
+    inp.value = orig;
+    inp.style.cssText = 'width:100%;padding:.25rem .4rem;border:1.5px solid #6366f1;border-radius:3px;font-size:.875rem;font-family:inherit;box-sizing:border-box';
+    span.textContent = '';
+    span.appendChild(inp);
+    inp.focus(); inp.select();
+
+    const commit = () => {
+        const val = inp.value.trim();
+        if (val === orig) { span.textContent = orig || '—'; return; }
+        fetch('/admin/translations/update', {
+            method: 'POST',
+            headers: {'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
+            body: new URLSearchParams({_csrf: I18N_CSRF, key, lang, value: val})
+        }).then(r => r.json()).then(d => {
+            span.textContent = d.ok ? (val || '—') : (orig || '—');
+            if (d.ok && lang === 'en') {
+                // Show manual badge
+                const statusTd = span.closest('tr').querySelector('.i18n-status-cell');
+                if (statusTd) statusTd.innerHTML = '<span class="i18n-badge i18n-badge--manual" title="Manual override">🔒</span>';
+                span.classList.add('i18n-editable--manual');
+            }
+        }).catch(() => { span.textContent = orig || '—'; });
+    };
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { span.textContent = orig || '—'; }
+    });
+});
+
+// Per-row auto-translate via event delegation
+document.querySelector('#i18n-table tbody')?.addEventListener('click', function (ev) {
+    const btn = ev.target.closest('.i18n-auto-btn');
+    if (!btn) return;
+    const key = btn.dataset.key;
+    const de  = btn.dataset.de;
+    if (!de) { alert('German text missing.'); return; }
+    btn.disabled = true; btn.textContent = '…';
+    fetch('/admin/translations/translate', {
+        method: 'POST',
+        headers: {'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
+        body: new URLSearchParams({_csrf: I18N_CSRF, key, text: de, lang: 'en'})
+    }).then(r => r.json()).then(d => {
+        if (d.ok) {
+            const td = btn.closest('td');
+            td.innerHTML = '<span class="i18n-editable" data-key="' + escH(key) + '" data-lang="en" title="Auto-translated — click to edit">' + escH(d.translation) + '</span>';
+            const s = btn.closest('tr').querySelector('.i18n-status-cell');
+            if (s) s.innerHTML = '<span class="i18n-badge i18n-badge--auto">auto</span>';
+        } else {
+            btn.disabled = false; btn.textContent = '✦ Auto';
+            alert(d.error || 'Translation failed. Check API key in settings.');
+        }
+    }).catch(() => { btn.disabled = false; btn.textContent = '✦ Auto'; });
+});
+
+function escH(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Re-translate all auto entries
+document.getElementById('btn-retranslate')?.addEventListener('click', function () {
+    if (!confirm('Re-translate all auto-translated English entries?\n\nManual overrides (🔒) will be skipped.')) return;
+    this.disabled = true; this.textContent = 'Translating…';
+    const btn = this;
+    fetch('/admin/translations/retranslate-auto', {
+        method: 'POST',
+        headers: {'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'},
+        body: new URLSearchParams({_csrf: I18N_CSRF})
+    }).then(r => r.json()).then(d => {
+        btn.disabled = false; btn.textContent = 'Re-translate all auto entries';
+        if (d.ok) {
+            alert('Done!\nTranslated: ' + d.translated + '\nSkipped (manual 🔒): ' + d.skipped + '\nErrors: ' + d.errors);
+            if (d.translated > 0) location.reload();
+        } else {
+            alert('Failed. Check API key in settings above.');
+        }
+    }).catch(() => { btn.disabled = false; btn.textContent = 'Re-translate all auto entries'; });
+});
+</script>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 9. admin/routes.php — remove save/api-key, add settings/retranslate-auto ===')
+content = read('admin/routes.php')
+old_routes = """$router->get('/admin/translations',                 [I18nAdminController::class, 'index']);
+$router->post('/admin/translations/save',           [I18nAdminController::class, 'save']);
+$router->post('/admin/translations/update',         [I18nAdminController::class, 'update']);
+$router->post('/admin/translations/delete',         [I18nAdminController::class, 'delete']);
+$router->post('/admin/translations/translate',      [I18nAdminController::class, 'translateSingle']);
+$router->post('/admin/translations/translate-bulk', [I18nAdminController::class, 'translateBulk']);
+$router->post('/admin/translations/seed',           [I18nAdminController::class, 'seedDefaults']);
+$router->post('/admin/translations/api-key',        [I18nAdminController::class, 'saveApiKey']);"""
+new_routes = """$router->get('/admin/translations',                     [I18nAdminController::class, 'index']);
+$router->post('/admin/translations/update',             [I18nAdminController::class, 'update']);
+$router->post('/admin/translations/delete',             [I18nAdminController::class, 'delete']);
+$router->post('/admin/translations/translate',          [I18nAdminController::class, 'translateSingle']);
+$router->post('/admin/translations/retranslate-auto',   [I18nAdminController::class, 'retranslateAll']);
+$router->post('/admin/translations/seed',               [I18nAdminController::class, 'seedDefaults']);
+$router->post('/admin/translations/settings',           [I18nAdminController::class, 'saveSettings']);"""
+if old_routes in content:
+    write('admin/routes.php', content.replace(old_routes, new_routes, 1))
+    print('  patched admin/routes.php')
+else:
+    print('  WARN: old routes not found in admin/routes.php')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 10. admin/views/layout.php — DE defaults in t() + frontend link in topbar ===')
+write('admin/views/layout.php', r"""<!DOCTYPE html>
+<html lang="<?= e(lang()) ?>">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VeloCMS Admin</title>
+    <link rel="stylesheet" href="/assets/admin/style.css">
+</head>
+<body>
+
+<!-- Mobile overlay -->
+<div class="vcms-overlay" aria-hidden="true"></div>
+
+<div class="vcms-layout">
+
+    <!-- Sidebar -->
+    <aside class="vcms-sidebar" id="vcms-sidebar">
+        <div class="vcms-logo">
+            <h1>Velo<span>CMS</span></h1>
+        </div>
+        <nav class="vcms-nav">
+            <a href="/admin/dashboard" data-i18n="nav.dashboard"
+               class="<?= ($page ?? '') === 'dashboard' ? 'active' : '' ?>"><?= e(t('nav.dashboard','Übersicht')) ?></a>
+
+            <div class="vcms-nav-group" data-i18n="nav.content"><?= e(t('nav.content','Inhalt')) ?></div>
+            <a href="/admin/booking"    data-i18n="nav.booking"
+               class="<?= ($page ?? '') === 'booking'     ? 'active' : '' ?>"><?= e(t('nav.booking','Buchungen')) ?></a>
+            <a href="/admin/pages"      data-i18n="nav.pages"
+               class="<?= ($page ?? '') === 'pages'       ? 'active' : '' ?>"><?= e(t('nav.pages','Seiten')) ?></a>
+            <a href="/admin/blog"       data-i18n="nav.blog"
+               class="<?= ($page ?? '') === 'blog'        ? 'active' : '' ?>"><?= e(t('nav.blog','Blog')) ?></a>
+            <a href="/admin/media"      data-i18n="nav.media"
+               class="<?= ($page ?? '') === 'media'       ? 'active' : '' ?>"><?= e(t('nav.media','Medien')) ?></a>
+            <a href="/admin/navigation" data-i18n="nav.navigation"
+               class="<?= ($page ?? '') === 'navigation'  ? 'active' : '' ?>"><?= e(t('nav.navigation','Navigation')) ?></a>
+            <a href="/admin/seo"        data-i18n="nav.seo"
+               class="<?= ($page ?? '') === 'seo'         ? 'active' : '' ?>"><?= e(t('nav.seo','SEO')) ?></a>
+            <a href="/admin/forms"      data-i18n="nav.forms"
+               class="<?= ($page ?? '') === 'forms'       ? 'active' : '' ?>"><?= e(t('nav.forms','Formulare')) ?></a>
+
+            <div class="vcms-nav-group" data-i18n="nav.system"><?= e(t('nav.system','System')) ?></div>
+            <a href="/admin/sites"        data-i18n="nav.sites"
+               class="<?= ($page ?? '') === 'sites'        ? 'active' : '' ?>"><?= e(t('nav.sites','Websites')) ?></a>
+            <a href="/admin/users"        data-i18n="nav.users"
+               class="<?= ($page ?? '') === 'users'        ? 'active' : '' ?>"><?= e(t('nav.users','Benutzer')) ?></a>
+            <a href="/admin/api"          data-i18n="nav.api_keys"
+               class="<?= ($page ?? '') === 'api'          ? 'active' : '' ?>"><?= e(t('nav.api_keys','API-Schlüssel')) ?></a>
+            <a href="/admin/audit"        data-i18n="nav.audit_log"
+               class="<?= ($page ?? '') === 'audit'        ? 'active' : '' ?>"><?= e(t('nav.audit_log','Audit-Protokoll')) ?></a>
+            <a href="/admin/cron"         data-i18n="nav.cron_jobs"
+               class="<?= ($page ?? '') === 'cron'         ? 'active' : '' ?>"><?= e(t('nav.cron_jobs','Cron-Jobs')) ?></a>
+            <a href="/admin/settings"     data-i18n="nav.settings"
+               class="<?= ($page ?? '') === 'settings'     ? 'active' : '' ?>"><?= e(t('nav.settings','Einstellungen')) ?></a>
+            <a href="/admin/translations" data-i18n="nav.translations"
+               class="<?= ($page ?? '') === 'translations' ? 'active' : '' ?>"><?= e(t('nav.translations','Übersetzungen')) ?></a>
+        </nav>
+        <div class="vcms-sidebar-footer">VeloCMS v0.1.0</div>
+    </aside>
+
+    <!-- Main area -->
+    <div class="vcms-main">
+        <div class="vcms-topbar">
+            <button class="vcms-hamburger" aria-label="Toggle navigation"
+                    aria-expanded="false" aria-controls="vcms-sidebar">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round">
+                    <line x1="3" y1="6"  x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+
+            <h2><?= e(ucfirst($page ?? 'Admin')) ?></h2>
+
+            <div class="vcms-lang-toggle">
+                <button type="button" class="vcms-lang-btn <?= lang() === 'de' ? 'active' : '' ?>"
+                        data-lang-toggle data-lang="de">DE</button>
+                <span class="vcms-lang-sep">|</span>
+                <button type="button" class="vcms-lang-btn <?= lang() === 'en' ? 'active' : '' ?>"
+                        data-lang-toggle data-lang="en">EN</button>
+            </div>
+
+            <div class="vcms-topbar-user">
+                <span><?= e($user['name'] ?? '') ?></span>
+                <span class="vcms-role-badge"><?= e($user['role'] ?? '') ?></span>
+                <a href="<?= e(url()) ?>" target="_blank" rel="noopener"
+                   class="vcms-topbar-ext" title="View website">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                </a>
+                <a href="/admin/profile" data-i18n="nav.profile"><?= e(t('nav.profile','Profil')) ?></a>
+                <a href="/admin/logout" class="signout" data-i18n="nav.signout"><?= e(t('nav.signout','Abmelden')) ?></a>
+            </div>
+        </div>
+
+        <div class="vcms-content">
+            <?= $content ?? '' ?>
+        </div>
+    </div>
+
+</div>
+
+<script>
+window.__VCMS_LANG__ = '<?= e(lang()) ?>';
+window.__VCMS_I18N__ = <?= json_encode(app(\VeloCMS\Core\I18n::class)->all(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
+<script src="/assets/admin/app.js" defer></script>
+<script src="/assets/admin/autosave.js" defer></script>
+<script src="/assets/admin/i18n.js" defer></script>
+</body>
+</html>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 11. Frontend layout — configurable position toggle ===')
+write('themes/default/layouts/main.php', r"""<!DOCTYPE html>
+<html lang="<?= e(lang()) ?>">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><?= e(($metaTitle ?? $title ?? '') !== '' ? ($metaTitle ?? $title) . ' — ' . setting('site','name','VeloCMS') : setting('site','name','VeloCMS')) ?></title>
+    <?php if (!empty($metaDesc)): ?>
+    <meta name="description" content="<?= e($metaDesc) ?>">
+    <?php endif ?>
+    <meta property="og:title"       content="<?= e($metaTitle ?? $title ?? setting('site','name','VeloCMS')) ?>">
+    <meta property="og:description" content="<?= e($metaDesc ?? setting('site','tagline','')) ?>">
+    <meta property="og:type"        content="<?= e($ogType ?? 'website') ?>">
+    <?php if (!empty($ogImage)): ?>
+    <meta property="og:image"       content="<?= e($ogImage) ?>">
+    <?php endif ?>
+    <?php if (!empty($canonical)): ?>
+    <link rel="canonical" href="<?= e($canonical) ?>">
+    <?php endif ?>
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+    <?php if (!empty($jsonLd)): ?>
+    <script type="application/ld+json"><?= $jsonLd ?></script>
+    <?php endif ?>
+    <link rel="stylesheet" href="/assets/theme/style.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="container">
+        <div class="site-header__inner">
+            <?php
+            $siteName = setting('site', 'name', 'VeloCMS');
+            $parts    = explode(' ', $siteName, 2);
+            $first    = $parts[0];
+            $rest     = isset($parts[1]) ? ' ' . $parts[1] : '';
+            ?>
+            <a href="/" class="site-logo"><?= e($first) ?><span><?= e($rest) ?></span></a>
+
+            <nav class="site-nav" aria-label="Main navigation">
+                <?php
+                $navItems = nav('main-nav');
+                if (!empty($navItems)):
+                    foreach ($navItems as $item):
+                        $active = rtrim($_SERVER['REQUEST_URI'] ?? '/', '/') === rtrim($item['url'], '/') ? ' active' : '';
+                ?>
+                    <a href="<?= e($item['url']) ?>" class="<?= $active ?>"><?= e($item['label']) ?></a>
+                <?php
+                    endforeach;
+                else:
+                ?>
+                    <a href="/">Home</a>
+                    <a href="/blog">Blog</a>
+                <?php endif ?>
+                <a href="/search" class="nav-search-link" aria-label="Search">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <span>Search</span>
+                </a>
+            </nav>
+        </div>
+    </div>
+</header>
+
+<main class="site-main" id="main">
+    <div class="container">
+        <?= $bodyContent ?? '' ?>
+    </div>
+</main>
+
+<footer class="site-footer">
+    <div class="container">
+        <div class="site-footer__grid">
+            <div>
+                <div class="footer-brand"><?= e(setting('site', 'name', 'VeloCMS')) ?></div>
+                <?php if ($tagline = setting('site', 'tagline', '')): ?>
+                    <p class="footer-tagline"><?= e($tagline) ?></p>
+                <?php endif ?>
+            </div>
+            <div class="footer-col">
+                <h4>Navigation</h4>
+                <?php foreach (nav('main-nav') ?: [['label'=>'Home','url'=>'/'],['label'=>'Blog','url'=>'/blog']] as $item): ?>
+                    <a href="<?= e($item['url']) ?>"><?= e($item['label']) ?></a>
+                <?php endforeach ?>
+            </div>
+            <div class="footer-col">
+                <h4>More</h4>
+                <a href="/search">Search</a>
+                <a href="/sitemap.xml">Sitemap</a>
+            </div>
+        </div>
+        <div class="site-footer__bottom">
+            <span>&copy; <?= date('Y') ?> <?= e(setting('site', 'name', 'VeloCMS')) ?>. All rights reserved.</span>
+            <span>Powered by <a href="https://github.com/Sascha-Zielke/velocms">VeloCMS</a></span>
+        </div>
+    </div>
+</footer>
+
+<?php
+/* Language toggle — position controlled by i18n.toggle_position setting */
+$togglePos = setting('i18n', 'toggle_position', 'bottom-right');
+if ($togglePos !== 'hidden'):
+    $currentLang = lang();
+    $langs       = ['de', 'en']; // extend here when adding more languages
+?>
+<div class="site-lang-toggle site-lang-toggle--<?= e($togglePos) ?>"
+     id="site-lang-toggle" role="navigation" aria-label="Language selection">
+    <?php if (count($langs) <= 2): ?>
+        <?php foreach ($langs as $i => $l): ?>
+        <?php if ($i > 0): ?><span class="site-lang-sep" aria-hidden="true">|</span><?php endif ?>
+        <button type="button"
+                class="site-lang-btn <?= $currentLang === $l ? 'active' : '' ?>"
+                data-lang-toggle data-lang="<?= e($l) ?>"
+                aria-pressed="<?= $currentLang === $l ? 'true' : 'false' ?>"><?= strtoupper($l) ?></button>
+        <?php endforeach ?>
+    <?php else: ?>
+        <select class="site-lang-select" aria-label="Language"
+                onchange="window.vcmsI18n?.setLang(this.value)">
+            <?php foreach ($langs as $l): ?>
+            <option value="<?= e($l) ?>" <?= $currentLang === $l ? 'selected' : '' ?>><?= strtoupper($l) ?></option>
+            <?php endforeach ?>
+        </select>
+    <?php endif ?>
+</div>
+<?php endif ?>
+
+<script>
+window.__VCMS_LANG__ = '<?= e(lang()) ?>';
+window.__VCMS_I18N__ = <?= json_encode(app(\VeloCMS\Core\I18n::class)->all(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+</script>
+<script src="/assets/i18n.js" defer></script>
+</body>
+</html>
+""")
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 12. Append CSS — external link icon + frontend toggle positions ===')
+append('public/assets/admin/style.css', r"""
+/* ── External link icon in topbar (Session 16 fix) ── */
+.vcms-topbar-ext{display:inline-flex;align-items:center;color:#9ca3af;padding:.1rem .2rem;border-radius:4px;transition:.15s;margin-right:.1rem}
+.vcms-topbar-ext:hover{color:#4338ca;background:#f5f3ff}
+""")
+
+# Rebuild the full frontend toggle CSS (replace existing with multi-position support)
+frontend_css = r"""
+/* ── Language toggle v2 — multi-position (Session 16 fix) ── */
+.site-lang-toggle{display:flex;align-items:center;gap:2px;background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:4px 8px;box-shadow:0 2px 8px rgba(0,0,0,.1);z-index:999}
+.site-lang-toggle--bottom-right{position:fixed;bottom:1.25rem;right:1.25rem}
+.site-lang-toggle--top-right{position:fixed;top:1rem;right:1.25rem}
+.site-lang-btn{border:none;background:none;cursor:pointer;font-size:.72rem;font-weight:700;color:#6b7280;padding:3px 9px;border-radius:14px;transition:all .15s;font-family:inherit;line-height:1}
+.site-lang-btn.active{background:#4338ca;color:#fff}
+.site-lang-btn:hover:not(.active){color:#4338ca}
+.site-lang-sep{color:#d1d5db;font-size:.7rem;user-select:none}
+.site-lang-select{border:none;background:none;font-size:.75rem;font-weight:700;color:#374151;cursor:pointer;font-family:inherit;padding:.1rem .3rem}
+"""
+# Check if old CSS block exists and replace, otherwise append
+style_path = os.path.join(BASE, 'public/assets/theme/style.css')
+with open(style_path, encoding='utf-8') as f:
+    css_content = f.read()
+
+old_css_marker = '/* ── Language toggle (Session 16) ── */'
+if old_css_marker in css_content:
+    # Remove old block (up to next comment or end)
+    import re
+    css_content = re.sub(r'/\* ── Language toggle \(Session 16\) ── \*/.*', '', css_content, flags=re.DOTALL)
+    with open(style_path, 'w', encoding='utf-8') as f:
+        f.write(css_content.rstrip() + '\n' + frontend_css)
+    print('  replaced frontend toggle CSS')
+else:
+    with open(style_path, 'a', encoding='utf-8') as f:
+        f.write(frontend_css)
+    print('  appended frontend toggle CSS')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 13. Run migration + composer dump-autoload ===')
+env = {}
+with open(BASE + '/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line: continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+import os as _os
+full_env = dict(_os.environ); full_env.update(env)
+
+r = subprocess.run(['php', 'cli/velocms', 'migrate'], cwd=BASE, capture_output=True, text=True, env=full_env)
+print(r.stdout)
+if r.returncode != 0: print('STDERR:', r.stderr)
+
+r = subprocess.run(['composer', 'dump-autoload', '-o'], cwd=BASE, capture_output=True, text=True)
+print(r.stdout[-300:] if r.stdout else '')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 14. PHP syntax check ===')
+files = [
+    'core/I18n.php', 'core/helpers.php', 'core/bootstrap.php',
+    'modules/i18n/Translator.php',
+    'modules/i18n/models/Translation.php',
+    'modules/i18n/admin/controllers/I18nAdminController.php',
+    'admin/views/i18n/index.php',
+    'admin/views/layout.php',
+    'themes/default/layouts/main.php',
+    'admin/routes.php',
+]
+ok = True
+for f in files:
+    r = subprocess.run(['php', '-l', os.path.join(BASE, f)], capture_output=True, text=True)
+    status = '  ✓' if r.returncode == 0 else '  ✗ ' + r.stderr.strip()
+    print(f'{status}  {f}')
+    if r.returncode != 0: ok = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 15. PHPUnit ===')
+r = subprocess.run(
+    ['python3', '-c',
+     "import subprocess,os; env=dict(os.environ);"
+     "[env.update({k:v}) for line in open('.env') if '=' in line for k,v in [line.strip().split('=',1)]];"
+     "subprocess.run(['./vendor/bin/phpunit'],env=env)"],
+    cwd=BASE, capture_output=True, text=True
+)
+print(r.stdout[-2000:]);
+if r.stderr: print(r.stderr[-300:])
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('\n=== 16. Purge FastCGI cache ===')
+r = subprocess.run(['sudo', 'rm', '-rf', '/var/cache/nginx/velocms/'], capture_output=True, text=True)
+print('Cache purged' if r.returncode == 0 else r.stderr)
+
+print('\n=== Done ===')

@@ -1,0 +1,125 @@
+---
+tags: [veloSolutions, velocms, blog, inhalte]
+status: aktiv
+---
+
+# veloCMS — Blog App
+
+Blog-Beiträge mit Rich Text Editor.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Beitrag erstellen
+- Button: "+ Neuer Beitrag"
+- Form:
+  - **Title:** Überschrift
+  - **Slug:** URL-Slug (auto-generiert)
+  - **Content:** Rich Text Editor
+  - **Meta-Description:** Für SEO (max 160 Zeichen)
+  - **Author:** Benutzer (dropdown)
+  - **Published Date:** Datum (default: heute)
+  - **Status:** Draft / Published
+
+### 2. Rich Text Editor
+Formatierungsoptionen:
+- **Bold, Italic, Underline**
+- **Überschriften:** H1, H2, H3, H4, H5, H6
+- **Listen:** Ungeordnet (•) & Geordnet (1.)
+- **Links:** URL eingeben
+- **Zitate:** Blockquote
+- **Code-Blöcke:** Mit Syntax-Highlighting (optional)
+- **Bilder:** Aus Media-App (Popup zum Wählen)
+
+### 3. Beiträge-Liste
+- Tabelle: Title | Author | Date | Status
+- Filter nach Status (Draft/Published)
+- Sort: Nach Datum (neu zuerst)
+- Edit / Delete Button pro Beitrag
+- Preview Button
+
+### 4. Draft vs. Published
+- **Draft:** Nur im Backend sichtbar, nicht im Frontend
+- **Published:** Im Frontend sichtbar, chronologisch sortiert
+
+### 5. Beitrag löschen
+- Bestätigungs-Dialog
+- Cascade: Kommentare (falls später) auch löschen
+
+---
+
+## 🎨 Editor-Mockup
+
+```
+┌─────────────────────────────────────────┐
+│ Neuer Blog-Beitrag                  [x] │
+├─────────────────────────────────────────┤
+│ Title:    [Mein erster Post        ]   │
+│ Slug:     [mein-erster-post        ]   │
+│ Author:   [User Name           ▼]      │
+│ Date:     [27.05.2026          ]       │
+│ Status:   [Draft ▼] / Published        │
+├─────────────────────────────────────────┤
+│ Content:                                │
+│ [B] [I] [U] [H1▼] [•] [1.] [link] [img]│
+│                                         │
+│ ┌─────────────────────────────────────┐│
+│ │ Das ist der Inhalt des Blog-Posts...││
+│ │ Mit **Fett** und *Kursiv*           ││
+│ │                                     ││
+│ │ • Punkt 1                           ││
+│ │ • Punkt 2                           ││
+│ └─────────────────────────────────────┘│
+│                                         │
+│ Meta-Description (SEO):                 │
+│ [Kurzbeschreibung für Google      ]    │
+│                                         │
+│ [Speichern] [Preview] [Löschen]        │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Datenbank-Struktur
+
+### Tabelle: velocms_blog_posts
+```
+- id
+- title
+- slug (unique)
+- content (HTML/Markdown)
+- meta_description
+- author_id (Link zu Benutzer-App)
+- status (draft, published)
+- published_at (Datum)
+- created_at
+- updated_at
+```
+
+---
+
+## ✅ Success-Kriterien (Phase 1)
+
+- [ ] Neuer Beitrag erstellen funktioniert
+- [ ] Rich Text Editor funktioniert (mindestens Bold, Italic, Links)
+- [ ] Beiträge-Liste wird angezeigt
+- [ ] Filter nach Status funktioniert
+- [ ] Edit funktioniert
+- [ ] Delete funktioniert (mit Bestätigung)
+- [ ] Draft vs. Published funktioniert
+- [ ] Im Frontend: Nur Published-Beiträge sichtbar
+- [ ] Frontend: Chronologisch sortiert (neu zuerst)
+
+---
+
+## 🔗 Abhängigkeiten
+
+- **Benutzer-App:** Author Selection
+- **Media-App:** Bilder einfügen
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]]

@@ -1,0 +1,69 @@
+---
+tags: [übersicht, navigation]
+---
+
+# 🗂️ Vault-Übersicht
+
+Schnelle Navigation durch alle Hauptbereiche deines Vaults.
+
+---
+
+<div style="background: linear-gradient(135deg, rgba(41, 98, 255, 0.1) 0%, rgba(41, 98, 255, 0.05) 100%); border-left: 4px solid #2962ff; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">📋 00 Kontext</strong><br>
+<em>Persönliches Profil, Schreibstil, Zielgruppe — zentrale Referenz für alle Aufgaben</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 193, 7, 0.05) 100%); border-left: 4px solid #ffc107; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">📥 01 Inbox</strong><br>
+<em>Schnelle Gedanken & unverarbeitete Notizen — alles was noch keinen festen Platz hat</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(76, 175, 80, 0.1) 0%, rgba(76, 175, 80, 0.05) 100%); border-left: 4px solid #4caf50; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">🎯 02 Projekte</strong><br>
+<em>Aktive Projekte mit konkretem Ziel und Enddatum — was wird entwickelt?</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(0, 188, 212, 0.1) 0%, rgba(0, 188, 212, 0.05) 100%); border-left: 4px solid #00bcd4; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">📚 03 Bereiche</strong><br>
+<em>Laufende Verantwortungsbereiche ohne Enddatum — Wissen in den jeweiligen Bereichen</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(156, 39, 176, 0.1) 0%, rgba(156, 39, 176, 0.05) 100%); border-left: 4px solid #9c27b0; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">🔍 04 Ressourcen</strong><br>
+<em>Referenzmaterial, Wissen, gesammelte Informationen — sortiert nach Themen</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(255, 152, 0, 0.1) 0%, rgba(255, 152, 0, 0.05) 100%); border-left: 4px solid #ff9800; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">📅 05 Daily Notes</strong><br>
+<em>Tägliches Logbuch — Format: YYYY-MM-DD.md</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(158, 158, 158, 0.1) 0%, rgba(158, 158, 158, 0.05) 100%); border-left: 4px solid #9e9e9e; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">📦 06 Archiv</strong><br>
+<em>Abgeschlossene Projekte und inaktive Bereiche</em>
+</div>
+
+<div style="background: linear-gradient(135deg, rgba(244, 67, 54, 0.1) 0%, rgba(244, 67, 54, 0.05) 100%); border-left: 4px solid #f44336; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">🖼️ 07 Anhänge</strong><br>
+<em>Bilder, PDFs, Medien — alle Assets des Vaults</em>
+</div>
+
+---
+
+## 🚀 Life OS — Aktuelle Projekte & Bereiche
+
+<div style="background: linear-gradient(135deg, rgba(103, 58, 183, 0.1) 0%, rgba(103, 58, 183, 0.05) 100%); border-left: 4px solid #673ab7; border-radius: 8px; padding: 14px 16px; margin: 10px 0;">
+<strong style="font-size: 1.1em;">🏗️ Life OS</strong><br>
+<em>Integriertes System — Geschäftsplattform, Lernplattform, persönliches Dashboard</em><br><br>
+→ [[02 Projekte/Life OS/Life OS|Projekte]]: Was wird gebaut?<br>
+→ [[03 Bereiche/Life OS/Life OS|Bereiche]]: Was wissen wir?
+</div>
+
+---
+
+## 💡 Schnelle Links
+
+- [[00 Kontext/Über mich|👤 Über mich]]
+- [[01 Inbox|📥 Inbox aufräumen]]
+- [[02 Projekte/Life OS/Life OS|🏗️ Life OS Projektübersicht]]
+- [[05 Daily Notes|📅 Heute's Daily Note]]

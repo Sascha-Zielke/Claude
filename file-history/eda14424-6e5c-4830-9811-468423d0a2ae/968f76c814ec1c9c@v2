@@ -1,0 +1,126 @@
+"""
+vcms_toggle_fix.py
+- Adds .vcms-toggle switch CSS to admin stylesheet
+- Replaces plain checkboxes with toggle switches in the Booking settings tab
+"""
+
+BASE = '/var/www/velocms'
+
+# ── 1. Add toggle CSS after .vcms-checkbox rule ──────────────────────────────
+css_path = BASE + '/public/assets/admin/style.css'
+
+with open(css_path) as f:
+    css = f.read()
+
+toggle_css = """
+/* Toggle switch */
+.vcms-toggle { display: inline-flex; align-items: center; gap: .55rem; cursor: pointer; user-select: none; }
+.vcms-toggle input[type="checkbox"] { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.vcms-toggle__track { position: relative; flex-shrink: 0; width: 44px; height: 24px; background: #d1d5db; border-radius: 999px; transition: background .18s; }
+.vcms-toggle input[type="checkbox"]:checked ~ .vcms-toggle__track { background: #2563eb; }
+.vcms-toggle__track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: #fff; border-radius: 50%; transition: transform .18s; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.vcms-toggle input[type="checkbox"]:checked ~ .vcms-toggle__track::after { transform: translateX(20px); }
+.vcms-toggle__label { font-size: .9rem; color: var(--text-primary, #111827); }
+"""
+
+anchor = '.vcms-checkbox { display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }'
+
+if '.vcms-toggle' not in css:
+    css = css.replace(anchor, anchor + toggle_css)
+    with open(css_path, 'w') as f:
+        f.write(css)
+    print('OK  style.css — toggle CSS added')
+else:
+    print('SKIP style.css — toggle CSS already present')
+
+# ── 2. Rewrite boolean fields in settings/index.php booking block ─────────────
+view_path = BASE + '/admin/views/settings/index.php'
+
+with open(view_path) as f:
+    view = f.read()
+
+# Helper macro used 4 times — replace each plain checkbox block with a toggle
+
+# Pattern: hidden + checkbox for each boolean field
+replacements = [
+    # enabled
+    (
+        '<input type="hidden" name="enabled" value="0">\n'
+        '                <input type="checkbox" id="bk-enabled" name="enabled" value="1" <?= $boolCheck(\'enabled\') ?>>',
+        '<label class="vcms-toggle">\n'
+        '                    <input type="hidden" name="enabled" value="0">\n'
+        '                    <input type="checkbox" name="enabled" value="1" <?= $boolCheck(\'enabled\') ?>>\n'
+        '                    <span class="vcms-toggle__track"></span>\n'
+        '                </label>'
+    ),
+    # guest_booking
+    (
+        '<input type="hidden" name="guest_booking" value="0">\n'
+        '                <input type="checkbox" id="bk-guest" name="guest_booking" value="1" <?= $boolCheck(\'guest_booking\') ?>>',
+        '<label class="vcms-toggle">\n'
+        '                    <input type="hidden" name="guest_booking" value="0">\n'
+        '                    <input type="checkbox" name="guest_booking" value="1" <?= $boolCheck(\'guest_booking\') ?>>\n'
+        '                    <span class="vcms-toggle__track"></span>\n'
+        '                </label>'
+    ),
+    # require_confirmation
+    (
+        '<input type="hidden" name="require_confirmation" value="0">\n'
+        '                <input type="checkbox" id="bk-confirm" name="require_confirmation" value="1" <?= $boolCheck(\'require_confirmation\') ?>>',
+        '<label class="vcms-toggle">\n'
+        '                    <input type="hidden" name="require_confirmation" value="0">\n'
+        '                    <input type="checkbox" name="require_confirmation" value="1" <?= $boolCheck(\'require_confirmation\') ?>>\n'
+        '                    <span class="vcms-toggle__track"></span>\n'
+        '                </label>'
+    ),
+    # stripe_enabled (inside the Stripe row)
+    (
+        '<input type="hidden" name="stripe_enabled" value="0">\n'
+        '                <label class="vcms-checkbox" style="display:block;margin-bottom:.5rem">\n'
+        '                    <input type="checkbox" name="stripe_enabled" value="1" <?= $boolCheck(\'stripe_enabled\') ?>>\n'
+        '                    Enable Stripe\n'
+        '                </label>',
+        '<label class="vcms-toggle" style="margin-bottom:.65rem">\n'
+        '                    <input type="hidden" name="stripe_enabled" value="0">\n'
+        '                    <input type="checkbox" name="stripe_enabled" value="1" <?= $boolCheck(\'stripe_enabled\') ?>>\n'
+        '                    <span class="vcms-toggle__track"></span>\n'
+        '                    <span class="vcms-toggle__label">Enable Stripe</span>\n'
+        '                </label>'
+    ),
+    # calendar_sync
+    (
+        '<input type="hidden" name="calendar_sync" value="0">\n'
+        '                <input type="checkbox" id="bk-cal" name="calendar_sync" value="1" <?= $boolCheck(\'calendar_sync\') ?>>',
+        '<label class="vcms-toggle">\n'
+        '                    <input type="hidden" name="calendar_sync" value="0">\n'
+        '                    <input type="checkbox" name="calendar_sync" value="1" <?= $boolCheck(\'calendar_sync\') ?>>\n'
+        '                    <span class="vcms-toggle__track"></span>\n'
+        '                </label>'
+    ),
+]
+
+changed = 0
+for old, new in replacements:
+    if old in view:
+        view = view.replace(old, new)
+        changed += 1
+    else:
+        print(f'  WARN: pattern not found for one replacement')
+
+with open(view_path, 'w') as f:
+    f.write(view)
+print(f'OK  settings/index.php — {changed}/5 boolean fields converted to toggles')
+
+# ── 3. PHP syntax check ───────────────────────────────────────────────────────
+import subprocess
+
+for path in [css_path, view_path]:
+    rel = path.replace(BASE + '/', '')
+    if rel.endswith('.php'):
+        r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+        status = 'OK ' if r.returncode == 0 else 'ERR'
+        print(f'{status} php -l {rel}')
+        if r.returncode != 0:
+            print(r.stderr)
+
+print('\nDone.')

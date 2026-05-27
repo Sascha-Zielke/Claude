@@ -1,0 +1,136 @@
+base = '/var/www/velocms'
+
+# ── RESUME.md ─────────────────────────────────────────────────────────────────
+resume = """# VeloCMS — Resume Prompt
+
+**Read CLAUDE_START.md first if you haven't yet. This file tells you where we are now.**
+
+---
+
+## Current Status
+
+**Date of last update:** 2026-05-19
+**Phase:** Booking Module complete
+
+### What's live
+- https://webzite-newmedia.com — production site, HTTPS, FastCGI cached
+- https://webzite-newmedia.com/admin — admin panel (login: s.zielke84@gmail.com)
+- GitHub: Sascha-Zielke/velocms — CI/CD active (lint → PHPUnit → SSH deploy)
+- PHPUnit: 23 tests, 27 assertions, all passing
+
+### What was last done (Session 9)
+- Built full Booking Module in modules/booking/
+- DB: 4 new tables — booking_resources, booking_packages, booking_products, bookings
+- Models: BookingResource, BookingPackage, BookingProduct, Booking (with availability slot generation)
+- Admin controllers: BookingAdminController (list/detail/status/manual-create/settings), ResourceAdminController (CRUD + inline package/product management)
+- Frontend controller: BookingController (resource list, date picker, availability AJAX, booking form, confirmation)
+- Admin views: booking/index, detail, create, resources/index, resources/form, settings
+- Theme views: booking/index, resource (calendar + AJAX slots), form, confirm
+- Settings: 20 configurable options (enabled, guest booking, payment mode, deposit %, Stripe keys, email templates, business hours, slot duration, timezone, Google Calendar toggle)
+- composer.json: 4 Booking namespaces added, autoload rebuilt
+- admin/routes.php: 15 booking routes added
+- public/index.php: BookingModule registered (before PagesModule catch-all)
+- admin/views/layout.php: "Booking" nav link added
+- CSS: booking styles appended to theme + booking status badge colours in admin CSS
+- Post-build: PHP syntax 0 errors, PHPUnit 23/23
+
+### To activate booking for a site:
+1. Go to Admin → Booking → Booking Settings
+2. Toggle "Enable booking module" ON
+3. Set business hours, notification email, payment mode
+4. Go to Admin → Booking → Resources → create your first resource
+5. Set pricing mode and hourly rate / add packages / add products
+6. Visit /booking on the frontend
+
+---
+
+## Audit Findings (2026-05-19 — RESOLVED)
+
+| Check | Result |
+|---|---|
+| PHP syntax (all files) | PASS — 0 errors |
+| PHPUnit | PASS — 23/23 |
+| Hardcoded credentials | PASS — none |
+| SQL injection | PASS — all prepared statements |
+| XSS | PASS — all output via e() |
+| CSRF | PASS — all POST forms covered |
+
+---
+
+## Next Tasks
+
+### Priority 1 — Users module admin UI
+- [ ] List all users (table with email, role, status, last login)
+- [ ] Create user form (email, name, role, password)
+- [ ] Edit user (name, role, active/inactive toggle)
+- [ ] Deactivate user (soft delete via deleted_at)
+- Note: user:create CLI command already exists; this is the browser UI
+
+### Priority 2 — Password reset via email
+- [ ] Forgot-password form at /admin/login/forgot
+- [ ] Generate time-limited token (stored in DB or signed)
+- [ ] Send reset link via email queue
+- [ ] Reset-password form at /admin/login/reset?token=...
+- [ ] Invalidate token after use
+
+### Priority 3 — API completeness
+- [ ] PUT /api/v1/pages/{id} and DELETE /api/v1/pages/{id}
+- [ ] PUT /api/v1/posts/{id} and DELETE /api/v1/posts/{id}
+
+### Priority 4 — README.md for GitHub repo
+
+### Priority 5 — Booking module enhancements (future)
+- [ ] Stripe payment live integration (scaffolding in place, feature-flagged)
+- [ ] Google Calendar OAuth + sync (toggle in place)
+- [ ] Admin calendar view (month grid of bookings)
+- [ ] iCal export per booking
+- [ ] Recurring availability exceptions (holidays, closed days)
+
+---
+
+## Known Issues / Gotchas
+
+- `Auth::csrfToken()` and `Auth::verifyCsrf()` are **instance methods** — always call via `$auth->...`, never statically
+- Admin routes must be registered **before** modules in `public/index.php` — PagesModule has catch-all `/{slug}`
+- `storage/webzite-newmedia.com/` dirs owned by www-data — PHP-FPM writes there, velocms user cannot
+- Nginx FastCGI cache must be purged manually if a page gets incorrectly cached: `sudo rm -rf /var/cache/nginx/velocms/*`
+- The heredoc `<< 'PYEOF'` pattern via SSH Bash tool eats `$` signs — always SCP Python scripts instead
+- PHPUnit requires CORE_DB_PASS env var — use: `python3 -c "import subprocess,os; env=dict(os.environ); [env.update({k:v}) for line in open('.env') if '=' in line for k,v in [line.strip().split('=',1)]]; subprocess.run(['./vendor/bin/phpunit'], env=env)"`
+- Admin hamburger sidebar: `position:fixed` + `transform:translateX(-100%)`, JS adds `.open` class
+- Booking module is **disabled by default** — enable in Admin → Booking → Settings
+- Booking `/booking/confirmation/{reference}` route is registered BEFORE `/booking/{slug}` to avoid slug conflict
+"""
+
+open(base + '/RESUME.md', 'w').write(resume.lstrip('\n'))
+print('OK  RESUME.md')
+
+# ── SESSION_LOG.md — append Session 9 entry ───────────────────────────────────
+session_log = open(base + '/SESSION_LOG.md').read()
+
+session9 = """
+---
+
+## Session 9 — Booking Module
+**Date:** 2026-05-19
+**Built / Done:**
+- Full Booking Module (`modules/booking/`) — configurable through admin panel, no hardcoded values
+- **Database:** 4 new tables with proper indexes and FKs: `booking_resources`, `booking_packages`, `booking_products`, `bookings`; 20 default settings seeded in settings table under module `booking`
+- **Models:** `BookingResource` (slug uniqueness, soft delete), `BookingPackage`, `BookingProduct`, `Booking` (availability slot generation based on business hours, advance notice, existing bookings)
+- **Admin controllers:** `BookingAdminController` (booking list with filters + status chips, detail view, status update + admin notes, manual booking creation with auto-pricing, settings page), `ResourceAdminController` (full CRUD + inline package management + inline product management)
+- **Frontend controller:** `BookingController` — resource list → resource detail (calendar + AJAX slot picker) → booking form → POST → confirmation; availability JSON endpoint at `/booking/{slug}/availability?date=`; emails queued via EmailQueue on submit
+- **Admin views (6 files):** `booking/index.php`, `booking/detail.php`, `booking/create.php`, `booking/resources/index.php`, `booking/resources/form.php` (with collapsible inline Add Package / Add Product sections), `booking/settings.php` (general, business hours, payment, email templates, integrations)
+- **Theme views (4 files):** `booking/index.php` (resource cards), `booking/resource.php` (hero + packages + products + vanilla-JS calendar + AJAX slot buttons), `booking/form.php` (customer details + booking summary sidebar), `booking/confirm.php` (confirmation card)
+- **Booking CSS:** ~150 lines appended to `themes/default/assets/style.css`; booking status badge colours added to admin CSS
+- **Settings configurable:** enabled toggle, guest booking, require manual confirmation, booking types (hourly/package/product), slot duration, timezone, business hours (open/close time + day checkboxes), payment mode (none/deposit/full Stripe), deposit %, Stripe keys (scaffolded), notification email, customer + owner email templates with placeholders, Google Calendar sync toggle
+- **Wiring:** `composer.json` 4 namespaces + `dump-autoload`, 15 routes in `admin/routes.php`, `BookingModule` in `public/index.php`, "Booking" nav link in `admin/views/layout.php`
+- **Post-build audit:** PHP syntax 0 errors (all files), PHPUnit 23/23
+"""
+
+if 'Session 9' not in session_log:
+    session_log = session_log.rstrip() + '\n' + session9.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(session_log)
+    print('OK  SESSION_LOG.md (Session 9 appended)')
+else:
+    print('OK  SESSION_LOG.md (Session 9 already present)')
+
+print('\nDone.')

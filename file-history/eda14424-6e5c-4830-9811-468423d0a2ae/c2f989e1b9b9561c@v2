@@ -1,0 +1,249 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/audit/module.json ─────────────────────────────────────────────────
+files['modules/audit/module.json'] = """{
+    "name": "audit",
+    "label": "Audit Log",
+    "version": "1.0.0",
+    "description": "Records admin write actions for accountability.",
+    "author": "VeloCMS"
+}
+"""
+
+# ── modules/audit/models/AuditLog.php ─────────────────────────────────────────
+files['modules/audit/models/AuditLog.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Audit\Models;
+
+class AuditLog
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public static function write(
+        \PDO    $pdo,
+        ?int    $userId,
+        string  $action,
+        ?string $entityType = null,
+        ?int    $entityId   = null,
+        array   $meta       = [],
+        string  $ip         = ''
+    ): void {
+        $pdo->prepare(
+            'INSERT INTO audit_log (user_id, action, entity_type, entity_id, meta_json, ip)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $userId,
+            $action,
+            $entityType,
+            $entityId,
+            $meta ? json_encode($meta) : null,
+            $ip ?: ($_SERVER['REMOTE_ADDR'] ?? ''),
+        ]);
+    }
+
+    public function paginate(
+        int   $page    = 1,
+        int   $perPage = 50,
+        array $filters = []
+    ): array {
+        $where = ['1=1'];
+        $bind  = [];
+
+        if (!empty($filters['action'])) {
+            $where[] = 'action LIKE ?';
+            $bind[]  = '%' . $filters['action'] . '%';
+        }
+        if (!empty($filters['user_id'])) {
+            $where[] = 'user_id = ?';
+            $bind[]  = (int) $filters['user_id'];
+        }
+
+        $whereStr = implode(' AND ', $where);
+
+        $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE {$whereStr}");
+        $countStmt->execute($bind);
+        $total = (int) $countStmt->fetchColumn();
+
+        $offset   = ($page - 1) * $perPage;
+        $dataStmt = $this->pdo->prepare(
+            "SELECT a.*, u.name AS user_name
+             FROM audit_log a
+             LEFT JOIN users u ON u.id = a.user_id
+             WHERE {$whereStr}
+             ORDER BY a.created_at DESC
+             LIMIT ? OFFSET ?"
+        );
+        $dataStmt->execute(array_merge($bind, [$perPage, $offset]));
+
+        return [
+            'items' => $dataStmt->fetchAll(),
+            'total' => $total,
+            'pages' => (int) ceil($total / $perPage),
+            'page'  => $page,
+        ];
+    }
+
+    public static function prune(\PDO $pdo, int $days = 90): int
+    {
+        $stmt = $pdo->prepare(
+            'DELETE FROM audit_log WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)'
+        );
+        $stmt->execute([$days]);
+        return $stmt->rowCount();
+    }
+}
+"""
+
+# ── modules/audit/admin/controllers/AuditAdminController.php ─────────────────
+files['modules/audit/admin/controllers/AuditAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Audit\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Audit\Models\AuditLog;
+
+class AuditAdminController extends BaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        $auth->requireLogin();
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new AuditLog($pdo);
+
+        $page    = max(1, (int) $request->get('p', 1));
+        $filters = [
+            'action'  => $request->get('action', ''),
+            'user_id' => $request->get('user_id', ''),
+        ];
+
+        $data = $model->paginate($page, 50, $filters);
+
+        return $this->layout('audit/index.php', [
+            'user'    => $auth->user(),
+            'page'    => 'audit',
+            'items'   => $data['items'],
+            'total'   => $data['total'],
+            'pages'   => $data['pages'],
+            'curPage' => $data['page'],
+            'filters' => $filters,
+        ]);
+    }
+}
+"""
+
+# ── admin/views/audit/index.php ───────────────────────────────────────────────
+files['admin/views/audit/index.php'] = r"""<?php
+$actionLabels = [
+    'page.create' => 'Page created', 'page.update' => 'Page updated', 'page.delete' => 'Page deleted',
+    'post.create' => 'Post created', 'post.update' => 'Post updated', 'post.delete' => 'Post deleted',
+    'form.create' => 'Form created', 'form.update' => 'Form updated', 'form.delete' => 'Form deleted',
+    'form.submission' => 'Form submitted',
+    'api_key.create' => 'API key created', 'api_key.revoke' => 'API key revoked',
+    'settings.update' => 'Settings updated',
+    'user.create' => 'User created', 'user.login' => 'User login', 'user.logout' => 'User logout',
+];
+?>
+<div class="vcms-page-header">
+    <h2>Audit Log</h2>
+    <span class="vcms-badge"><?= number_format($total) ?> entries</span>
+</div>
+
+<form method="get" class="vcms-filter-bar">
+    <input type="text" name="action" value="<?= e($filters['action']) ?>"
+           placeholder="Filter by action..." style="width:220px">
+    <button type="submit" class="vcms-btn vcms-btn--sm">Filter</button>
+    <?php if ($filters['action'] || $filters['user_id']): ?>
+        <a href="/admin/audit" class="vcms-btn vcms-btn--sm vcms-btn--ghost">Clear</a>
+    <?php endif ?>
+</form>
+
+<div class="vcms-card" style="padding:0">
+    <table class="vcms-table">
+        <thead>
+            <tr>
+                <th>When</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Entity</th>
+                <th>IP</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($items)): ?>
+            <tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:2rem">No log entries.</td></tr>
+        <?php else: ?>
+            <?php foreach ($items as $item): ?>
+            <tr>
+                <td style="white-space:nowrap;color:#64748b;font-size:.8rem">
+                    <?= e(date('d M Y H:i', strtotime($item['created_at']))) ?>
+                </td>
+                <td><?= e($item['user_name'] ?? '—') ?></td>
+                <td>
+                    <span class="vcms-badge vcms-badge--action">
+                        <?= e($actionLabels[$item['action']] ?? $item['action']) ?>
+                    </span>
+                </td>
+                <td>
+                    <?php if ($item['entity_type']): ?>
+                        <span style="color:#64748b;font-size:.8rem">
+                            <?= e($item['entity_type']) ?> #<?= e($item['entity_id']) ?>
+                        </span>
+                    <?php else: ?>—<?php endif ?>
+                </td>
+                <td style="color:#94a3b8;font-size:.8rem"><?= e($item['ip']) ?></td>
+            </tr>
+            <?php endforeach ?>
+        <?php endif ?>
+        </tbody>
+    </table>
+</div>
+
+<?php if ($pages > 1): ?>
+<div class="vcms-pagination">
+    <?php for ($i = 1; $i <= $pages; $i++): ?>
+        <a href="?p=<?= $i ?>&action=<?= e($filters['action']) ?>"
+           class="vcms-page-link <?= $i === $curPage ? 'active' : '' ?>"><?= $i ?></a>
+    <?php endfor ?>
+</div>
+<?php endif ?>
+"""
+
+# Write all module files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# Add audit + filter-bar CSS
+admin_css_path = base + '/public/assets/admin/style.css'
+admin_css = open(admin_css_path).read()
+
+extra_css = """
+/* Audit / badges */
+.vcms-badge              { display:inline-block; padding:.2em .55em; font-size:.75rem; border-radius:9999px; background:#f1f5f9; color:#475569; }
+.vcms-badge--action      { background:#dbeafe; color:#1e40af; }
+.vcms-filter-bar         { display:flex; gap:.5rem; align-items:center; margin-bottom:1rem; }
+.vcms-filter-bar input   { padding:.4rem .75rem; border:1px solid #cbd5e1; border-radius:6px; font-size:.875rem; }
+.vcms-pagination         { display:flex; gap:.25rem; margin-top:1rem; }
+.vcms-page-link          { padding:.3rem .6rem; border:1px solid #cbd5e1; border-radius:4px; text-decoration:none; color:#475569; font-size:.8rem; }
+.vcms-page-link.active   { background:#2563eb; color:#fff; border-color:#2563eb; }
+.vcms-page-link:hover:not(.active) { background:#f1f5f9; }
+"""
+
+if '.vcms-badge' not in admin_css:
+    with open(admin_css_path, 'a') as f:
+        f.write(extra_css)
+    print('OK  public/assets/admin/style.css (audit CSS added)')
+else:
+    print('OK  public/assets/admin/style.css (CSS already present)')
+
+print('\nPhase 5c done — audit module written.')

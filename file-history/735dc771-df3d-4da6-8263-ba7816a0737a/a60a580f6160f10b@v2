@@ -1,0 +1,65 @@
+require('dotenv').config();
+const chokidar = require('chokidar');
+const SftpClient = require('ssh2-sftp-client');
+const path = require('path');
+
+const {
+  SFTP_HOST,
+  SFTP_USER,
+  SFTP_PASS,
+  SFTP_PORT = '22',
+  SFTP_REMOTE_PATH,
+} = process.env;
+
+if (!SFTP_HOST || !SFTP_USER || !SFTP_PASS || !SFTP_REMOTE_PATH) {
+  console.error('Missing required SFTP_* variables in .env');
+  process.exit(1);
+}
+
+const LOCAL_ROOT = __dirname;
+
+const IGNORED = [
+  /(^|[/\\])\../, // dot-files / dot-folders
+  /node_modules/,
+  /watch\.js$/,
+];
+
+async function upload(localPath) {
+  const relative = path.relative(LOCAL_ROOT, localPath).replace(/\\/g, '/');
+  const remotePath = `${SFTP_REMOTE_PATH}/${relative}`;
+
+  const sftp = new SftpClient();
+  try {
+    await sftp.connect({
+      host: SFTP_HOST,
+      port: parseInt(SFTP_PORT, 10),
+      username: SFTP_USER,
+      password: SFTP_PASS,
+    });
+
+    const remoteDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
+    await sftp.mkdir(remoteDir, true);
+    await sftp.put(localPath, remotePath);
+
+    console.log(`[upload] ${relative} -> ${remotePath}`);
+  } catch (err) {
+    console.error(`[error] ${relative}: ${err.message}`);
+  } finally {
+    await sftp.end();
+  }
+}
+
+const watcher = chokidar.watch(LOCAL_ROOT, {
+  ignored: IGNORED,
+  persistent: true,
+  ignoreInitial: true,
+  awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
+});
+
+watcher
+  .on('add', upload)
+  .on('change', upload)
+  .on('error', (err) => console.error('[watcher error]', err));
+
+console.log(`Watching ${LOCAL_ROOT} for changes...`);
+console.log(`Uploading to ${SFTP_HOST}:${SFTP_REMOTE_PATH}`);

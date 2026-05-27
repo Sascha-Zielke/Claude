@@ -1,0 +1,29 @@
+import re
+
+with open('/var/www/velocms/RESUME.md', 'r') as f:
+    c = f.read()
+
+c = c.replace('**Date of last update:** 2026-05-19', '**Date of last update:** 2026-05-20')
+
+c = c.replace(
+    'i18n v2 complete — all views wrapped in t() (Session 16)',
+    'i18n v2 + translation toggle fixed (Session 16)'
+)
+
+c = c.replace(
+    '### Translation system — done (Session 16) ✓\n- All views wrapped in t(); Admin → Translations shows auto-registered keys\n- To enable auto-translate: set DeepL API key in Admin → Translations → API key field\n\n',
+    """### Translation system — fully working ✓ (Session 16)
+- **How it works:** Toggle sets vcms_lang cookie + page reload (Option B)
+  Page re-renders server-side in the selected language via t()
+- **To populate EN:** Admin → Translations → Translate all pending (requires API key)
+- All 45 view files wrapped in t() — every UI string goes through translation system
+- Monitoring table removed; replaced with 3-number status counter (registered/translated/pending)
+- JS toggle was the root cause: old applyLang() DOM-swap only worked on [data-i18n] nav items
+
+"""
+)
+
+with open('/var/www/velocms/RESUME.md', 'w') as f:
+    f.write(c)
+
+print('RESUME.md updated')

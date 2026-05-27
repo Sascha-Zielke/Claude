@@ -1,0 +1,67 @@
+Read /var/www/velocms/RESUME.md and then implement 
+the following:
+
+TRANSLATION SYSTEM — Complete rebuild using 
+proven two-layer architecture:
+
+LAYER 1 — UI Strings (static interface text):
+- Remove the existing translation DB table and 
+  t() function completely
+- Replace with simple PHP array files:
+  /var/www/velocms/lang/de.php (default)
+  /var/www/velocms/lang/en.php
+- Each file returns an array: 
+  ['nav.home' => 'Startseite'] etc.
+- New t('key') function: reads the correct lang 
+  file based on vcms_lang cookie, falls back to 
+  DE if key not found in EN
+- Language toggle: sets cookie + location.reload()
+- All existing t() keys migrate to these files
+- Admin UI: Admin → Translations shows two columns 
+  (DE | EN) as simple editable text fields, 
+  auto-saves on blur, EN field triggers DeepL/
+  Anthropic API translation automatically when 
+  left empty
+
+LAYER 2 — Content translations (pages, blog, 
+booking):
+- Add _en columns to content tables:
+  pages: title_en, content_en
+  posts: title_en, excerpt_en, content_en  
+  booking_resources: name_en, description_en
+- When DE content is saved, automatically trigger 
+  translation via DeepL API (primary) or 
+  Anthropic API (fallback) and save to _en column
+- Frontend reads correct column based on 
+  vcms_lang cookie
+- Manual EN override: if admin edits _en field 
+  directly, set manual_override flag, never 
+  auto-overwrite
+
+PROVIDER SETTINGS:
+- Fix: only one provider active at a time 
+  (DeepL OR Anthropic, not both)
+- DeepL is primary (cheaper, faster for 
+  pure translation)
+- Anthropic is fallback
+
+CLEANUP (run as part of this task):
+- Remove ALL old translation system code: 
+  old DB migrations, old t() function, old 
+  translation controller, old translation views, 
+  old AJAX endpoints
+- Remove translations DB table
+- Verify no traces remain
+
+AFTER IMPLEMENTATION:
+1. Run full PHPUnit test suite
+2. Full codebase audit:
+   - PHP syntax check all files
+   - No hardcoded strings outside lang files
+   - No traces of old translation system
+   - No temp files
+3. Update VELOCMS_MASTERPLAN.md — mark 
+   translation system architecture decision
+4. Update RESUME.md and SESSION_LOG.md
+5. Push to GitHub
+6. Tell me what to verify

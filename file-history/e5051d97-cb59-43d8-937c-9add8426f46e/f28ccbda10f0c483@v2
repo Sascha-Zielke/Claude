@@ -1,0 +1,131 @@
+---
+tags: [veloSolutions, velocms, benutzer, user-management]
+status: aktiv
+---
+
+# veloCMS — Benutzer App
+
+Benutzerverwaltung und Rollen-Vergabe.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Benutzer erstellen
+- Button: "+ Neuer Benutzer"
+- Form:
+  - **Username:** (eindeutig)
+  - **Email:** (eindeutig)
+  - **Passwort:** (generiert oder manuell eingegeben)
+  - **Rolle:** Dropdown (Admin, Editor, Author, Viewer)
+  - **Status:** Aktiv / Inaktiv
+
+### 2. Benutzer-Liste
+- Tabelle: Username | Email | Rolle | Last Login | Status
+- Edit / Delete Button pro Benutzer
+- Filter nach Rolle
+
+### 3. Rollen & Permissions
+
+| Rolle | Permissions |
+|-------|-------------|
+| **Admin** | Alles (alle Apps) |
+| **Editor** | Visual Editor, Blog, Navigation, Übersetzungen |
+| **Author** | Nur Blog schreiben (keine Navigation, kein Visual Editor) |
+| **Viewer** | Nur lesen (kein Schreiben) |
+
+### 4. Passwort-Management
+- Neuen Benutzer: Passwort generieren oder manuell eingeben
+- Benutzer editieren: Passwort optional ändern
+- "Passwort zurücksetzen" Link (schickt Email mit Reset-Link)
+
+### 5. Last Login Tracking
+- Zeigt wann Benutzer zuletzt da war
+- Hilft zu sehen, welche User aktiv sind
+
+### 6. Benutzer löschen
+- Bestätigungs-Dialog
+- Frage: "Beiträge des Benutzers löschen oder übernehmen?"
+
+---
+
+## 🎨 UI/UX
+
+```
+┌─────────────────────────────────────────┐
+│ Benutzer                      [+ Neu]   │
+├─────────────────────────────────────────┤
+│ Filter: [Alle Rollen ▼]                │
+├─────────────────────────────────────────┤
+│ Username    | Email       | Rolle   |..│
+│ ─────────────────────────────────────── │
+│ john        | john@ex.com | Admin   |..│
+│ jane        | jane@ex.com | Editor  |..│
+│ bob         | bob@ex.com  | Author  |..│
+│ alice       | alice@ex.com| Viewer  |..│
+│             |             |         |  │
+│ (Click auf Zeile oder Edit-Button)     │
+│                                         │
+│ Neuer Benutzer:                         │
+│ Username:  [              ]             │
+│ Email:     [              ]             │
+│ Passwort:  [Generate] oder [manuell]    │
+│ Rolle:     [Admin ▼]                    │
+│ Status:    [○ Aktiv ● Inaktiv]          │
+│                                         │
+│ [Speichern] [Abbrechen]                │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 📊 Datenbank-Struktur
+
+### Tabelle: velocms_users
+```
+- id
+- username (unique)
+- email (unique)
+- password (hashed)
+- role (admin, editor, author, viewer)
+- status (active, inactive)
+- last_login_at
+- created_at
+- updated_at
+```
+
+### Tabelle: velocms_roles (Reference)
+```
+- id
+- name (admin, editor, author, viewer)
+- permissions (JSON oder separate Tabelle)
+```
+
+---
+
+## 🔒 Sicherheit
+
+- Passwörter: Mit bcrypt oder Argon2 hashen (NICHT plaintext!)
+- CSRF-Protection auf Formularen
+- Rate-Limiting auf Login (Max 5 Versuche)
+- Password-Reset: Token (gültig 24h)
+
+---
+
+## ✅ Success-Kriterien (Phase 1)
+
+- [ ] Benutzer erstellen funktioniert
+- [ ] Benutzer-Liste wird angezeigt
+- [ ] Edit funktioniert
+- [ ] Delete funktioniert (mit Bestätigung)
+- [ ] Rollen-Filterung funktioniert
+- [ ] Passwort-Hashing funktioniert
+- [ ] Login mit Benutzerdaten funktioniert
+- [ ] Last-Login wird tracked
+- [ ] Permissions werden respektiert (z.B. Author sieht nur Blog)
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]]

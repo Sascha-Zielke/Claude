@@ -1,0 +1,45 @@
+base = '/var/www/velocms'
+
+resume = open(base + '/RESUME.md').read()
+
+old_last_done = "### What was last done (Session 12)"
+new_last_done = "### What was last done (Session 13)"
+
+old_session12_detail = """- **Daily booking date range**: Full daily booking flow — admin create form + frontend resource page both show check-in/check-out date pickers when Daily type is active; automatic nights count + total price preview; minimum stay per resource enforced; `end_date` and `nights` stored in bookings table
+- **DB**: `bookings` table — `end_date` DATE NULL, `nights` SMALLINT NULL added; `pricing_type` ENUM updated to include 'daily'; `booking_resources` — `min_stay_nights` TINYINT (default 1) added
+- **Timezone dropdown**: Settings → Booking timezone field replaced with PHP-generated `<select>`; Europe/Berlin listed first, then all Europe/* alphabetically, then rest; each option shows GMT offset
+- **Slug field**: Resource create/edit form slug field now has helper text ("auto-generated from name, used in /booking/{slug}"); name input auto-generates slug as admin types; manual edit locks the slug"""
+
+new_session13_detail = """- **Daily/Hourly mutually exclusive**: Enabling Daily automatically disables Hourly (and hides slot-row); enabling Hourly automatically disables Daily (and hides daily-row); amber warning notice shown between the two toggles; PHP server-side enforcement added (Daily takes precedence if both somehow set)
+- **Resource form cleanup**: Min duration, Max duration, Advance booking hours, Sort order fields removed from the UI (DB columns kept; fields will return in industry-specific templates)"""
+
+if old_last_done in resume:
+    resume = resume.replace(old_last_done, new_last_done)
+    resume = resume.replace(old_session12_detail, new_session13_detail)
+    open(base + '/RESUME.md', 'w').write(resume)
+    print('OK  RESUME.md')
+else:
+    print('SKIP RESUME.md — pattern not found')
+
+log = open(base + '/SESSION_LOG.md').read()
+session13 = """
+---
+
+## Session 13 — Daily/Hourly mutual exclusion, resource form cleanup
+**Date:** 2026-05-19
+**Built / Done:**
+- **autosave.js**: `initBookingTypeToggles()` updated — enabling Daily unchecks Hourly+hides slot-row; enabling Hourly unchecks Daily+hides daily-row
+- **settings/index.php**: PHP enforcement at top of booking tab (`if ($hasDaily && $hasHourly) { $hasHourly = false; }`); amber `<p>` notice inserted between Hourly and Daily toggles ("Daily and Hourly booking cannot be active at the same time.")
+- **resources/form.php**: `vcms-form-row` containing Min duration, Max duration, Advance booking hours, Sort order removed from HTML (DB columns untouched)
+- PHPUnit: 23/23
+- Commit: 56dac4e
+"""
+
+if 'Session 13' not in log:
+    log = log.rstrip() + '\n' + session13.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(log)
+    print('OK  SESSION_LOG.md (Session 13 appended)')
+else:
+    print('SKIP SESSION_LOG.md')
+
+print('\nDone.')

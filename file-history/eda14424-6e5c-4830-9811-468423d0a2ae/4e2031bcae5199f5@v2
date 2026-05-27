@@ -1,0 +1,369 @@
+import os
+import subprocess
+import json
+import re
+from pathlib import Path
+
+base = Path('/var/www/velocms')
+issues = []   # list of (severity, file, description)
+fixes  = []   # list of applied fixes
+
+def warn(severity, location, msg):
+    issues.append((severity, location, msg))
+    print(f'  [{severity}] {location}: {msg}')
+
+def fixed(location, msg):
+    fixes.append((location, msg))
+    print(f'  [FIXED] {location}: {msg}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=' * 60)
+print('STEP 1 — PHP SYNTAX CHECK')
+print('=' * 60)
+
+php_files = list(base.rglob('*.php'))
+php_files = [f for f in php_files
+             if '.git' not in str(f)
+             and 'vendor' not in str(f)
+             and 'node_modules' not in str(f)]
+
+syntax_errors = 0
+for php_file in php_files:
+    r = subprocess.run(['php', '-l', str(php_file)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        warn('ERROR', str(php_file.relative_to(base)), 'PHP syntax error')
+        print('    ', r.stdout.strip())
+        syntax_errors += 1
+
+if syntax_errors == 0:
+    print(f'  OK — {len(php_files)} files checked, no syntax errors')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print('=' * 60)
+print('STEP 2 — SECURITY AUDIT')
+print('=' * 60)
+
+# 2a. Hardcoded secrets / passwords
+print('\n[2a] Hardcoded credentials...')
+secret_patterns = [
+    (r"password\s*=\s*['\"][^'\"]{4,}['\"]", 'hardcoded password'),
+    (r"'pass'\s*=>\s*['\"][^'\"]{4,}['\"]", 'hardcoded pass key'),
+    (r"DB_PASS\s*=\s*['\"][^'\"]{4,}['\"]", 'hardcoded DB_PASS'),
+    (r"xXP41rzY9n0haVsQILOX6F8BvREJ", 'DB password in source'),
+]
+secret_clean = True
+for php_file in php_files:
+    content = php_file.read_text(errors='replace')
+    for pattern, label in secret_patterns:
+        if re.search(pattern, content, re.IGNORECASE):
+            # Allow in .env.example and docs
+            rel = str(php_file.relative_to(base))
+            if 'example' in rel.lower() or 'test' in rel.lower():
+                continue
+            warn('HIGH', rel, label)
+            secret_clean = False
+if secret_clean:
+    print('  OK — no hardcoded credentials found')
+
+# 2b. Direct superglobal access (should use Request class)
+print('\n[2b] Direct superglobal access...')
+superglobal_ok = True
+skip_files = ['core/Request.php', 'core/Auth.php', 'core/bootstrap.php',
+              'core/helpers.php', 'cli/']
+for php_file in php_files:
+    rel = str(php_file.relative_to(base))
+    if any(skip in rel for skip in skip_files):
+        continue
+    content = php_file.read_text(errors='replace')
+    # Allow $_SESSION and $_ENV — only flag $_GET/$_POST/$_REQUEST/$_FILES
+    for sg in [r'\$_GET\b', r'\$_POST\b', r'\$_REQUEST\b']:
+        if re.search(sg, content):
+            warn('MED', rel, f'direct {sg.replace(chr(92), "").replace(r"b", "")} access')
+            superglobal_ok = False
+if superglobal_ok:
+    print('  OK — no forbidden superglobal access found')
+
+# 2c. Raw SQL string interpolation
+print('\n[2c] SQL injection risk (string interpolation in queries)...')
+sql_ok = True
+sql_pattern = re.compile(
+    r'(query|prepare|exec)\s*\(\s*["\'].*\$[a-zA-Z]',
+    re.IGNORECASE
+)
+for php_file in php_files:
+    rel = str(php_file.relative_to(base))
+    if 'vendor' in rel or 'test' in rel.lower() or 'Migrat' in rel:
+        continue
+    content = php_file.read_text(errors='replace')
+    for line_no, line in enumerate(content.splitlines(), 1):
+        if sql_pattern.search(line):
+            warn('HIGH', f'{rel}:{line_no}', f'possible SQL interpolation: {line.strip()[:80]}')
+            sql_ok = False
+if sql_ok:
+    print('  OK — no SQL string interpolation found')
+
+# 2d. Output without e() — look for echo with $var that isn't wrapped
+print('\n[2d] Unescaped output (echo $var without e())...')
+# Look for <?= $var ?> without e() — in view files only
+view_files = [f for f in php_files
+              if '/views/' in str(f) or '/layouts/' in str(f)]
+echo_ok = True
+raw_echo = re.compile(r'<\?=\s*\$(?!_)[a-zA-Z_]+\s*\?>')
+for view_file in view_files:
+    rel = str(view_file.relative_to(base))
+    content = view_file.read_text(errors='replace')
+    for line_no, line in enumerate(content.splitlines(), 1):
+        if raw_echo.search(line):
+            # Allow $content (already-rendered HTML), $csrf (safe token), $bodyContent
+            m = raw_echo.search(line)
+            var_name = m.group(0).strip('<? ').strip('?>').strip().lstrip('$')
+            if var_name in ('content', 'csrf', 'bodyContent', 'html', 'output',
+                            'metaTitle', 'metaDesc', 'ogTitle', 'ogDesc',
+                            'ogImage', 'canonical', 'structuredData',
+                            'sitemapXml', 'robotsTxt', 'breadcrumb',
+                            'jsonLd', 'editorJs', 'adminJs'):
+                continue
+            warn('MED', f'{rel}:{line_no}',
+                 f'unescaped echo: {line.strip()[:80]}')
+            echo_ok = False
+if echo_ok:
+    print('  OK — no obviously unescaped output found')
+
+# 2e. CSRF on POST forms — check admin views
+print('\n[2e] CSRF token on POST forms...')
+csrf_ok = True
+for view_file in view_files:
+    rel = str(view_file.relative_to(base))
+    if '/admin/' not in rel:
+        continue
+    content = view_file.read_text(errors='replace')
+    # Find forms with method="POST" that lack a _csrf input
+    forms = re.findall(
+        r'<form[^>]*method=["\']POST["\'][^>]*>.*?</form>',
+        content, re.IGNORECASE | re.DOTALL
+    )
+    for form in forms:
+        if '_csrf' not in form and 'csrfToken' not in form:
+            warn('HIGH', rel, 'POST form missing CSRF token')
+            csrf_ok = False
+if csrf_ok:
+    print('  OK — all found POST forms include _csrf')
+
+# 2f. Check for debug mode / display_errors in production config
+print('\n[2f] Debug/display_errors flags...')
+debug_ok = True
+for php_file in php_files:
+    rel = str(php_file.relative_to(base))
+    if 'vendor' in rel or 'test' in rel.lower():
+        continue
+    content = php_file.read_text(errors='replace')
+    if 'display_errors' in content and "'On'" in content:
+        warn('HIGH', rel, "display_errors = 'On' in production code")
+        debug_ok = False
+    if re.search(r"APP_DEBUG\s*=\s*true", content, re.IGNORECASE):
+        if 'example' not in rel.lower():
+            warn('MED', rel, 'APP_DEBUG=true found outside example files')
+            debug_ok = False
+if debug_ok:
+    print('  OK — no debug flags in production code')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print('=' * 60)
+print('STEP 3 — DATABASE AUDIT')
+print('=' * 60)
+
+env = {}
+with open('/var/www/velocms/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+
+db_host = env.get('CORE_DB_HOST', '127.0.0.1')
+db_name = env.get('CORE_DB_NAME', 'velocms_core')
+db_user = env.get('CORE_DB_USER', 'velocms')
+db_pass = env.get('CORE_DB_PASS', '')
+
+def mysql_query(sql):
+    r = subprocess.run(
+        ['mysql', '-h', db_host, '-u', db_user, f'-p{db_pass}',
+         db_name, '-N', '-B', '-e', sql],
+        capture_output=True, text=True
+    )
+    return r.stdout.strip()
+
+print('\n[3a] Tables and row counts...')
+tables_out = mysql_query("SELECT TABLE_NAME, TABLE_ROWS FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME;")
+for row in tables_out.splitlines():
+    print(f'  {row}')
+
+print('\n[3b] Missing indexes on foreign key columns...')
+fk_sql = """
+SELECT
+  kcu.TABLE_NAME,
+  kcu.COLUMN_NAME,
+  kcu.REFERENCED_TABLE_NAME
+FROM information_schema.KEY_COLUMN_USAGE kcu
+LEFT JOIN information_schema.STATISTICS s
+  ON s.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+  AND s.TABLE_NAME  = kcu.TABLE_NAME
+  AND s.COLUMN_NAME = kcu.COLUMN_NAME
+WHERE kcu.TABLE_SCHEMA = DATABASE()
+  AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
+  AND s.INDEX_NAME IS NULL;
+"""
+missing_idx = mysql_query(fk_sql)
+if missing_idx.strip():
+    for row in missing_idx.splitlines():
+        warn('MED', 'DB', f'FK column with no index: {row}')
+else:
+    print('  OK — all FK columns are indexed')
+
+print('\n[3c] Tables missing updated_at column...')
+no_ts_sql = """
+SELECT TABLE_NAME FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME NOT IN (
+    SELECT TABLE_NAME FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'updated_at'
+  )
+  AND TABLE_NAME NOT IN ('migrations','sessions','audit_log',
+    'post_categories','post_tags','search_index','page_revisions','menu_items');
+"""
+no_ts = mysql_query(no_ts_sql)
+if no_ts.strip():
+    for t in no_ts.splitlines():
+        warn('LOW', 'DB', f'table {t} has no updated_at column')
+else:
+    print('  OK — all expected tables have updated_at')
+
+print('\n[3d] Checking email_queue schema...')
+eq_cols = mysql_query("DESCRIBE email_queue;")
+print('  email_queue columns:')
+for row in eq_cols.splitlines():
+    print(f'    {row}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print('=' * 60)
+print('STEP 4 — RUN PHPUNIT')
+print('=' * 60)
+
+env_run = dict(os.environ)
+env_run['CORE_DB_PASS'] = db_pass
+
+result = subprocess.run(
+    ['./vendor/bin/phpunit', '--testdox'],
+    cwd=str(base), capture_output=True, text=True, env=env_run
+)
+print(result.stdout[-3000:] if len(result.stdout) > 3000 else result.stdout)
+if result.returncode != 0:
+    warn('ERROR', 'PHPUnit', 'test suite failed')
+    if result.stderr:
+        print(result.stderr[-500:])
+else:
+    print('  PHPUnit: all tests passed')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print('=' * 60)
+print('STEP 5 — CLEANUP')
+print('=' * 60)
+
+# 5a. Temp / scratch files
+print('\n[5a] Temp files in public/...')
+for f in (base / 'public').iterdir():
+    if f.name.endswith('.php') and f.name != 'index.php':
+        print(f'  Removing stray file: {f.name}')
+        f.unlink()
+        fixed(f'public/{f.name}', 'removed stray PHP file from public/')
+
+# 5b. /tmp scripts
+print('\n[5b] Temp scripts in /tmp...')
+import glob
+for tmp in glob.glob('/tmp/vcms_*.py') + glob.glob('/tmp/velocms_*.py') + \
+           glob.glob('/tmp/velocms_*.php') + glob.glob('/tmp/profile_fix.php'):
+    os.unlink(tmp)
+    print(f'  Removed: {tmp}')
+
+# 5c. .phpunit.result.cache should be in .gitignore
+print('\n[5c] Checking .gitignore for PHPUnit cache...')
+gitignore_path = base / '.gitignore'
+gi = gitignore_path.read_text()
+additions = []
+for entry in ['.phpunit.result.cache', '.phpunit.cache/', 'storage/', '.env']:
+    if entry not in gi:
+        additions.append(entry)
+if additions:
+    with open(str(gitignore_path), 'a') as f:
+        f.write('\n# Added by audit\n')
+        for a in additions:
+            f.write(a + '\n')
+    fixed('.gitignore', f'added: {", ".join(additions)}')
+else:
+    print('  OK — .gitignore already covers key entries')
+
+# 5d. Check for TODO/FIXME/HACK in source (informational)
+print('\n[5d] TODO/FIXME/HACK in source...')
+count = 0
+for php_file in php_files:
+    content = php_file.read_text(errors='replace')
+    rel = str(php_file.relative_to(base))
+    for line_no, line in enumerate(content.splitlines(), 1):
+        if re.search(r'\b(TODO|FIXME|HACK|XXX)\b', line, re.IGNORECASE):
+            warn('LOW', f'{rel}:{line_no}', line.strip()[:80])
+            count += 1
+if count == 0:
+    print('  OK — no TODO/FIXME/HACK found')
+
+# 5e. Dead test data in audit_log
+print('\n[5e] Cleaning up PHPUnit test rows in audit_log...')
+r = subprocess.run(
+    ['mysql', '-h', db_host, '-u', db_user, f'-p{db_pass}',
+     db_name, '-e',
+     "DELETE FROM audit_log WHERE action IN ('PHPUNIT_TEST','PHPUNIT_ACTION_CHECK','PHPUNIT_OLD','UNIT_TEST_ACTION','OLD_TEST'); SELECT ROW_COUNT() AS deleted;"],
+    capture_output=True, text=True
+)
+if r.returncode == 0:
+    deleted = r.stdout.strip().split('\n')[-1]
+    fixed('audit_log', f'removed {deleted} test rows')
+else:
+    print('  Could not clean test rows:', r.stderr[:100])
+
+# ─────────────────────────────────────────────────────────────────────────────
+print()
+print('=' * 60)
+print('AUDIT REPORT')
+print('=' * 60)
+
+by_severity = {'ERROR': [], 'HIGH': [], 'MED': [], 'LOW': []}
+for sev, loc, msg in issues:
+    by_severity.get(sev, by_severity['LOW']).append((loc, msg))
+
+total = len(issues)
+print(f'\nIssues found: {total}')
+for sev in ['ERROR', 'HIGH', 'MED', 'LOW']:
+    items = by_severity[sev]
+    if items:
+        print(f'\n  {sev} ({len(items)}):')
+        for loc, msg in items:
+            print(f'    • {loc}: {msg}')
+
+print(f'\nFixes applied: {len(fixes)}')
+for loc, msg in fixes:
+    print(f'  ✓ {loc}: {msg}')
+
+print()
+if total == 0:
+    print('RESULT: CLEAN — no issues found.')
+elif by_severity['ERROR'] or by_severity['HIGH']:
+    print('RESULT: ACTION REQUIRED — see HIGH/ERROR items above.')
+else:
+    print('RESULT: GOOD — only medium/low issues, no blockers.')
+
+print('\nAudit complete.')

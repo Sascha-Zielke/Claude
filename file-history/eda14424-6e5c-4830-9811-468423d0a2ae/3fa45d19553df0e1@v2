@@ -1,0 +1,501 @@
+"""vcms_s14b_ctrl_edit.py
+Fix 2 — Booking edit & cancel:
+  - BookingAdminController: add EmailQueue import, editForm(), editStore(),
+    cancel(), replacePlaceholders(), sendCancellationEmail(), sendModificationEmail()
+  - admin/views/booking/edit.php: new edit form view
+  - admin/routes.php: add edit + cancel routes before wildcard
+  - admin/views/settings/index.php: cancel/modify email template fields
+  - SettingsAdminController: add cancel/modify email scalar keys
+"""
+BASE = '/var/www/velocms'
+import subprocess, os
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. BookingAdminController — new methods + EmailQueue import ───────────────
+ctrl_path = BASE + '/modules/booking/admin/controllers/BookingAdminController.php'
+ctrl = open(ctrl_path).read()
+
+# a) Add EmailQueue import
+old_import_setting = "use VeloCMS\\Modules\\Settings\\Models\\Setting;"
+new_import_setting = (
+    "use VeloCMS\\Modules\\Settings\\Models\\Setting;\n"
+    "use VeloCMS\\Modules\\Email\\Models\\EmailQueue;"
+)
+if 'EmailQueue' not in ctrl:
+    if old_import_setting in ctrl:
+        ctrl = ctrl.replace(old_import_setting, new_import_setting)
+        print('OK  BookingAdminController — EmailQueue import added')
+    else:
+        print('ERR BookingAdminController — Setting import anchor not found')
+else:
+    print('SKIP BookingAdminController — EmailQueue already imported')
+
+# b) Add editForm(), editStore(), cancel() before createForm()
+old_create_anchor = (
+    "    // ── Manual booking create ─────────────────────────────────────────────────\n"
+    "\n"
+    "    public function createForm"
+)
+new_with_edit_cancel = (
+    "    // ── Edit booking ──────────────────────────────────────────────────────────\n"
+    "\n"
+    "    public function editForm(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');\n"
+    "        $id      = (int) $params['id'];\n"
+    "        $booking = $this->booking()->findById($id);\n"
+    "        if (!$booking) {\n"
+    "            return $this->redirect('/admin/booking');\n"
+    "        }\n"
+    "        return $this->layout('booking/edit.php', [\n"
+    "            'user'      => $this->auth()->user(),\n"
+    "            'page'      => 'booking',\n"
+    "            'csrf'      => $this->auth()->csrfToken(),\n"
+    "            'booking'   => $booking,\n"
+    "            'resources' => $this->resource()->all(true),\n"
+    "            'error'     => null,\n"
+    "        ]);\n"
+    "    }\n"
+    "\n"
+    "    public function editStore(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/' . $params['id']);\n"
+    "        }\n"
+    "        $id      = (int) $params['id'];\n"
+    "        $booking = $this->booking()->findById($id);\n"
+    "        if (!$booking) {\n"
+    "            return $this->redirect('/admin/booking');\n"
+    "        }\n"
+    "\n"
+    "        $resourceId  = (int) $req->post('resource_id', (int) $booking['resource_id']);\n"
+    "        $status      = $req->post('booking_status',    $booking['booking_status']);\n"
+    "        $adminNotes  = trim($req->post('admin_notes',  $booking['admin_notes'] ?? ''));\n"
+    "        $pricingType = $booking['pricing_type'];\n"
+    "        $settings    = $this->settings();\n"
+    "\n"
+    "        $error = null;\n"
+    "        $endDate = $nights = null;\n"
+    "\n"
+    "        if ($pricingType === 'daily') {\n"
+    "            $bookingDate = $req->post('checkin_date',  $booking['booking_date']);\n"
+    "            $endDate     = $req->post('checkout_date', $booking['end_date'] ?? '');\n"
+    "            if (!$bookingDate || !$endDate) {\n"
+    "                $error = 'Check-in and check-out dates are required.';\n"
+    "            } elseif (strtotime($endDate) <= strtotime($bookingDate)) {\n"
+    "                $error = 'Check-out must be after check-in.';\n"
+    "            } else {\n"
+    "                $nights    = max(1, (int) ((strtotime($endDate) - strtotime($bookingDate)) / 86400));\n"
+    "                $startTime = $settings['daily_checkin_time']  ?? '15:00';\n"
+    "                $endTime   = $settings['daily_checkout_time'] ?? '11:00';\n"
+    "                $duration  = $nights * 1440;\n"
+    "                $resource  = $this->resource()->findById($resourceId);\n"
+    "                $subtotal  = round((float) ($resource['daily_rate'] ?? 0) * $nights, 2);\n"
+    "            }\n"
+    "        } else {\n"
+    "            $bookingDate = $req->post('booking_date', $booking['booking_date']);\n"
+    "            $startTime   = $req->post('start_time',  substr($booking['start_time'] ?? '00:00', 0, 5));\n"
+    "            $endTime     = $req->post('end_time',    substr($booking['end_time']   ?? '00:00', 0, 5));\n"
+    "            if (!$bookingDate || !$startTime || !$endTime) {\n"
+    "                $error = 'Date and time fields are required.';\n"
+    "            } elseif (strtotime(\"{$bookingDate} {$endTime}\") <= strtotime(\"{$bookingDate} {$startTime}\")) {\n"
+    "                $error = 'End time must be after start time.';\n"
+    "            } else {\n"
+    "                $duration = (int) ((strtotime(\"{$bookingDate} {$endTime}\") - strtotime(\"{$bookingDate} {$startTime}\")) / 60);\n"
+    "                $resource = $this->resource()->findById($resourceId);\n"
+    "                $subtotal = ($pricingType === 'hourly' && $resource)\n"
+    "                    ? round((float) ($resource['hourly_rate'] ?? 0) * ($duration / 60), 2)\n"
+    "                    : (float) $booking['subtotal'];\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        if (!in_array($status, ['pending', 'confirmed', 'cancelled'], true)) {\n"
+    "            $status = $booking['booking_status'];\n"
+    "        }\n"
+    "\n"
+    "        if ($error) {\n"
+    "            return $this->layout('booking/edit.php', [\n"
+    "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+    "                'csrf'      => $this->auth()->csrfToken(),\n"
+    "                'booking'   => $booking,\n"
+    "                'resources' => $this->resource()->all(true),\n"
+    "                'error'     => $error,\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        try {\n"
+    "            $this->booking()->update($id, [\n"
+    "                'resource_id'    => $resourceId,\n"
+    "                'booking_date'   => $bookingDate,\n"
+    "                'end_date'       => $endDate,\n"
+    "                'nights'         => $nights,\n"
+    "                'start_time'     => $startTime,\n"
+    "                'end_time'       => $endTime,\n"
+    "                'duration_mins'  => $duration,\n"
+    "                'pricing_type'   => $pricingType,\n"
+    "                'subtotal'       => $subtotal,\n"
+    "                'total_amount'   => $subtotal,\n"
+    "                'booking_status' => $status,\n"
+    "                'admin_notes'    => $adminNotes,\n"
+    "            ]);\n"
+    "        } catch (\\Throwable $e) {\n"
+    "            error_log('[VeloCMS] Booking update error: ' . $e->getMessage());\n"
+    "            return $this->layout('booking/edit.php', [\n"
+    "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+    "                'csrf'      => $this->auth()->csrfToken(),\n"
+    "                'booking'   => $booking,\n"
+    "                'resources' => $this->resource()->all(true),\n"
+    "                'error'     => 'Failed to save changes. Please try again.',\n"
+    "            ]);\n"
+    "        }\n"
+    "\n"
+    "        $updated = $this->booking()->findById($id);\n"
+    "        if ($updated) {\n"
+    "            $this->sendModificationEmail($booking, $updated, $settings);\n"
+    "        }\n"
+    "\n"
+    "        $_SESSION['_flash'] = 'Booking updated and customer notified.';\n"
+    "        return $this->redirect('/admin/booking/' . $id);\n"
+    "    }\n"
+    "\n"
+    "    // ── Cancel booking ────────────────────────────────────────────────────────\n"
+    "\n"
+    "    public function cancel(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/' . $params['id']);\n"
+    "        }\n"
+    "        $id      = (int) $params['id'];\n"
+    "        $booking = $this->booking()->findById($id);\n"
+    "        if (!$booking || $booking['booking_status'] === 'cancelled') {\n"
+    "            $_SESSION['_flash'] = 'Booking already cancelled or not found.';\n"
+    "            return $this->redirect('/admin/booking/' . $id);\n"
+    "        }\n"
+    "        try {\n"
+    "            $this->booking()->updateStatus($id, 'cancelled', $booking['admin_notes'] ?? '');\n"
+    "            $this->sendCancellationEmail($booking, $this->settings());\n"
+    "            $_SESSION['_flash'] = 'Booking cancelled and customer notified.';\n"
+    "        } catch (\\Throwable $e) {\n"
+    "            error_log('[VeloCMS] Booking cancel error: ' . $e->getMessage());\n"
+    "            $_SESSION['_flash'] = 'Booking cancelled (email notification may have failed).';\n"
+    "        }\n"
+    "        return $this->redirect('/admin/booking/' . $id);\n"
+    "    }\n"
+    "\n"
+    "    // ── Manual booking create ─────────────────────────────────────────────────\n"
+    "\n"
+    "    public function createForm"
+)
+
+if 'editForm' not in ctrl:
+    if old_create_anchor in ctrl:
+        ctrl = ctrl.replace(old_create_anchor, new_with_edit_cancel)
+        print('OK  BookingAdminController — editForm/editStore/cancel added')
+    else:
+        print('ERR BookingAdminController — createForm anchor not found')
+else:
+    print('SKIP BookingAdminController — edit methods already present')
+
+# c) Add private helper methods before closing }
+old_closing = "}\n"
+new_helpers = (
+    "\n"
+    "    // ── Email helpers ─────────────────────────────────────────────────────────\n"
+    "\n"
+    "    private function replacePlaceholders(string $tpl, array $booking): string\n"
+    "    {\n"
+    "        $map = [\n"
+    "            '{reference}'      => $booking['reference']      ?? '',\n"
+    "            '{customer_name}'  => $booking['customer_name']  ?? '',\n"
+    "            '{customer_email}' => $booking['customer_email'] ?? '',\n"
+    "            '{resource}'       => $booking['resource_name']  ?? '',\n"
+    "            '{date}'           => $booking['booking_date']   ?? '',\n"
+    "            '{start_time}'     => $booking['start_time']     ?? '',\n"
+    "            '{end_time}'       => $booking['end_time']       ?? '',\n"
+    "            '{status}'         => $booking['booking_status'] ?? '',\n"
+    "            '{total}'          => number_format((float) ($booking['total_amount'] ?? 0), 2),\n"
+    "        ];\n"
+    "        return str_replace(array_keys($map), array_values($map), $tpl);\n"
+    "    }\n"
+    "\n"
+    "    private function sendCancellationEmail(array $booking, array $settings): void\n"
+    "    {\n"
+    "        $to = $booking['customer_email'] ?? '';\n"
+    "        if (!$to) return;\n"
+    "        $subject = $this->replacePlaceholders(\n"
+    "            $settings['cancel_email_subject'] ?? 'Your booking {reference} has been cancelled',\n"
+    "            $booking\n"
+    "        );\n"
+    "        $body = $this->replacePlaceholders(\n"
+    "            $settings['cancel_email_body'] ??\n"
+    "            \"Dear {customer_name},\\n\\nWe are sorry to inform you that your booking {reference} for {resource} on {date} has been cancelled.\\n\\nIf you have any questions, please contact us.\\n\\nBest regards\",\n"
+    "            $booking\n"
+    "        );\n"
+    "        try {\n"
+    "            (new EmailQueue($this->pdo()))->enqueue($to, $subject, nl2br(e($body)));\n"
+    "        } catch (\\Throwable) {}\n"
+    "    }\n"
+    "\n"
+    "    private function sendModificationEmail(array $old, array $new, array $settings): void\n"
+    "    {\n"
+    "        $to = $new['customer_email'] ?? '';\n"
+    "        if (!$to) return;\n"
+    "        $subject = $this->replacePlaceholders(\n"
+    "            $settings['modify_email_subject'] ?? 'Your booking {reference} has been updated',\n"
+    "            $new\n"
+    "        );\n"
+    "        $body = $this->replacePlaceholders(\n"
+    "            $settings['modify_email_body'] ??\n"
+    "            \"Dear {customer_name},\\n\\nYour booking {reference} for {resource} has been updated.\\n\\nNew date: {date}\\nNew total: \\u20ac{total}\\nStatus: {status}\\n\\nIf you have any questions, please contact us.\\n\\nBest regards\",\n"
+    "            $new\n"
+    "        );\n"
+    "        try {\n"
+    "            (new EmailQueue($this->pdo()))->enqueue($to, $subject, nl2br(e($body)));\n"
+    "        } catch (\\Throwable) {}\n"
+    "    }\n"
+    "}\n"
+)
+
+if 'sendCancellationEmail' not in ctrl:
+    # Replace the last } in file
+    last_brace = ctrl.rfind("\n}\n")
+    if last_brace != -1:
+        ctrl = ctrl[:last_brace] + new_helpers
+        print('OK  BookingAdminController — email helpers added')
+    else:
+        print('ERR BookingAdminController — closing brace not found')
+else:
+    print('SKIP BookingAdminController — helpers already present')
+
+with open(ctrl_path, 'w') as f: f.write(ctrl)
+php_lint(ctrl_path, 'BookingAdminController.php')
+
+# ── 2. Create admin/views/booking/edit.php ────────────────────────────────────
+edit_view_path = BASE + '/admin/views/booking/edit.php'
+if not os.path.exists(edit_view_path):
+    edit_view = (
+        "<?php\n"
+        "$booking   = $booking   ?? [];\n"
+        "$resources = $resources ?? [];\n"
+        "$error     = $error     ?? null;\n"
+        "$isDaily   = ($booking['pricing_type'] ?? '') === 'daily';\n"
+        "?>\n"
+        "<div class=\"vcms-section-header\">\n"
+        "    <h3>Edit Booking <?= e($booking['reference'] ?? '') ?></h3>\n"
+        "    <a href=\"/admin/booking/<?= (int)($booking['id'] ?? 0) ?>\" class=\"vcms-btn vcms-btn--secondary\">&larr; Back</a>\n"
+        "</div>\n"
+        "\n"
+        "<?php if ($error): ?>\n"
+        "    <div class=\"vcms-alert vcms-alert--error\"><?= e($error) ?></div>\n"
+        "<?php endif ?>\n"
+        "\n"
+        "<div class=\"vcms-card\">\n"
+        "<form method=\"post\" action=\"/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/edit\" class=\"vcms-form\">\n"
+        "    <input type=\"hidden\" name=\"_csrf\" value=\"<?= e($csrf) ?>\">\n"
+        "\n"
+        "    <div class=\"vcms-form-row\">\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Resource</label>\n"
+        "            <select name=\"resource_id\">\n"
+        "                <?php foreach ($resources as $r): ?>\n"
+        "                <option value=\"<?= (int)$r['id'] ?>\"\n"
+        "                        <?= (int)$r['id'] === (int)($booking['resource_id'] ?? 0) ? 'selected' : '' ?>>\n"
+        "                    <?= e($r['name']) ?>\n"
+        "                </option>\n"
+        "                <?php endforeach ?>\n"
+        "            </select>\n"
+        "        </div>\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Status</label>\n"
+        "            <select name=\"booking_status\">\n"
+        "                <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>\n"
+        "                <option value=\"<?= $s ?>\" <?= ($booking['booking_status'] ?? '') === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>\n"
+        "                <?php endforeach ?>\n"
+        "            </select>\n"
+        "        </div>\n"
+        "    </div>\n"
+        "\n"
+        "    <?php if ($isDaily): ?>\n"
+        "    <div class=\"vcms-form-row\">\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Check-in date</label>\n"
+        "            <input type=\"date\" name=\"checkin_date\" value=\"<?= e($booking['booking_date'] ?? '') ?>\">\n"
+        "        </div>\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Check-out date</label>\n"
+        "            <input type=\"date\" id=\"edit-checkout\" name=\"checkout_date\" value=\"<?= e($booking['end_date'] ?? '') ?>\">\n"
+        "        </div>\n"
+        "    </div>\n"
+        "    <script>\n"
+        "    document.querySelector('[name=checkin_date]').addEventListener('change', function() {\n"
+        "        var min = new Date(new Date(this.value).getTime() + 86400000).toISOString().slice(0,10);\n"
+        "        document.getElementById('edit-checkout').min = min;\n"
+        "    });\n"
+        "    </script>\n"
+        "    <?php else: ?>\n"
+        "    <div class=\"vcms-form-row\">\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Date</label>\n"
+        "            <input type=\"date\" name=\"booking_date\" value=\"<?= e($booking['booking_date'] ?? '') ?>\">\n"
+        "        </div>\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>Start time</label>\n"
+        "            <input type=\"time\" id=\"edit-start\" name=\"start_time\" value=\"<?= e(substr($booking['start_time'] ?? '', 0, 5)) ?>\">\n"
+        "        </div>\n"
+        "        <div class=\"vcms-form-group\">\n"
+        "            <label>End time</label>\n"
+        "            <input type=\"time\" id=\"edit-end\" name=\"end_time\" value=\"<?= e(substr($booking['end_time'] ?? '', 0, 5)) ?>\">\n"
+        "        </div>\n"
+        "    </div>\n"
+        "    <p id=\"edit-time-err\" style=\"display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0\">End time must be after start time.</p>\n"
+        "    <script>\n"
+        "    (function(){\n"
+        "        var s = document.getElementById('edit-start');\n"
+        "        var e = document.getElementById('edit-end');\n"
+        "        var err = document.getElementById('edit-time-err');\n"
+        "        var btn = document.querySelector('.vcms-form button[type=submit]');\n"
+        "        function check() {\n"
+        "            var bad = s.value && e.value && e.value <= s.value;\n"
+        "            err.style.display = bad ? '' : 'none';\n"
+        "            if (btn) btn.disabled = !!bad;\n"
+        "            if (s.value) e.min = s.value;\n"
+        "        }\n"
+        "        s.addEventListener('change', check);\n"
+        "        e.addEventListener('change', check);\n"
+        "    }());\n"
+        "    </script>\n"
+        "    <?php endif ?>\n"
+        "\n"
+        "    <div class=\"vcms-form-group\">\n"
+        "        <label>Admin notes</label>\n"
+        "        <textarea name=\"admin_notes\" rows=\"3\"><?= e($booking['admin_notes'] ?? '') ?></textarea>\n"
+        "    </div>\n"
+        "\n"
+        "    <div class=\"vcms-form-actions\">\n"
+        "        <button type=\"submit\" class=\"vcms-btn\">Save Changes</button>\n"
+        "        <a href=\"/admin/booking/<?= (int)($booking['id'] ?? 0) ?>\" class=\"vcms-btn vcms-btn--secondary\">Cancel</a>\n"
+        "    </div>\n"
+        "</form>\n"
+        "</div>\n"
+    )
+    with open(edit_view_path, 'w') as f: f.write(edit_view)
+    print('OK  admin/views/booking/edit.php created')
+    php_lint(edit_view_path, 'admin/views/booking/edit.php')
+else:
+    print('SKIP admin/views/booking/edit.php — already exists')
+
+# ── 3. admin/routes.php — add edit + cancel routes ───────────────────────────
+routes_path = BASE + '/admin/routes.php'
+routes = open(routes_path).read()
+
+old_wildcard_comment = (
+    "// ── Booking — Individual booking (wildcard — must be LAST) ──────────────────\n"
+    "$router->get('/admin/booking/{id}',"
+)
+new_with_edit_cancel_routes = (
+    "// ── Booking — Individual booking (wildcard — must be LAST) ──────────────────\n"
+    "$router->get('/admin/booking/{id}/edit',                [BookingAdminController::class, 'editForm']);\n"
+    "$router->post('/admin/booking/{id}/edit',               [BookingAdminController::class, 'editStore']);\n"
+    "$router->post('/admin/booking/{id}/cancel',             [BookingAdminController::class, 'cancel']);\n"
+    "$router->get('/admin/booking/{id}',"
+)
+
+if 'editForm' not in routes:
+    if old_wildcard_comment in routes:
+        routes = routes.replace(old_wildcard_comment, new_with_edit_cancel_routes)
+        with open(routes_path, 'w') as f: f.write(routes)
+        print('OK  admin/routes.php — edit/cancel routes added')
+    else:
+        print('ERR admin/routes.php — wildcard comment anchor not found')
+else:
+    print('SKIP admin/routes.php — edit routes already present')
+
+# ── 4. settings/index.php — cancel/modify email template fields ──────────────
+settings_path = BASE + '/admin/views/settings/index.php'
+settings = open(settings_path).read()
+
+old_email_table_end = (
+    "            <tr>\n"
+    "                <th><label for=\"bk-obody\">Owner email body</label></th>\n"
+    "                <td><textarea id=\"bk-obody\" name=\"owner_email_body\" rows=\"4\"><?= e($bk['owner_email_body'] ?? '') ?></textarea></td>\n"
+    "            </tr>\n"
+    "        </table></div>"
+)
+new_email_table_end = (
+    "            <tr>\n"
+    "                <th><label for=\"bk-obody\">Owner email body</label></th>\n"
+    "                <td><textarea id=\"bk-obody\" name=\"owner_email_body\" rows=\"4\"><?= e($bk['owner_email_body'] ?? '') ?></textarea></td>\n"
+    "            </tr>\n"
+    "            <tr>\n"
+    "                <th><label for=\"bk-cancel-subj\">Cancellation email subject</label></th>\n"
+    "                <td><input type=\"text\" id=\"bk-cancel-subj\" name=\"cancel_email_subject\"\n"
+    "                           value=\"<?= e($bk['cancel_email_subject'] ?? 'Your booking {reference} has been cancelled') ?>\"></td>\n"
+    "            </tr>\n"
+    "            <tr>\n"
+    "                <th><label for=\"bk-cancel-body\">Cancellation email body</label></th>\n"
+    "                <td>\n"
+    "                    <textarea id=\"bk-cancel-body\" name=\"cancel_email_body\" rows=\"5\"><?= e($bk['cancel_email_body'] ?? '') ?></textarea>\n"
+    "                    <small style=\"color:#6b7280\">Placeholders: {reference} {customer_name} {resource} {date} {status} {total}</small>\n"
+    "                </td>\n"
+    "            </tr>\n"
+    "            <tr>\n"
+    "                <th><label for=\"bk-modify-subj\">Modification email subject</label></th>\n"
+    "                <td><input type=\"text\" id=\"bk-modify-subj\" name=\"modify_email_subject\"\n"
+    "                           value=\"<?= e($bk['modify_email_subject'] ?? 'Your booking {reference} has been updated') ?>\"></td>\n"
+    "            </tr>\n"
+    "            <tr>\n"
+    "                <th><label for=\"bk-modify-body\">Modification email body</label></th>\n"
+    "                <td>\n"
+    "                    <textarea id=\"bk-modify-body\" name=\"modify_email_body\" rows=\"5\"><?= e($bk['modify_email_body'] ?? '') ?></textarea>\n"
+    "                    <small style=\"color:#6b7280\">Placeholders: {reference} {customer_name} {resource} {date} {total} {status}</small>\n"
+    "                </td>\n"
+    "            </tr>\n"
+    "        </table></div>"
+)
+
+if 'cancel_email_subject' not in settings:
+    if old_email_table_end in settings:
+        settings = settings.replace(old_email_table_end, new_email_table_end)
+        with open(settings_path, 'w') as f: f.write(settings)
+        print('OK  settings/index.php — cancel/modify email fields added')
+    else:
+        print('ERR settings/index.php — owner email body anchor not found')
+else:
+    print('SKIP settings/index.php — cancel/modify email fields already present')
+
+php_lint(settings_path, 'admin/views/settings/index.php')
+
+# ── 5. SettingsAdminController — add scalar keys ──────────────────────────────
+sa_ctrl_path = BASE + '/modules/settings/admin/controllers/SettingsAdminController.php'
+sa_ctrl = open(sa_ctrl_path).read()
+
+old_scalar_keys = (
+    "                'customer_email_subject', 'customer_email_body',\n"
+    "                'owner_email_subject', 'owner_email_body',"
+)
+new_scalar_keys = (
+    "                'customer_email_subject', 'customer_email_body',\n"
+    "                'owner_email_subject', 'owner_email_body',\n"
+    "                'cancel_email_subject', 'cancel_email_body',\n"
+    "                'modify_email_subject', 'modify_email_body',"
+)
+
+if 'cancel_email_subject' not in sa_ctrl:
+    if old_scalar_keys in sa_ctrl:
+        sa_ctrl = sa_ctrl.replace(old_scalar_keys, new_scalar_keys)
+        with open(sa_ctrl_path, 'w') as f: f.write(sa_ctrl)
+        print('OK  SettingsAdminController — cancel/modify email scalar keys added')
+    else:
+        print('ERR SettingsAdminController — scalar keys anchor not found')
+else:
+    print('SKIP SettingsAdminController — cancel/modify keys already present')
+
+php_lint(sa_ctrl_path, 'SettingsAdminController.php')
+
+print('\nDone.')

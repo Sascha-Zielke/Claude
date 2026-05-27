@@ -1,0 +1,238 @@
+---
+tags: [veloSolutions, velocms, architektur, design]
+status: aktiv
+---
+
+# veloCMS — Core Architecture
+
+Die Grundarchitektur des veloCMS Systems.
+
+---
+
+## 🎯 Das Kernprinzip: Alles ist eine App
+
+**veloCMS ist ein leeres Core-System.**
+
+Das CMS selbst hat **NUR:**
+- ✅ Settings/Einstellungen
+- ✅ Feature Flags (zum An/Ausschalten von Apps)
+- ✅ User Management (Admin-Accounts)
+- ✅ Core Services (z.B. TranslationService)
+
+**ALLES andere ist eine App:**
+- ❌ Page Builder — **APP**
+- ❌ Blog — **APP**
+- ❌ Navigation — **APP**
+- ❌ Media Management — **APP**
+- ❌ Contact Forms — **APP**
+- ❌ Translation — **APP**
+- ❌ Booking — **APP**
+
+---
+
+## 📐 System-Struktur
+
+```
+veloCMS (Core System)
+├── Settings Tab (nur das!)
+├── Feature Flags (Settings)
+├── Core Services (TranslationService, etc.)
+├── User Management (Backend)
+└── Apps Loader (lädt Apps basierend auf Feature Flags)
+
+Apps (Alles andere)
+├── Pages App
+├── Blog App
+├── Navigation App
+├── Media App
+├── Contact App
+├── Translation App
+├── Booking App
+└── ...
+```
+
+**Wichtig:** Wenn ALLE Apps disabled sind → CMS läuft immer noch, zeigt nur Settings.
+
+---
+
+## ⚙️ Settings Tab — Was gehört rein?
+
+**Settings = Nur Admin-Verwaltung, keine Content-Verwaltung:**
+
+- Allgemeine Site-Settings (URL, Titel, etc.)
+- User & Permissions
+- Feature Flags (Apps an/ausschalten)
+- Email-Konfiguration
+- API-Keys (DeepL, Anthropic, etc.)
+- Database Backups
+- System Health / Logs
+
+**NICHT in Settings:**
+- Content-Verwaltung (das sind Apps)
+- Page-Building (das ist Pages App)
+- Blog-Management (das ist Blog App)
+
+---
+
+## 🔄 App-Lifecycle
+
+### Bevor Claude Code eine App baut:
+
+1. **Masterplan_[app-name].md schreiben** ← MANDATORY
+   - Phasen-Planung
+   - Timeline
+   - Architektur-Entscheidungen
+   - Success-Kriterien
+
+2. **Anforderungen lesen** ([AppName].md)
+
+3. **Nur DANN entwickeln** (basierend auf Masterplan)
+
+4. **Nach jeder Phase:** Resume_[app-name].md schreiben
+
+5. **Zwei Audits bestehen** (beide müssen grün sein)
+
+6. **Erst dann:** Nächste Phase
+
+### Konsequenz:
+**Keine App ohne Masterplan + Resume!**
+
+Das ist nicht optional, das ist ein MUSS.
+
+---
+
+## 🛡️ Architektur-Prinzipien für veloCMS
+
+### 1. veloCMS ist der Container, nicht der Funktionalität
+- CMS = Infrastruktur
+- Apps = Funktionalität
+- CMS muss nicht wissen, welche Apps es gibt
+
+### 2. Apps sind plug-and-play
+- App installieren = Feature Flag einschalten
+- App deinstallieren = Feature Flag ausschalten
+- Keine Code-Änderungen am CMS nötig
+
+### 3. Zentrale Settings, dezentrale Apps
+- **Zentral:** Settings (nur im Core)
+- **Dezentral:** App-spezifische Konfiguration (in jeder App)
+
+Beispiel:
+```
+Settings (Core):
+├── feature_flag_translation → ON/OFF
+└── deepl_api_key → [key]
+
+Translation App (App):
+├── Aktivierte Sprachen
+├── Glossar
+├── Translation Rules
+```
+
+### 4. Fehlertoleranz
+- Wenn Translation-App crasht → Pages App läuft weiter
+- Wenn Pages-App crasht → Blog App läuft weiter
+- Wenn ALL Apps crashen → CMS zeigt Settings (funktioniert immer noch)
+
+---
+
+## 📝 Beispiel: Wie eine App aufgebaut wird
+
+### Translation App
+
+**Struktur:**
+```
+veloCMS/Apps/Translation-App/
+├── Translation-App.md           (Anforderungen)
+├── Masterplan_translation.md    (Claude Code schreibt!)
+├── Resume_translation.md        (Claude Code schreibt nach Phase 1)
+├── code/                        (Im CMS/PHP Verzeichnis)
+│   ├── TranslationModule.php
+│   ├── Controllers/
+│   ├── Models/
+│   ├── migrations/
+│   └── Services/
+└── Audits/
+    ├── Phase-1-Audit-1.md       (Claudian schreibt)
+    └── Phase-1-Audit-2.md
+```
+
+**Prozess:**
+1. Sascha: "Bau die Translation-App"
+2. Claude Code: Liest Translation-App.md
+3. Claude Code: Schreibt Masterplan_translation.md
+4. Claude Code: Baut App nach Masterplan
+5. Claude Code: Schreibt Resume_translation.md
+6. Claudian: Auditet (Audit 1)
+7. Falls OK: Claudian schreibt ✅ AUDIT PASSED
+8. Falls nicht OK: Claude Code fixed, neues Resume, Audit 2
+9. Erst wenn beide Audits ✅: Nächste Phase
+
+---
+
+## 🚫 Das ist FALSCH:
+
+- ❌ "Bau einfach eine App, Masterplan später"
+- ❌ "Die App braucht nicht ins Anforderungen-Doc"
+- ❌ "Feature Flag Optional, bauen wir später ein"
+- ❌ "Die App schreibt direkt in Pages-Datenbank"
+- ❌ "Wenn Translation-App crasht, ist das OK, CMS ist down"
+
+---
+
+## ✅ Das ist RICHTIG:
+
+- ✅ Masterplan BEVOR Claude Code baut
+- ✅ Resume NACH jeder Phase
+- ✅ Feature Flag IMMER implementiert
+- ✅ App hat eigene Tabellen, nicht in Core-Daten
+- ✅ Wenn App crasht, CMS läuft noch
+
+---
+
+## 📋 Standing Instructions für Claude Code
+
+Wenn Claude Code aufgefordert wird, eine App/Feature für veloCMS zu bauen:
+
+1. **Lies Anforderungen** aus dem Vault (`[AppName].md`)
+
+2. **Schreib Masterplan_[app-name].md** ← MANDATORY
+   - Phasen-Einteilung
+   - Timeline
+   - Success-Kriterien
+   - Warte auf Freigabe: "Go for Phase X"
+
+3. **Entwickle nach Masterplan**
+   - Nur diese Phase bauen
+   - Teste alles
+   - Dokumentiere Code
+
+4. **Nach Phase-Ende: Doppeltes Audit-Prozess** ← MANDATORY
+
+   a) **Claude Code Audit 1:**
+   - Schreib aktualisiertes Resume_[app-name].md
+   - Audit gegen Masterplan & Success-Kriterien
+   - Dokumentiert in `Audits/Phase-X-Audit-1.md`
+   - Result: ✅ GRÜN oder ❌ ROT
+   
+   b) **Falls Audit 1 GRÜN:**
+   - Claudian Audit 2 durchführen
+   - Unabhängiger Review
+   - Dokumentiert in `Audits/Phase-X-Audit-2.md`
+   - Result: ✅ GRÜN oder ❌ ROT
+   
+   c) **Falls Audit ROT:**
+   - Claude Code fixt Fehler SOFORT
+   - Aktualisiert Resume
+   - Macht Audit erneut
+   - Repeat bis beide ✅ GRÜN
+
+5. **Erst wenn beide Audits GRÜN:** Nächste Phase
+
+**Das ist nicht verhandelbar. Nicht "gut genug" — bis zum Masterplan perfekt.**
+
+---
+
+## 🔗 Verknüpfungen
+
+← [[_index|veloCMS Übersicht]] | [[Apps/App-Development-Guide|App-Development Guide]]

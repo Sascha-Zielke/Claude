@@ -1,0 +1,35 @@
+Two fixes needed in the Booking Settings:
+
+1. BOOKING TYPES — Add Daily toggle:
+Under Booking Types, add a third toggle "Daily" 
+alongside Hourly and Packages. When Daily is active:
+- Slot Duration dropdown changes to a date range 
+  picker (check-in / check-out dates)
+- Hourly time pickers are hidden
+- Price model switches to "per day" rate
+
+2. PACKAGES LINK FIX:
+The link "Create a resource first" points to 
+/admin/booking/resources/create but the page 
+/admin/booking/resources does not exist — it 
+redirects to /admin/booking instead.
+
+Please fix the Resources CRUD:
+- /admin/booking/resources → list all resources
+- /admin/booking/resources/create → create form
+- /admin/booking/resources/{id}/edit → edit form
+- /admin/booking/resources/{id}/delete → delete
+
+Resources should be manageable independently from 
+the Settings page. Each resource needs:
+- Name, description, image upload
+- Pricing: hourly rate, daily rate, package price, 
+  product price (show/hide based on active booking 
+  types)
+- Min/max booking duration
+- Advance booking requirement
+- Active/inactive toggle
+
+After fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

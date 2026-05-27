@@ -1,0 +1,134 @@
+base = '/var/www/velocms'
+
+# ── RESUME.md ─────────────────────────────────────────────────────────────────
+resume = """# VeloCMS — Resume Prompt
+
+**Read CLAUDE_START.md first if you haven't yet. This file tells you where we are now.**
+
+---
+
+## Current Status
+
+**Date of last update:** 2026-05-19
+**Phase:** 6 complete — responsive admin done, all docs up to date
+
+### What's live
+- https://webzite-newmedia.com — production site, HTTPS, FastCGI cached
+- https://webzite-newmedia.com/admin — admin panel (login: s.zielke84@gmail.com)
+- GitHub: Sascha-Zielke/velocms — CI/CD active (lint → PHPUnit → SSH deploy)
+- PHPUnit: 23 tests, 27 assertions, all passing
+
+### What was last done (Session 8)
+- Made admin panel fully responsive (mobile 375px, tablet 768px, desktop 1280px)
+- Sidebar: position:fixed, hidden off-screen on mobile, hamburger toggle button in topbar
+- Tables: all 11 tables wrapped in vcms-table-wrap for horizontal scroll on mobile
+- Forms: stacked to single-column on mobile (<768px)
+- JS: public/assets/admin/app.js created (hamburger toggle, overlay, Escape key, resize reset)
+- Layout: vcms-overlay div added, hamburger SVG in topbar, app.js deferred script tag
+- Profile card: max-width responsive (min(520px,100%))
+- Settings form-table: wrapped for mobile scroll
+- Post-fix audit: PHP syntax 0 errors, PHPUnit 23/23, no new unescaped output
+- Temp files: /tmp cleaned (11 scripts removed)
+
+---
+
+## Audit Findings (2026-05-19 — RESOLVED)
+
+| Check | Result |
+|---|---|
+| PHP syntax (135 files) | PASS — 0 errors |
+| Hardcoded credentials | PASS — none found |
+| SQL injection | PASS — 16 regex flags were false positives (all use prepared statements correctly) |
+| XSS: $val unescaped in form.php | FIXED — e() added to textarea and input |
+| Direct $_GET in AuthController | FIXED — replaced with $request->get() |
+| Settings view: unescaped $key/$label | FIXED — e() added throughout |
+| SiteCreateCommand: bare CREATE DATABASE | FIXED — dbName validated (alphanumeric + underscore only) |
+| Pagination $i in audit/forms views | FIXED — cast to (int) |
+| CSRF on POST forms | PASS — all covered |
+| Debug flags in production | PASS — none |
+| DB indexes on FK columns | PASS — all covered |
+| PHPUnit (post-fix) | PASS — 23/23 |
+| /tmp build scripts | CLEANED — all stale scripts removed |
+| Test rows in audit_log | CLEANED — 8 rows deleted |
+| Missing updated_at on 8 tables | INFO — intentional (audit_log, form_submissions, etc.) |
+
+---
+
+## Next Tasks
+
+### Priority 1 — Users module admin UI
+- [ ] List all users (table with email, role, status, last login)
+- [ ] Create user form (email, name, role, password)
+- [ ] Edit user (name, role, active/inactive toggle)
+- [ ] Deactivate user (soft delete via deleted_at)
+- Note: user:create CLI command already exists; this is the browser UI
+
+### Priority 2 — Password reset via email
+- [ ] Forgot-password form at /admin/login/forgot
+- [ ] Generate time-limited token (stored in DB or signed)
+- [ ] Send reset link via email queue
+- [ ] Reset-password form at /admin/login/reset?token=...
+- [ ] Invalidate token after use
+
+### Priority 3 — API completeness
+- [ ] PUT /api/v1/pages/{id} and DELETE /api/v1/pages/{id}
+- [ ] PUT /api/v1/posts/{id} and DELETE /api/v1/posts/{id}
+- [ ] Currently only GET endpoints are implemented for most resources
+
+### Priority 4 — README.md for GitHub repo
+- [ ] Project description, features, requirements
+- [ ] Quick-start / installation instructions
+- [ ] CLI command reference
+- [ ] Link to VELOCMS_MASTERPLAN.md for architecture details
+
+### Priority 5 — Future phases
+- [ ] Multi-site: second tenant provisioning and testing
+- [ ] Theme switcher in admin settings
+- [ ] Superadmin panel (manage all sites from one login)
+- [ ] Redis cache driver option
+- [ ] Full-page cache with smart invalidation on publish
+
+---
+
+## Known Issues / Gotchas
+
+- `Auth::csrfToken()` and `Auth::verifyCsrf()` are **instance methods** — always call via `$auth->...`, never statically
+- Admin routes must be registered **before** modules in `public/index.php` — PagesModule has catch-all `/{slug}`
+- `storage/webzite-newmedia.com/` dirs owned by www-data — PHP-FPM writes there, velocms user cannot
+- Nginx FastCGI cache must be purged manually if a page gets incorrectly cached: `sudo rm -rf /var/cache/nginx/velocms/*`
+- The heredoc `<< 'PYEOF'` pattern via SSH Bash tool eats `$` signs — always SCP Python scripts instead of using heredocs for file edits
+- PHPUnit requires CORE_DB_PASS env var — use: `python3 -c "import subprocess,os; env=dict(os.environ); [env.update({k:v}) for line in open('.env') if '=' in line for k,v in [line.strip().split('=',1)]]; subprocess.run(['./vendor/bin/phpunit'], env=env)"`
+- Admin hamburger sidebar uses `position:fixed` + `transform:translateX(-100%)` — JS adds `.open` class to show it; body gets `vcms-nav-open` class to lock scroll
+"""
+
+open(base + '/RESUME.md', 'w').write(resume.lstrip('\n'))
+print('OK  RESUME.md')
+
+# ── SESSION_LOG.md — append Session 8 entry ───────────────────────────────────
+session_log = open(base + '/SESSION_LOG.md').read()
+
+session8 = """
+---
+
+## Session 8 — Responsive Admin Panel
+**Date:** 2026-05-19
+**Built / Done:**
+- Full responsive admin panel (mobile 375px / tablet 768px / desktop 1280px):
+  - `public/assets/admin/style.css` — rewrote with CSS custom property `--topbar-h: 56px`, sidebar as `position:fixed; transform:translateX(-100%)` with `.open` class, `.vcms-overlay` backdrop, `.vcms-hamburger` (hidden on desktop), full `@media (max-width:767px)` block stacking forms to single-column, `@media (max-width:1023px)` tablet tweaks
+  - `public/assets/admin/app.js` — new file: hamburger toggle, overlay click-to-close, Escape key, nav link auto-close on mobile, resize reset
+  - `admin/views/layout.php` — added `.vcms-overlay` div, hamburger SVG button in topbar, deferred `app.js` script tag
+  - Wrapped bare `<table>` in `.vcms-table-wrap` across 9 views: forms/index, forms/submissions, seo/index, blog/categories, api/index, navigation/index, navigation/edit, audit/index, cron/index
+  - `admin/views/settings/index.php` — wrapped settings form-table for mobile scroll
+  - `admin/views/profile.php` — profile card `max-width: min(520px,100%)`
+- Post-fix audit: PHP syntax 0 errors (all files), PHPUnit 23/23, no new unescaped output found
+- Cleanup: 11 stale `/tmp` build scripts removed
+"""
+
+if 'Session 8' not in session_log:
+    session_log = session_log.rstrip() + '\n' + session8.lstrip('\n')
+    open(base + '/SESSION_LOG.md', 'w').write(session_log)
+    print('OK  SESSION_LOG.md (Session 8 appended)')
+else:
+    print('OK  SESSION_LOG.md (Session 8 already present)')
+
+print('\nDone.')

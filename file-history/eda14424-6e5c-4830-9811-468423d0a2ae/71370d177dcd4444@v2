@@ -1,0 +1,157 @@
+"""vcms_s12c_tz_slug.py
+1. admin/views/settings/index.php — replace timezone text input with PHP-generated dropdown
+   Sort: Europe/Berlin first, then Europe/* alphabetically, then rest
+   Format: "Europe/Berlin (GMT+2)"
+2. admin/views/booking/resources/form.php
+   - Add helper text below slug field
+   - Add JS: auto-generate slug from name; stop auto-gen after manual edit
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. Settings timezone dropdown ─────────────────────────────────────────────
+settings_path = BASE + '/admin/views/settings/index.php'
+settings = open(settings_path).read()
+
+old_tz_input = (
+    "                <th><label for=\"bk-tz\">Timezone</label></th>\n"
+    "                <td><input type=\"text\" id=\"bk-tz\" name=\"timezone\"\n"
+    "                           value=\"<?= e($bk['timezone'] ?? 'Europe/Berlin') ?>\"></td>"
+)
+new_tz_select = (
+    "                <th><label for=\"bk-tz\">Timezone</label></th>\n"
+    "                <td>\n"
+    "                <?php\n"
+    "                $tzCurrent = $bk['timezone'] ?? 'Europe/Berlin';\n"
+    "                $tzAll     = DateTimeZone::listIdentifiers();\n"
+    "                $tzEurope  = array_filter($tzAll, fn($z) => str_starts_with($z, 'Europe/'));\n"
+    "                $tzOther   = array_filter($tzAll, fn($z) => !str_starts_with($z, 'Europe/'));\n"
+    "                sort($tzEurope); sort($tzOther);\n"
+    "                // Europe/Berlin first, rest of Europe, then others\n"
+    "                $tzEuropeSorted = array_merge(\n"
+    "                    ['Europe/Berlin'],\n"
+    "                    array_values(array_filter($tzEurope, fn($z) => $z !== 'Europe/Berlin'))\n"
+    "                );\n"
+    "                function renderTzOption(string $tz, string $current): string {\n"
+    "                    try {\n"
+    "                        $offset  = (new DateTimeZone($tz))->getOffset(new DateTime('now', new DateTimeZone($tz)));\n"
+    "                        $sign    = $offset >= 0 ? '+' : '-';\n"
+    "                        $h       = abs((int)($offset / 3600));\n"
+    "                        $m       = abs((int)(($offset % 3600) / 60));\n"
+    "                        $label   = $tz . ' (GMT' . $sign . $h . ($m ? ':' . str_pad($m,2,'0',STR_PAD_LEFT) : '') . ')';\n"
+    "                    } catch (\\Exception $e) {\n"
+    "                        $label = $tz;\n"
+    "                    }\n"
+    "                    $sel = $tz === $current ? ' selected' : '';\n"
+    "                    return '<option value=\"' . e($tz) . '\"' . $sel . '>' . e($label) . '</option>';\n"
+    "                }\n"
+    "                ?>\n"
+    "                <select id=\"bk-tz\" name=\"timezone\">\n"
+    "                    <optgroup label=\"Europe\">\n"
+    "                    <?php foreach ($tzEuropeSorted as $tz): ?>\n"
+    "                        <?= renderTzOption($tz, $tzCurrent) ?>\n"
+    "                    <?php endforeach ?>\n"
+    "                    </optgroup>\n"
+    "                    <optgroup label=\"Other\">\n"
+    "                    <?php foreach ($tzOther as $tz): ?>\n"
+    "                        <?= renderTzOption($tz, $tzCurrent) ?>\n"
+    "                    <?php endforeach ?>\n"
+    "                    </optgroup>\n"
+    "                </select>\n"
+    "                </td>"
+)
+
+if 'DateTimeZone::listIdentifiers' not in settings:
+    if old_tz_input in settings:
+        settings = settings.replace(old_tz_input, new_tz_select)
+        with open(settings_path, 'w') as f: f.write(settings)
+        print('OK  settings/index.php — timezone dropdown')
+    else:
+        print('ERR settings/index.php — timezone input pattern not found')
+else:
+    print('SKIP settings/index.php — timezone dropdown already present')
+
+php_lint(settings_path, 'admin/views/settings/index.php')
+
+# ── 2. Resource form — slug helper + auto-generate JS ─────────────────────────
+form_path = BASE + '/admin/views/booking/resources/form.php'
+form = open(form_path).read()
+
+# a) Add helper text and is-edit flag to slug field
+old_slug_field = (
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-slug\">Slug</label>\n"
+    "                <input type=\"text\" id=\"r-slug\" name=\"slug\"\n"
+    "                       value=\"<?= e($record['slug'] ?? '') ?>\" placeholder=\"auto-generated\">\n"
+    "            </div>"
+)
+new_slug_field = (
+    "            <div class=\"vcms-form-group\">\n"
+    "                <label for=\"r-slug\">Slug</label>\n"
+    "                <input type=\"text\" id=\"r-slug\" name=\"slug\"\n"
+    "                       value=\"<?= e($record['slug'] ?? '') ?>\" placeholder=\"auto-generated\"\n"
+    "                       data-manual=\"<?= !empty($record['slug']) ? '1' : '0' ?>\">\n"
+    "                <small style=\"color:#6b7280;display:block;margin-top:.25rem\">\n"
+    "                    URL-friendly identifier — auto-generated from the name.\n"
+    "                    Used in the booking URL: <code>/booking/{slug}</code>\n"
+    "                </small>\n"
+    "            </div>"
+)
+
+# b) Add JS for slug auto-gen — find the closing </script> of the toggleHourlyRate script
+old_toggle_script_end = (
+    "toggleHourlyRate();\n"
+    "</script>"
+)
+new_toggle_script_end = (
+    "toggleHourlyRate();\n"
+    "\n"
+    "// Slug auto-generation from name\n"
+    "var slugInput  = document.getElementById('r-slug');\n"
+    "var nameInput  = document.getElementById('r-name');\n"
+    "var slugManual = slugInput ? (slugInput.dataset.manual === '1') : false;\n"
+    "\n"
+    "if (slugInput && nameInput) {\n"
+    "    slugInput.addEventListener('input', function () {\n"
+    "        slugManual = true;\n"
+    "        slugInput.dataset.manual = '1';\n"
+    "    });\n"
+    "    nameInput.addEventListener('input', function () {\n"
+    "        if (slugManual) return;\n"
+    "        var slug = nameInput.value\n"
+    "            .toLowerCase()\n"
+    "            .replace(/[^a-z0-9\\s-]/g, '')\n"
+    "            .trim()\n"
+    "            .replace(/[\\s]+/g, '-')\n"
+    "            .replace(/-+/g, '-');\n"
+    "        slugInput.value = slug;\n"
+    "    });\n"
+    "}\n"
+    "</script>"
+)
+
+changed = 0
+for old, new, label in [
+    (old_slug_field,        new_slug_field,        'slug helper text'),
+    (old_toggle_script_end, new_toggle_script_end, 'slug auto-gen JS'),
+]:
+    if old in form:
+        form = form.replace(old, new)
+        changed += 1
+        print(f'OK  resources/form.php — {label}')
+    elif 'data-manual' in form and label == 'slug helper text':
+        print(f'SKIP resources/form.php — {label} already done')
+    elif 'slugManual' in form and label == 'slug auto-gen JS':
+        print(f'SKIP resources/form.php — {label} already done')
+    else:
+        print(f'ERR resources/form.php — pattern not found for {label}')
+
+with open(form_path, 'w') as f: f.write(form)
+php_lint(form_path, 'admin/views/booking/resources/form.php')
+
+print('\nDone.')

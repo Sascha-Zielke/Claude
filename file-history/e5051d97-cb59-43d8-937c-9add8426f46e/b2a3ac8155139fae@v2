@@ -1,0 +1,173 @@
+---
+tags: [prozess, claude-code, vault, anleitung]
+status: aktiv
+---
+
+# Claude Code — Vault-Zugriff Anleitung
+
+Wie Claude Code auf die Obsidian-Wissensdatenbank zugreift.
+
+---
+
+## 📋 Schritt-für-Schritt Anleitung
+
+### Schritt 1: Vault-Pfad kennen
+**Der Vault ist unter folgendem Pfad erreichbar:**
+```
+D:\Eigene Dateien\Obsidian\Claude
+```
+
+**Alle Dateien sind relativ zu diesem Pfad organisiert.**
+
+---
+
+### Schritt 2: Relevante Dateien identifizieren
+
+Bevor Claude Code arbeitet, **klär: Welche Dateien sind relevant?**
+
+**Beispiel für Translation-App:**
+```
+02 Projekte/Life OS/veloSolutions/Dashboard/veloCMS/Translation-App/Translation-App.md
+```
+
+---
+
+### Schritt 3: Claude Code instruieren
+
+**Bei der Übergabe an Claude Code sagen:**
+
+```
+"Die Anforderungen für die Translation-App findest du unter:
+  D:\Eigene Dateien\Obsidian\Claude\02 Projekte\Life OS\veloSolutions\Dashboard\veloCMS\Translation-App\Translation-App.md
+
+Lese diese Datei und nutze sie als Basis für deinen Masterplan."
+```
+
+---
+
+### Schritt 4: Claude Code liest die Datei
+
+**Claude Code nutzt die Read-Tool:**
+```
+Read file_path="D:\Eigene Dateien\Obsidian\Claude\02 Projekte\Life OS\veloSolutions\Dashboard\veloCMS\Translation-App\Translation-App.md"
+```
+
+Oder mit relativen Pfaden (falls unterstützt):
+```
+Read file_path="02 Projekte/Life OS/veloSolutions/Dashboard/veloCMS/Translation-App/Translation-App.md"
+```
+
+---
+
+### Schritt 5: Claude Code nutzt die Information
+
+Claude Code:
+- Liest die Anforderungen
+- Extrahiert die Details
+- Nutzt sie als Input für seinen Masterplan
+- Schreibt seinen Masterplan zurück in den gleichen Ordner
+
+---
+
+## 🎯 Praktische Nutzungs-Szenarien
+
+### Szenario A: Claude Code schreibt Masterplan
+
+**Ablauf:**
+1. Ich (Claudian) speichere Translation-App.md im Vault ✅
+2. Sascha sagt Claude Code: "Masterplan schreiben, Anforderungen unter [Pfad]"
+3. Claude Code liest Translation-App.md
+4. Claude Code schreibt Masterplan-Phase-1.md in den gleichen Ordner
+5. Claude Code entwickelt nach Masterplan
+
+---
+
+### Szenario B: Claude Code braucht Kontext
+
+**Ablauf:**
+1. Claude Code fragt: "Welche Module gibt es im CMS?"
+2. Sascha sagt: "Schau in CLAUDE.md nach"
+3. Claude Code liest `00 Kontext/CLAUDE.md`
+4. Claude Code hat Kontext über Vault-Struktur, Module, Patterns
+
+---
+
+### Szenario C: Ich (Claudian) bereite Informationen vor
+
+**Ablauf:**
+1. Sascha fragt mich: "Sammle alle Anforderungen für Phase 2"
+2. Ich lese relevante Dateien aus dem Vault
+3. Ich speichere alles in einer Datei: `Masterplan-Input-Phase-2.md`
+4. Ich sag Sascha: "Fertig, Claude Code kann von [Pfad] lesen"
+5. Claude Code liest und hat alles, was er braucht
+
+---
+
+## 🔍 File-System Commands (falls nötig)
+
+Claude Code kann auch selbst im Vault suchen:
+
+**Alle Dateien in Translation-App auflisten:**
+```bash
+ls "D:\Eigene Dateien\Obsidian\Claude\02 Projekte\Life OS\veloSolutions\Dashboard\veloCMS\Translation-App\"
+```
+
+**Dateien durchsuchen:**
+```bash
+find "D:\Eigene Dateien\Obsidian\Claude" -name "*Translation*"
+```
+
+**Inhalte durchsuchen (grep):**
+```bash
+grep -r "Translation" "D:\Eigene Dateien\Obsidian\Claude"
+```
+
+---
+
+## 📝 Best Practice
+
+### Für Sascha:
+1. **Klare Übergabe:** "Lese diese Datei → Schreib dein Ergebnis hier hin"
+2. **Pfad immer vollständig nennen:** Keine Missverständnisse
+3. **Relevante Dateien vorher sammeln:** Nicht "schau mal im Vault" sondern "nutze [konkrete Datei]"
+
+### Für Claude Code:
+1. **Beim Start:** Pfad-Informationen erhalten
+2. **Beim Lesen:** Read-Tool nutzen mit vollständigem Pfad
+3. **Beim Schreiben:** Masterpläne/Resume in den gleichen Ordner speichern
+4. **Bei Fragen:** Kann selbst im Vault suchen mit Grep/Find
+
+---
+
+## 🛠️ Beispiel-Integration
+
+**Sascha zu Claude Code:**
+
+> "Du baust die Translation-App. Die Anforderungen findest du hier:  
+> `D:\Eigene Dateien\Obsidian\Claude\02 Projekte\Life OS\veloSolutions\Dashboard\veloCMS\Translation-App\Translation-App.md`
+> 
+> Architektur-Patterns für veloCMS: [[00 Kontext/veloCMS - Architecture Guard]]
+> 
+> Schreib deinen Masterplan nach diesem Format:
+> `D:\Eigene Dateien\Obsidian\Claude\02 Projekte\Life OS\veloSolutions\Dashboard\veloCMS\Translation-App\Masterplan-Phase-1.md`"
+
+**Claude Code:**
+1. Liest Translation-App.md ✓
+2. Liest Architecture Guard ✓
+3. Schreibt Masterplan ✓
+4. Arbeitet autonom ✓
+
+---
+
+## ✅ Checklist vor Übergabe an Claude Code
+
+- [ ] Relevante Dateien im Vault vorhanden?
+- [ ] Pfade korrekt und vollständig?
+- [ ] Claude Code weiß, welche Dateien zu lesen sind?
+- [ ] Claude Code weiß, wohin sein Output gehört?
+- [ ] Masterplan-Template oder Format bekannt?
+
+---
+
+**Gültig ab:** 2026-05-26  
+**Für:** Claude Code Workflow Automation

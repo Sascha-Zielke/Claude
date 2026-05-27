@@ -1,0 +1,182 @@
+---
+tags: [veloSolutions, velocms, translation, mehrsprachig, projekt]
+status: aktiv
+---
+
+# veloCMS — Translation-App
+
+Mehrsprachige Website-Lösung für alle veloSolutions-Kunden.
+
+## 📋 Anforderungen
+
+### Kern-Features
+
+#### 1. Mehrsprachigkeit
+- **Erste Sprache:** Englisch (EN)
+- **Weitere Sprachen:** Beliebig hinzufügbar ohne Probleme
+- **Sprach-Verwaltung im Backend:** Sprachen aktivieren/deaktivieren, Reihenfolge festlegen
+
+#### 2. Frontend — Sprachenwechsel
+- **Toggle (2 Sprachen):** Einfacher Schalter
+- **Dropdown (3+ Sprachen):** Auswahlmenü
+- **Automatische Erkennung:** Browser-Sprache erkennen und vorschlagen
+
+#### 3. Backend — Sprachenwechsel
+- **Toggle/Dropdown analog zum Frontend:** Redakteure können in jeder Sprache bearbeiten
+- **Getrennte Edit-Seiten:** Nicht Englisch und Deutsch im selben Editor
+
+#### 4. Automatische Übersetzung
+- **Trigger:** Wenn Texte mit KI generiert werden (z.B. in Textfeldern)
+- **Automatisch übersetzen:** KI-generierte Texte werden in alle aktiven Sprachen übersetzt
+- **Status:** Markiert als "KI-generiert" → später nicht automatisch aktualisieren
+
+#### 5. Manuelle Übersetzungen ausschließen
+- **Markierung:** Wenn ein Redakteur einen Text manuell ändert → "Manuell übersetzt"
+- **Effekt:** Dieses Feld wird von Auto-Übersetzungen ignoriert
+- **Entsperren:** Redakteur kann manuell Markierung entfernen
+
+#### 6. Inhalts-Abdeckung
+**Übersetzen sollen ALLE folgenden Inhalte:**
+- Frontend-Texte (alle Seiten, Komponenten)
+- SEO-Texte (Meta-Descriptions, Title-Tags)
+- Navigation (Menüpunkte)
+- Blog-Posts (Titel, Inhalt, Slug)
+- Rechtliche Texte (Impressum, Datenschutz, DSGVO)
+- Formulare (Labels, Placeholder, Error-Messages)
+- Calls-to-Action (Buttons, Links)
+- Contact-Modul (Labels, Bestätigungsmails)
+
+---
+
+### Advanced Features (Phase 2+)
+
+#### 7. Übersetzungs-Status-Dashboard
+- Übersicht: Wie viel % jeder Sprache ist übersetzt?
+- Pro Sprache: Welche Seiten/Inhalte fehlen noch?
+- Fehler-Hinweise: KI-Qualität zu niedrig, manuelle Review nötig
+- Export: Status als CSV/Report
+
+#### 8. Fallback-Kette
+- **Definition:** Wenn Übersetzung fehlt → Fallback auf Englisch
+- **Konfigurierbar:** Pro Sprache festlegen, welche Sprache Fallback ist
+- **Anzeige:** Im Frontend deutlich machen, dass es Fallback ist (optional)
+
+#### 9. SEO pro Sprache
+- **Hreflang-Tags:** Automatisch generiert (für Google)
+- **Canonical URLs:** Pro Sprache definiert
+- **Sprach-spezifische Meta-Daten:** Title, Description pro Sprache
+
+#### 10. Browser-Sprach-Erkennung
+- **Automatisch:** Browser-Language auslesen
+- **Redirect:** User zur passenden Sprache leiten (wenn vorhanden)
+- **Fallback:** Wenn Browser-Sprache nicht vorhanden → zu EN
+- **Cookie:** Nutzer-Wahl speichern (nicht ständig neu-redirecten)
+
+#### 11. Glossar & Sperrwörter
+- **Glossar:** Definiere Übersetzungen für spezifische Begriffe (z.B. Produktnamen, Firmennamen)
+- **Automatisch:** KI-Übersetzung respektiert Glossar
+- **Sperrwörter:** Keine Übersetzung für bestimmte Begriffe
+- **Beispiel:** "veloSolutions" bleibt "veloSolutions", nicht "MotorLösungen"
+
+#### 12. Export / Import (CSV)
+- **Export:** Alle Texte + Übersetzungen als CSV
+- **Import:** Übersetzungen (z.B. von ext. Übersetzter) importieren
+- **Format:** Spalten: Original | DE | EN | FR | ... | Status | Notizen
+
+#### 13. Auto-Trigger beim Speichern
+- **Trigger:** Wenn Redakteur auf "Speichern" klickt
+- **Automatisch:** Content wird automatisch übersetzt (wenn KI-generiert)
+- **Asynchron:** Nicht blockierend für Redakteur
+- **Feedback:** Status-Benachrichtigung (Übersetzung läuft...)
+
+#### 14. Übersetzungs-Indikator in Listen-Views
+- **Visual Indicator:** Grünes/rotes Icon neben jedem Item
+- **Bedeutung:** Grün = Alle Sprachen übersetzt, Rot = Ausstehend
+- **Auf einen Blick:** Redakteur sieht sofort, was noch fehlt
+- **Sortierbar:** Nach Übersetzungs-Status filtern/sortieren
+
+#### 15. Veraltete-Übersetzung-Erkennung
+- **Tracking:** Wenn Original-Text geändert wird
+- **Markierung:** Übersetzung wird als "veraltet" markiert
+- **Anzeige:** Im Backend deutlich gekennzeichnet
+- **Workflow:** Redakteur kann Übersetzung aktualisieren oder manuell überschreiben
+
+---
+
+## 🎨 UI/UX
+
+### Backend-Ansicht
+```
+[Seite: "About Us"]
+[Toggle: EN | DE | FR]      ← Sprach-Wechsel
+
+Title (DE):     [Über uns          ]  🟢 Übersetzt
+Content (DE):   [Langtext...       ]  🟡 Veraltet
+---
+Title (EN):     [About Us          ]  🟢 Übersetzt
+Content (EN):   [Long text...      ]  🟢 Übersetzt
+---
+[Speichern] [Auto-Translate]
+```
+
+### Frontend-Ansicht
+```
+[EN | DE | FR]  ← Sprach-Toggle/Dropdown
+
+Seite wird in gewählter Sprache angezeigt
+Wenn Übersetzung fehlt: Fallback auf EN mit Hinweis "(EN Version)"
+```
+
+---
+
+## 🗄️ Datenbank-Struktur (Konzept)
+
+### Tabellen
+- `velocms_translations` — Alle übersetzten Segmente
+- `velocms_translation_languages` — Verwaltete Sprachen
+- `velocms_translation_glossary` — Glossar-Einträge
+- `velocms_translation_status` — Status pro Content-Type/ID
+
+### Felder je Übersetzung
+- `id`
+- `translatable_type` (Pages, BlogPosts, Navigation, etc.)
+- `translatable_id` (ID des Objekts)
+- `field_name` (title, content, slug, etc.)
+- `language_code` (DE, EN, FR, etc.)
+- `translated_content`
+- `source_content` (Original-Text zum Vergleich)
+- `translation_method` (auto_ai, manual, glossary)
+- `is_manual` (boolean — von Redakteur manuell übersetzt?)
+- `quality_score` (0-100, KI-Qualität)
+- `is_outdated` (boolean — Source-Text wurde geändert?)
+- `created_at`
+- `updated_at`
+
+---
+
+## ✅ Success-Kriterien (Phase 1 MVP)
+
+- [ ] 2-3 Sprachen funktionieren (EN, DE, optional FR)
+- [ ] Frontend Toggle/Dropdown funktioniert
+- [ ] Backend Toggle/Dropdown funktioniert
+- [ ] Auto-Translate bei KI-generiert funktioniert
+- [ ] Manuelle Texte werden von Auto-Translate ausgeschlossen
+- [ ] Fallback auf EN funktioniert
+- [ ] Alle Content-Types werden übersetzt (Pages, Blog, Nav, Contact, etc.)
+- [ ] Browser-Sprach-Erkennung funktioniert
+- [ ] Status-Indikator in Listen-Views funktioniert
+- [ ] Veraltete-Übersetzung wird erkannt
+
+---
+
+## 📅 Abhängigkeiten
+
+- TranslationService (Core) — für KI-Übersetzung verwenden
+- Alle bestehenden Module (Pages, Blog, Contact, etc.) — müssen Translations-Daten liefern
+- Database Migrations — neue Tabellen
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../../veloCMS|veloCMS Projekt Übersicht]] | [[../Apps|Apps Übersicht]]

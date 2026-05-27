@@ -1,0 +1,210 @@
+import os
+import json
+import re
+
+base = '/var/www/velocms'
+
+# ═══════════════════════════════════════════════════════════════
+# 1. core/Response.php — add withHeader() alias
+# ═══════════════════════════════════════════════════════════════
+response_path = base + '/core/Response.php'
+response_code = open(response_path).read()
+
+if 'withHeader' not in response_code:
+    # Insert after the existing header() method
+    old = '''    public function header(string $name, string $value): static
+    {
+        $this->headers[$name] = $value;
+        return $this;
+    }'''
+    new = old + '''
+
+    public function withHeader(string $name, string $value): static
+    {
+        return $this->header($name, $value);
+    }'''
+    open(response_path, 'w').write(response_code.replace(old, new))
+    print('OK  core/Response.php (withHeader added)')
+else:
+    print('OK  core/Response.php (withHeader already present)')
+
+# ═══════════════════════════════════════════════════════════════
+# 2. composer.json — add sub-namespace mappings for Seo/Search/Api
+# ═══════════════════════════════════════════════════════════════
+composer_path = base + '/composer.json'
+with open(composer_path) as f:
+    composer = json.load(f)
+
+psr4 = composer['autoload']['psr-4']
+additions = {
+    'VeloCMS\\Modules\\Seo\\Admin\\':       'modules/seo/admin/controllers/',
+    'VeloCMS\\Modules\\Seo\\Models\\':      'modules/seo/models/',
+    'VeloCMS\\Modules\\Seo\\Controllers\\': 'modules/seo/controllers/',
+    'VeloCMS\\Modules\\Search\\Models\\':      'modules/search/models/',
+    'VeloCMS\\Modules\\Search\\Controllers\\': 'modules/search/controllers/',
+    'VeloCMS\\Modules\\Api\\Admin\\':       'modules/api/admin/controllers/',
+    'VeloCMS\\Modules\\Api\\Models\\':      'modules/api/models/',
+    'VeloCMS\\Modules\\Api\\Controllers\\': 'modules/api/controllers/',
+}
+added = []
+for k, v in additions.items():
+    if k not in psr4:
+        psr4[k] = v
+        added.append(k)
+
+with open(composer_path, 'w') as f:
+    json.dump(composer, f, indent=4)
+
+if added:
+    for k in added:
+        print(f'OK  composer.json ({k})')
+else:
+    print('OK  composer.json (sub-namespace mappings already present)')
+
+# ═══════════════════════════════════════════════════════════════
+# 3. admin/routes.php — add SEO + API admin routes
+# ═══════════════════════════════════════════════════════════════
+routes_path = base + '/admin/routes.php'
+routes = open(routes_path).read()
+
+seo_block = r"""
+use VeloCMS\Modules\Seo\Admin\RedirectAdminController;
+
+// ── SEO & Redirects ───────────────────────────────────────────────────────────
+$router->get('/admin/seo',                    [RedirectAdminController::class, 'index']);
+$router->post('/admin/seo/redirects',         [RedirectAdminController::class, 'store']);
+$router->post('/admin/seo/redirects/{id}/delete', [RedirectAdminController::class, 'destroy']);"""
+
+api_block = r"""
+use VeloCMS\Modules\Api\Admin\ApiKeyAdminController;
+
+// ── API Keys ──────────────────────────────────────────────────────────────────
+$router->get('/admin/api',                    [ApiKeyAdminController::class, 'index']);
+$router->post('/admin/api/keys',              [ApiKeyAdminController::class, 'store']);
+$router->post('/admin/api/keys/{id}/revoke',  [ApiKeyAdminController::class, 'revoke']);"""
+
+if 'RedirectAdminController' not in routes:
+    routes += seo_block
+    print('OK  admin/routes.php (SEO routes added)')
+else:
+    print('OK  admin/routes.php (SEO routes already present)')
+
+if 'ApiKeyAdminController' not in routes:
+    routes += api_block
+    print('OK  admin/routes.php (API routes added)')
+else:
+    print('OK  admin/routes.php (API routes already present)')
+
+open(routes_path, 'w').write(routes)
+
+# ═══════════════════════════════════════════════════════════════
+# 4. admin/views/layout.php — add SEO + API sidebar links
+# ═══════════════════════════════════════════════════════════════
+layout_path = base + '/admin/views/layout.php'
+layout = open(layout_path).read()
+
+# Add SEO after Navigation in Content section
+if "href=\"/admin/seo\"" not in layout:
+    layout = layout.replace(
+        '''            <a href="/admin/navigation" class="<?= ($page ?? '') === 'navigation' ? 'active' : '' ?>">
+                Navigation
+            </a>''',
+        '''            <a href="/admin/navigation" class="<?= ($page ?? '') === 'navigation' ? 'active' : '' ?>">
+                Navigation
+            </a>
+            <a href="/admin/seo" class="<?= ($page ?? '') === 'seo' ? 'active' : '' ?>">
+                SEO
+            </a>'''
+    )
+    print('OK  admin/views/layout.php (SEO sidebar link added)')
+else:
+    print('OK  admin/views/layout.php (SEO sidebar link already present)')
+
+# Add API before Settings in System section
+if "href=\"/admin/api\"" not in layout:
+    layout = layout.replace(
+        '''            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">
+                Settings
+            </a>''',
+        '''            <a href="/admin/api" class="<?= ($page ?? '') === 'api' ? 'active' : '' ?>">
+                API Keys
+            </a>
+            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">
+                Settings
+            </a>'''
+    )
+    print('OK  admin/views/layout.php (API sidebar link added)')
+else:
+    print('OK  admin/views/layout.php (API sidebar link already present)')
+
+open(layout_path, 'w').write(layout)
+
+# ═══════════════════════════════════════════════════════════════
+# 5. public/index.php — load Seo, Search, Api modules
+# ═══════════════════════════════════════════════════════════════
+index_path = base + '/public/index.php'
+open(index_path, 'w').write(r"""<?php declare(strict_types=1);
+$app = require dirname(__DIR__) . '/core/bootstrap.php';
+
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Api\ApiModule;
+use VeloCMS\Modules\Blog\BlogModule;
+use VeloCMS\Modules\Pages\PagesModule;
+use VeloCMS\Modules\Search\SearchModule;
+use VeloCMS\Modules\Seo\SeoModule;
+
+$router = $app->make(Router::class);
+
+$modules = [
+    new SeoModule($app),
+    new SearchModule($app),
+    new ApiModule($app),
+    new BlogModule($app),
+    new PagesModule($app),
+];
+foreach ($modules as $module) {
+    $module->register($router);
+}
+
+require $app->basePath('admin/routes.php');
+$app->run(new Request());
+""")
+print('OK  public/index.php (Seo, Search, Api modules added)')
+
+# ═══════════════════════════════════════════════════════════════
+# 6. Admin stylesheet — add alert CSS if missing
+# ═══════════════════════════════════════════════════════════════
+admin_css_path = base + '/public/assets/admin/style.css'
+admin_css = open(admin_css_path).read()
+
+alert_css = """
+/* Alerts */
+.vcms-alert { padding:.75rem 1rem; border-radius:6px; margin-bottom:1rem; font-size:.9rem; }
+.vcms-alert--success { background:#dcfce7; color:#166534; border:1px solid #bbf7d0; }
+.vcms-alert--error   { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+.vcms-alert--info    { background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; }
+"""
+
+if '.vcms-alert--success' not in admin_css:
+    with open(admin_css_path, 'a') as f:
+        f.write(alert_css)
+    print('OK  public/assets/admin/style.css (alert CSS added)')
+else:
+    print('OK  public/assets/admin/style.css (alert CSS already present)')
+
+# ═══════════════════════════════════════════════════════════════
+# 7. Regenerate Composer autoloader
+# ═══════════════════════════════════════════════════════════════
+import subprocess
+result = subprocess.run(
+    ['composer', 'dump-autoload', '--optimize'],
+    cwd=base, capture_output=True, text=True
+)
+if result.returncode == 0:
+    print('OK  composer dump-autoload')
+else:
+    print('ERR composer dump-autoload:')
+    print(result.stderr)
+
+print('\nPhase 4e done — all modules wired.')

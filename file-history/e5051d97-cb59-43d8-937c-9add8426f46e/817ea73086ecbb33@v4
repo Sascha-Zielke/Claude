@@ -1,0 +1,22 @@
+---
+tags: [velo-solutions, veloCMS, cms]
+status: aktiv
+---
+
+# veloCMS — Content Management System
+
+Ein intuitives, eigenes CMS zum Erstellen und Verwalten von Kundenseiten. Das erste marktfähige Produkt von veloSolutions.
+
+## Komponenten
+
+- [[veloCMS|Projekt-Details]]
+- [[Apps/_index|Apps]] — Modulare Erweiterungen (Translation, Booking, etc.)
+- [[veloCMS-CSS-System|CSS-System]] — Default CSS + Customer CSS Prioritäten
+- Page Builder
+- Asset Management
+- Template System
+- Publishing & Deployments
+
+## Übergeordnet
+
+← [[../_index|Dashboard]] | [[../../_index|veloSolutions]] | [[../../../Life OS|Life OS]]

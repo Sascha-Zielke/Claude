@@ -1,0 +1,27 @@
+path = '/var/www/velocms/admin/views/settings/index.php'
+lines = open(path).readlines()
+
+needle_tab   = 'tab=<?= $key ?>'
+replace_tab  = 'tab=<?= e($key) ?>'
+needle_lbl   = '            <?= $label ?>\n'
+replace_lbl  = '            <?= e($label) ?>\n'
+needle_save  = 'Save <?= $tabs[$module] ?> Settings'
+replace_save = "Save <?= e($tabs[$module] ?? '') ?> Settings"
+
+changed = 0
+for i, line in enumerate(lines):
+    if needle_tab in line:
+        lines[i] = line.replace(needle_tab, replace_tab)
+        changed += 1
+        print(f'Fixed line {i+1}: tab key')
+    if line == needle_lbl:
+        lines[i] = replace_lbl
+        changed += 1
+        print(f'Fixed line {i+1}: label')
+    if needle_save in line:
+        lines[i] = line.replace(needle_save, replace_save)
+        changed += 1
+        print(f'Fixed line {i+1}: Save button')
+
+open(path, 'w').writelines(lines)
+print(f'Done — {changed} lines fixed')

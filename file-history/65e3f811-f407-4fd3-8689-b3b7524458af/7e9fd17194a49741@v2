@@ -1,0 +1,23 @@
+<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $row = $pdo->query(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = 'translations'
+               AND COLUMN_NAME = 'manual_override'"
+        )->fetchColumn();
+        if (!$row) {
+            $pdo->exec(
+                "ALTER TABLE translations
+                 ADD COLUMN manual_override TINYINT(1) NOT NULL DEFAULT 0 AFTER auto_translated,
+                 ADD KEY idx_manual (lang, manual_override)"
+            );
+        }
+    }
+    public function down(\PDO $pdo): void
+    {
+        $pdo->exec('ALTER TABLE translations DROP COLUMN IF EXISTS manual_override');
+    }
+};

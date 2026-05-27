@@ -1,0 +1,13 @@
+import json
+
+path = '/var/www/velocms/composer.json'
+with open(path) as f:
+    data = json.load(f)
+
+data['autoload']['psr-4']['VeloCMS\\Admin\\'] = 'admin/controllers/'
+
+with open(path, 'w') as f:
+    json.dump(data, f, indent=4)
+
+print('composer.json fixed')
+print('VeloCMS\\Admin\\ =>', data['autoload']['psr-4']['VeloCMS\\Admin\\'])

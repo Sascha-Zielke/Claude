@@ -1,0 +1,716 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/blog/module.json ──────────────────────────────────────────────────
+files['modules/blog/module.json'] = """{
+    "name": "blog",
+    "label": "Blog",
+    "version": "1.0.0",
+    "description": "Blog posts with categories and tags.",
+    "author": "VeloCMS",
+    "dependencies": ["media"]
+}
+"""
+
+# ── modules/blog/BlogModule.php ───────────────────────────────────────────────
+files['modules/blog/BlogModule.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog;
+
+use VeloCMS\Core\Module;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Blog\Controllers\BlogController;
+
+class BlogModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/blog',                        [BlogController::class, 'index']);
+        $router->get('/blog/category/{slug}',        [BlogController::class, 'category']);
+        $router->get('/blog/{slug}',                 [BlogController::class, 'show']);
+    }
+}
+"""
+
+# ── modules/blog/models/Post.php ─────────────────────────────────────────────
+files['modules/blog/models/Post.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog\Models;
+
+class Post
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query(
+            "SELECT p.*, u.name AS author_name
+             FROM posts p
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.deleted_at IS NULL
+             ORDER BY p.created_at DESC"
+        )->fetchAll();
+    }
+
+    public function published(int $limit = 10, int $offset = 0): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT p.*, u.name AS author_name
+             FROM posts p
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.deleted_at IS NULL AND p.status = 'published'
+             ORDER BY p.published_at DESC
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->execute([$limit, $offset]);
+        return $stmt->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM posts WHERE id = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function findBySlug(string $slug): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT p.*, u.name AS author_name
+             FROM posts p
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.slug = ? AND p.status = 'published' AND p.deleted_at IS NULL LIMIT 1"
+        );
+        $stmt->execute([$slug]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data, int $userId): int
+    {
+        $slug = $this->uniqueSlug($data['slug'] ?: $this->slugify($data['title']));
+        $this->pdo->prepare(
+            'INSERT INTO posts (title, slug, body, status, author_id, published_at)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $data['title'],
+            $slug,
+            $data['body'],
+            $data['status'],
+            $userId,
+            $data['status'] === 'published' ? date('Y-m-d H:i:s') : null,
+        ]);
+        $id = (int) $this->pdo->lastInsertId();
+        $this->syncCategories($id, $data['categories'] ?? []);
+        $this->syncTags($id, $data['tags'] ?? '');
+        return $id;
+    }
+
+    public function update(int $id, array $data, int $userId): void
+    {
+        $slug = $this->uniqueSlug($data['slug'] ?: $this->slugify($data['title']), $id);
+        $this->pdo->prepare(
+            'UPDATE posts SET title=?, slug=?, body=?, status=?, published_at=? WHERE id=?'
+        )->execute([
+            $data['title'],
+            $slug,
+            $data['body'],
+            $data['status'],
+            $data['status'] === 'published' ? date('Y-m-d H:i:s') : null,
+            $id,
+        ]);
+        $this->syncCategories($id, $data['categories'] ?? []);
+        $this->syncTags($id, $data['tags'] ?? '');
+    }
+
+    public function softDelete(int $id): void
+    {
+        $this->pdo->prepare('UPDATE posts SET deleted_at = NOW() WHERE id = ?')->execute([$id]);
+    }
+
+    public function categoriesFor(int $postId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT c.* FROM categories c
+             JOIN post_categories pc ON pc.category_id = c.id
+             WHERE pc.post_id = ?'
+        );
+        $stmt->execute([$postId]);
+        return $stmt->fetchAll();
+    }
+
+    public function tagsFor(int $postId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT t.* FROM tags t
+             JOIN post_tags pt ON pt.tag_id = t.id
+             WHERE pt.post_id = ?'
+        );
+        $stmt->execute([$postId]);
+        return $stmt->fetchAll();
+    }
+
+    private function syncCategories(int $postId, array $categoryIds): void
+    {
+        $this->pdo->prepare('DELETE FROM post_categories WHERE post_id = ?')->execute([$postId]);
+        foreach ($categoryIds as $catId) {
+            $this->pdo->prepare(
+                'INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)'
+            )->execute([$postId, (int) $catId]);
+        }
+    }
+
+    private function syncTags(int $postId, string $tagString): void
+    {
+        $this->pdo->prepare('DELETE FROM post_tags WHERE post_id = ?')->execute([$postId]);
+        $names = array_filter(array_map('trim', explode(',', $tagString)));
+        foreach ($names as $name) {
+            $slug = $this->slugify($name);
+            $this->pdo->prepare(
+                'INSERT IGNORE INTO tags (name, slug) VALUES (?, ?)'
+            )->execute([$name, $slug]);
+            $tag = $this->pdo->prepare('SELECT id FROM tags WHERE slug = ? LIMIT 1');
+            $tag->execute([$slug]);
+            $tagId = $tag->fetchColumn();
+            if ($tagId) {
+                $this->pdo->prepare(
+                    'INSERT IGNORE INTO post_tags (post_id, tag_id) VALUES (?, ?)'
+                )->execute([$postId, $tagId]);
+            }
+        }
+    }
+
+    private function slugify(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace('/[^a-z0-9\s-]/', '', $text) ?? $text;
+        return trim(preg_replace('/[\s-]+/', '-', $text) ?? $text, '-');
+    }
+
+    private function uniqueSlug(string $slug, int $excludeId = 0): string
+    {
+        $original = $slug;
+        $i = 1;
+        while (true) {
+            $stmt = $this->pdo->prepare(
+                'SELECT id FROM posts WHERE slug = ? AND id != ? AND deleted_at IS NULL LIMIT 1'
+            );
+            $stmt->execute([$slug, $excludeId]);
+            if (!$stmt->fetch()) break;
+            $slug = $original . '-' . $i++;
+        }
+        return $slug;
+    }
+}
+"""
+
+# ── modules/blog/models/Category.php ─────────────────────────────────────────
+files['modules/blog/models/Category.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog\Models;
+
+class Category
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query('SELECT * FROM categories ORDER BY name')->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM categories WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(string $name): int
+    {
+        $slug = $this->uniqueSlug($this->slugify($name));
+        $this->pdo->prepare('INSERT INTO categories (name, slug) VALUES (?, ?)')->execute([$name, $slug]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function delete(int $id): void
+    {
+        $this->pdo->prepare('DELETE FROM categories WHERE id = ?')->execute([$id]);
+    }
+
+    private function slugify(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace('/[^a-z0-9\s-]/', '', $text) ?? $text;
+        return trim(preg_replace('/[\s-]+/', '-', $text) ?? $text, '-');
+    }
+
+    private function uniqueSlug(string $slug): string
+    {
+        $original = $slug;
+        $i = 1;
+        while (true) {
+            $stmt = $this->pdo->prepare('SELECT id FROM categories WHERE slug = ? LIMIT 1');
+            $stmt->execute([$slug]);
+            if (!$stmt->fetch()) break;
+            $slug = $original . '-' . $i++;
+        }
+        return $slug;
+    }
+}
+"""
+
+# ── modules/blog/controllers/BlogController.php (frontend) ───────────────────
+files['modules/blog/controllers/BlogController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Core\View;
+use VeloCMS\Modules\Blog\Models\Post;
+use VeloCMS\Modules\Blog\Models\Category;
+
+class BlogController
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function index(Request $request, array $params): Response
+    {
+        $db    = $this->app->make(Database::class);
+        $posts = (new Post($db->core()))->published();
+        return (new Response())->html($this->themeView('blog-index.php', [
+            'title' => 'Blog',
+            'posts' => $posts,
+        ]));
+    }
+
+    public function show(Request $request, array $params): Response
+    {
+        $db   = $this->app->make(Database::class);
+        $post = (new Post($db->core()))->findBySlug($params['slug'] ?? '');
+        if (!$post) {
+            return (new Response())->html($this->themeView('404.php', ['title' => 'Not Found']), 404);
+        }
+        return (new Response())->html($this->themeView('blog-post.php', [
+            'title' => $post['title'],
+            'post'  => $post,
+        ]));
+    }
+
+    public function category(Request $request, array $params): Response
+    {
+        $db   = $this->app->make(Database::class);
+        $slug = $params['slug'] ?? '';
+        $cat  = $this->app->make(Database::class)->core()->prepare(
+            'SELECT * FROM categories WHERE slug = ? LIMIT 1'
+        );
+        $cat->execute([$slug]);
+        $category = $cat->fetch();
+        if (!$category) {
+            return (new Response())->html($this->themeView('404.php', ['title' => 'Not Found']), 404);
+        }
+        $stmt = $db->core()->prepare(
+            "SELECT p.*, u.name AS author_name FROM posts p
+             JOIN post_categories pc ON pc.post_id = p.id
+             LEFT JOIN users u ON u.id = p.author_id
+             WHERE pc.category_id = ? AND p.status = 'published' AND p.deleted_at IS NULL
+             ORDER BY p.published_at DESC"
+        );
+        $stmt->execute([$category['id']]);
+        return (new Response())->html($this->themeView('blog-index.php', [
+            'title'    => 'Category: ' . $category['name'],
+            'posts'    => $stmt->fetchAll(),
+            'category' => $category,
+        ]));
+    }
+
+    private function themeView(string $template, array $data = []): string
+    {
+        $view = new View($this->app->basePath('themes/default/layouts'));
+        return $view->with($data)->render($template);
+    }
+}
+"""
+
+# ── modules/blog/admin/controllers/PostAdminController.php ───────────────────
+files['modules/blog/admin/controllers/PostAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Blog\Models\Post;
+use VeloCMS\Modules\Blog\Models\Category;
+
+class PostAdminController extends BaseController
+{
+    private function postModel(): Post
+    {
+        return new Post($this->app->make(Database::class)->core());
+    }
+
+    private function categoryModel(): Category
+    {
+        return new Category($this->app->make(Database::class)->core());
+    }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        return $this->layout('blog/index.php', [
+            'user'  => $this->auth()->user(),
+            'page'  => 'blog',
+            'posts' => $this->postModel()->all(),
+        ]);
+    }
+
+    public function create(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        return $this->layout('blog/form.php', [
+            'user'       => $this->auth()->user(),
+            'page'       => 'blog',
+            'csrf'       => $this->auth()->csrfToken(),
+            'title'      => 'New Post',
+            'action'     => '/admin/blog',
+            'record'     => null,
+            'categories' => $this->categoryModel()->all(),
+            'error'      => null,
+        ]);
+    }
+
+    public function store(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/blog');
+        $data = [
+            'title'      => trim($req->post('title', '')),
+            'slug'       => trim($req->post('slug', '')),
+            'body'       => $req->post('body', ''),
+            'status'     => $req->post('status', 'draft'),
+            'categories' => $req->post('categories', []),
+            'tags'       => trim($req->post('tags', '')),
+        ];
+        if ($data['title'] === '') {
+            return $this->layout('blog/form.php', [
+                'user'       => $this->auth()->user(),
+                'page'       => 'blog',
+                'csrf'       => $this->auth()->csrfToken(),
+                'title'      => 'New Post',
+                'action'     => '/admin/blog',
+                'record'     => $data,
+                'categories' => $this->categoryModel()->all(),
+                'error'      => 'Title is required.',
+            ]);
+        }
+        $this->postModel()->create($data, (int) $this->auth()->id());
+        return $this->redirect('/admin/blog');
+    }
+
+    public function edit(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        $record = $this->postModel()->findById((int) $params['id']);
+        if (!$record) return $this->redirect('/admin/blog');
+        $postCats = array_column($this->postModel()->categoriesFor((int)$params['id']), 'id');
+        $postTags = implode(', ', array_column($this->postModel()->tagsFor((int)$params['id']), 'name'));
+        return $this->layout('blog/form.php', [
+            'user'       => $this->auth()->user(),
+            'page'       => 'blog',
+            'csrf'       => $this->auth()->csrfToken(),
+            'title'      => 'Edit Post',
+            'action'     => '/admin/blog/' . $params['id'],
+            'record'     => $record,
+            'postCats'   => $postCats,
+            'postTags'   => $postTags,
+            'categories' => $this->categoryModel()->all(),
+            'error'      => null,
+        ]);
+    }
+
+    public function update(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/blog');
+        $id   = (int) $params['id'];
+        $data = [
+            'title'      => trim($req->post('title', '')),
+            'slug'       => trim($req->post('slug', '')),
+            'body'       => $req->post('body', ''),
+            'status'     => $req->post('status', 'draft'),
+            'categories' => $req->post('categories', []),
+            'tags'       => trim($req->post('tags', '')),
+        ];
+        if ($data['title'] === '') {
+            return $this->layout('blog/form.php', [
+                'user'       => $this->auth()->user(),
+                'page'       => 'blog',
+                'csrf'       => $this->auth()->csrfToken(),
+                'title'      => 'Edit Post',
+                'action'     => '/admin/blog/' . $id,
+                'record'     => array_merge($this->postModel()->findById($id) ?? [], $data),
+                'postCats'   => $data['categories'],
+                'postTags'   => $data['tags'],
+                'categories' => $this->categoryModel()->all(),
+                'error'      => 'Title is required.',
+            ]);
+        }
+        $this->postModel()->update($id, $data, (int) $this->auth()->id());
+        return $this->redirect('/admin/blog');
+    }
+
+    public function delete(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor', 'author');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/blog');
+        $this->postModel()->softDelete((int) $params['id']);
+        return $this->redirect('/admin/blog');
+    }
+}
+"""
+
+# ── modules/blog/admin/controllers/CategoryAdminController.php ───────────────
+files['modules/blog/admin/controllers/CategoryAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Blog\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Blog\Models\Category;
+
+class CategoryAdminController extends BaseController
+{
+    private function model(): Category
+    {
+        return new Category($this->app->make(Database::class)->core());
+    }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        return $this->layout('blog/categories.php', [
+            'user'       => $this->auth()->user(),
+            'page'       => 'blog',
+            'csrf'       => $this->auth()->csrfToken(),
+            'categories' => $this->model()->all(),
+            'error'      => null,
+        ]);
+    }
+
+    public function store(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/blog/categories');
+        $name = trim($req->post('name', ''));
+        if ($name !== '') $this->model()->create($name);
+        return $this->redirect('/admin/blog/categories');
+    }
+
+    public function delete(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/blog/categories');
+        $this->model()->delete((int) $params['id']);
+        return $this->redirect('/admin/blog/categories');
+    }
+}
+"""
+
+# ── admin/views/blog/index.php ────────────────────────────────────────────────
+files['admin/views/blog/index.php'] = r"""<div class="vcms-section-header">
+    <h3>Blog Posts</h3>
+    <div>
+        <a href="/admin/blog/categories" class="vcms-btn vcms-btn--secondary">Categories</a>
+        <a href="/admin/blog/create" class="vcms-btn">+ New Post</a>
+    </div>
+</div>
+
+<?php if (empty($posts)): ?>
+    <p class="vcms-empty">No posts yet. <a href="/admin/blog/create">Write your first post.</a></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr><th>Title</th><th>Status</th><th>Author</th><th>Date</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($posts as $p): ?>
+        <tr>
+            <td><strong><?= e($p['title']) ?></strong></td>
+            <td><span class="vcms-badge vcms-badge--<?= e($p['status']) ?>"><?= e($p['status']) ?></span></td>
+            <td><?= e($p['author_name'] ?? '—') ?></td>
+            <td><?= e(substr($p['created_at'], 0, 10)) ?></td>
+            <td class="vcms-actions">
+                <?php if ($p['status'] === 'published'): ?>
+                <a href="/blog/<?= e($p['slug']) ?>" target="_blank" class="vcms-btn vcms-btn--sm">View</a>
+                <?php endif; ?>
+                <a href="/admin/blog/<?= $p['id'] ?>/edit" class="vcms-btn vcms-btn--sm">Edit</a>
+                <form method="post" action="/admin/blog/<?= $p['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('Delete this post?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+"""
+
+# ── admin/views/blog/form.php ─────────────────────────────────────────────────
+files['admin/views/blog/form.php'] = r"""<div class="vcms-section-header">
+    <h3><?= e($title ?? 'Post') ?></h3>
+    <a href="/admin/blog" class="vcms-btn vcms-btn--secondary">← Back</a>
+</div>
+
+<?php if (!empty($error)): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif; ?>
+
+<form method="post" action="<?= e($action) ?>" class="vcms-form" id="page-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group vcms-form-group--wide">
+            <label for="f-title">Title <span class="vcms-required">*</span></label>
+            <input type="text" id="f-title" name="title"
+                   value="<?= e($record['title'] ?? '') ?>"
+                   placeholder="Post title" required autofocus>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-slug">Slug</label>
+            <div class="vcms-slug-wrap">
+                <span class="vcms-slug-prefix">/blog/</span>
+                <input type="text" id="f-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>"
+                       placeholder="auto-generated">
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label>Body</label>
+        <div class="vcms-editor-wrap">
+            <div class="vcms-editor-toolbar" id="editor-toolbar">
+                <button type="button" data-cmd="bold">B</button>
+                <button type="button" data-cmd="italic"><em>I</em></button>
+                <button type="button" data-cmd="h2">H2</button>
+                <button type="button" data-cmd="h3">H3</button>
+                <button type="button" data-cmd="ul">&#8226; List</button>
+                <button type="button" data-cmd="ol">1. List</button>
+                <button type="button" data-cmd="link">&#128279; Link</button>
+                <button type="button" data-cmd="blockquote">&#10077;</button>
+                <button type="button" data-cmd="removeFormat">&#10060;</button>
+            </div>
+            <div id="vcms-editor" class="vcms-editor"
+                 contenteditable="true"><?= $record['body'] ?? '' ?></div>
+            <textarea name="body" id="vcms-body" hidden><?= e($record['body'] ?? '') ?></textarea>
+        </div>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="f-status">Status</label>
+            <select id="f-status" name="status">
+                <?php foreach (['draft','published','scheduled'] as $s): ?>
+                <option value="<?= $s ?>" <?= ($record['status'] ?? 'draft') === $s ? 'selected' : '' ?>>
+                    <?= ucfirst($s) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label>Categories</label>
+            <div class="vcms-checkbox-group">
+            <?php foreach ($categories as $cat): ?>
+                <label class="vcms-checkbox">
+                    <input type="checkbox" name="categories[]" value="<?= $cat['id'] ?>"
+                        <?= in_array($cat['id'], $postCats ?? [], false) ? 'checked' : '' ?>>
+                    <?= e($cat['name']) ?>
+                </label>
+            <?php endforeach; ?>
+            <?php if (empty($categories)): ?>
+                <em><a href="/admin/blog/categories">Add categories first</a></em>
+            <?php endif; ?>
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label for="f-tags">Tags <small>(comma-separated)</small></label>
+        <input type="text" id="f-tags" name="tags"
+               value="<?= e($postTags ?? '') ?>"
+               placeholder="php, web, tutorial">
+    </div>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn">Save Post</button>
+        <a href="/admin/blog" class="vcms-btn vcms-btn--secondary">Cancel</a>
+    </div>
+</form>
+
+<script src="/assets/admin/editor.js" defer></script>
+<script src="/assets/admin/slug.js" defer></script>
+"""
+
+# ── admin/views/blog/categories.php ──────────────────────────────────────────
+files['admin/views/blog/categories.php'] = r"""<div class="vcms-section-header">
+    <h3>Blog Categories</h3>
+    <a href="/admin/blog" class="vcms-btn vcms-btn--secondary">← Posts</a>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem">Add Category</h4>
+<form method="post" action="/admin/blog/categories" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label for="cat-name">Name</label>
+        <input type="text" id="cat-name" name="name" placeholder="Category name" required>
+    </div>
+    <button type="submit" class="vcms-btn">Add Category</button>
+</form>
+</div>
+
+<div>
+<?php if (empty($categories)): ?>
+    <p class="vcms-empty">No categories yet.</p>
+<?php else: ?>
+<table class="vcms-table">
+    <thead><tr><th>Name</th><th>Slug</th><th></th></tr></thead>
+    <tbody>
+    <?php foreach ($categories as $cat): ?>
+    <tr>
+        <td><?= e($cat['name']) ?></td>
+        <td><code><?= e($cat['slug']) ?></code></td>
+        <td>
+            <form method="post" action="/admin/blog/categories/<?= $cat['id'] ?>/delete" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('Delete this category?')">Delete</button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+<?php endif; ?>
+</div>
+
+</div>
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 3c done — blog module written.')

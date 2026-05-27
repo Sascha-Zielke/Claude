@@ -1,0 +1,30 @@
+---
+tags: [projekt]
+status: aktiv
+erstellt: 2026-05-25
+---
+
+# Privates Dashboard
+
+## Ziel
+
+Ein persönliches Dashboard entwickeln, das alle privaten Lebensbereiche — Gesundheit, Finanzen, Ziele, Routinen — übersichtlich zusammenführt und steuerbar macht. Teil des Life OS.
+
+## Module
+
+- [[../../Privat/Finanzen, Steuern/_index|💰 Finanzen & Steuern]]
+- [[../../Privat/Gesundheit/_index|❤️ Gesundheit]]
+- [[../../Privat/Charakter/_index|🎯 Charakter & Entwicklung]]
+- [[../../Privat/Hobbys/_index|🎮 Hobbys]]
+
+## Integration
+
+Kernkomponente der [[../../../veloSolutions|veloSolutions-Plattform]] für persönliche Daten-Verwaltung.
+
+## Nächste Schritte
+
+- [ ] Dashboard-Layout entwerfen
+- [ ] Daten-Integration planen
+- [ ] Metriken-System definieren
+
+## Notizen

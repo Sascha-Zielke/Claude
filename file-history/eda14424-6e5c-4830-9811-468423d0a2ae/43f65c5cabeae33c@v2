@@ -1,0 +1,447 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/api/module.json ───────────────────────────────────────────────────
+files['modules/api/module.json'] = """{
+    "name": "api",
+    "label": "API",
+    "version": "1.0.0",
+    "description": "REST API v1 with Bearer token authentication.",
+    "author": "VeloCMS",
+    "dependencies": ["pages", "blog", "media", "search"]
+}
+"""
+
+# ── modules/api/ApiModule.php ─────────────────────────────────────────────────
+files['modules/api/ApiModule.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api;
+
+use VeloCMS\Core\Module;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Api\Controllers\PagesApiController;
+use VeloCMS\Modules\Api\Controllers\PostsApiController;
+use VeloCMS\Modules\Api\Controllers\MediaApiController;
+use VeloCMS\Modules\Api\Controllers\SearchApiController;
+
+class ApiModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/api/v1/pages',           [PagesApiController::class, 'index']);
+        $router->get('/api/v1/pages/{id}',      [PagesApiController::class, 'show']);
+        $router->get('/api/v1/posts',           [PostsApiController::class, 'index']);
+        $router->get('/api/v1/posts/{id}',      [PostsApiController::class, 'show']);
+        $router->get('/api/v1/media',           [MediaApiController::class, 'index']);
+        $router->get('/api/v1/search',          [SearchApiController::class, 'index']);
+    }
+}
+"""
+
+# ── modules/api/models/ApiKey.php ─────────────────────────────────────────────
+files['modules/api/models/ApiKey.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Models;
+
+class ApiKey
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query(
+            'SELECT k.*, u.name AS user_name FROM api_keys k
+             LEFT JOIN users u ON u.id = k.user_id
+             WHERE k.deleted_at IS NULL
+             ORDER BY k.created_at DESC'
+        )->fetchAll();
+    }
+
+    public function findByHash(string $hash): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM api_keys WHERE key_hash = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([$hash]);
+        return $stmt->fetch() ?: null;
+    }
+
+    /** Create a new API key, returns the plain-text token (shown once). */
+    public function create(int $userId, string $name): string
+    {
+        $token = bin2hex(random_bytes(32));
+        $hash  = hash('sha256', $token);
+        $this->pdo->prepare(
+            'INSERT INTO api_keys (user_id, name, key_hash) VALUES (?, ?, ?)'
+        )->execute([$userId, $name, $hash]);
+        return $token;
+    }
+
+    public function revoke(int $id): void
+    {
+        $this->pdo->prepare(
+            'UPDATE api_keys SET deleted_at = NOW() WHERE id = ?'
+        )->execute([$id]);
+    }
+
+    public function touchLastUsed(int $id): void
+    {
+        $this->pdo->prepare(
+            'UPDATE api_keys SET last_used_at = NOW() WHERE id = ?'
+        )->execute([$id]);
+    }
+}
+"""
+
+# ── modules/api/controllers/ApiBaseController.php ────────────────────────────
+files['modules/api/controllers/ApiBaseController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Cache;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Api\Models\ApiKey;
+
+abstract class ApiBaseController
+{
+    private const RATE_LIMIT  = 60;  // requests
+    private const RATE_WINDOW = 60;  // seconds
+
+    public function __construct(protected readonly Application $app) {}
+
+    /** Authenticate request and return the API key row. Sends 401/429 on failure. */
+    protected function authenticate(Request $request): ?array
+    {
+        $auth  = $request->header('Authorization', '');
+        $token = str_starts_with($auth, 'Bearer ') ? substr($auth, 7) : null;
+
+        if ($token === null) {
+            $this->sendError(401, 'Missing Authorization header.')->send();
+            return null;
+        }
+
+        $hash  = hash('sha256', $token);
+        $db    = $this->app->make(Database::class)->core();
+        $model = new ApiKey($db);
+        $key   = $model->findByHash($hash);
+
+        if (!$key) {
+            $this->sendError(401, 'Invalid API key.')->send();
+            return null;
+        }
+
+        // Rate limiting
+        $cache    = $this->app->make(Cache::class);
+        $cacheKey = 'api_rate:' . $hash;
+        $count    = (int) ($cache->get($cacheKey) ?? 0);
+
+        if ($count >= self::RATE_LIMIT) {
+            $this->sendError(429, 'Rate limit exceeded. Max ' . self::RATE_LIMIT . ' req/min.')->send();
+            return null;
+        }
+
+        $cache->set($cacheKey, $count + 1, self::RATE_WINDOW);
+        $model->touchLastUsed((int) $key['id']);
+
+        return $key;
+    }
+
+    protected function sendError(int $status, string $message): Response
+    {
+        return (new Response())->json([
+            'error'   => $this->httpStatusText($status),
+            'message' => $message,
+        ], $status);
+    }
+
+    protected function paginate(array $all, int $page, int $perPage): array
+    {
+        $total  = count($all);
+        $offset = ($page - 1) * $perPage;
+        return [
+            'data' => array_slice($all, $offset, $perPage),
+            'meta' => [
+                'total'    => $total,
+                'page'     => $page,
+                'per_page' => $perPage,
+                'pages'    => (int) ceil($total / $perPage),
+            ],
+        ];
+    }
+
+    private function httpStatusText(int $code): string
+    {
+        return match ($code) {
+            400 => 'Bad Request',    401 => 'Unauthorized',
+            403 => 'Forbidden',      404 => 'Not Found',
+            429 => 'Too Many Requests', default => 'Error',
+        };
+    }
+}
+"""
+
+# ── modules/api/controllers/PagesApiController.php ───────────────────────────
+files['modules/api/controllers/PagesApiController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Controllers;
+
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class PagesApiController extends ApiBaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $db    = $this->app->make(Database::class)->core();
+        $pages = $db->query(
+            "SELECT id, title, slug, status, meta_title, meta_desc, published_at, updated_at
+             FROM pages WHERE status='published' AND deleted_at IS NULL ORDER BY title"
+        )->fetchAll();
+        $page = max(1, (int) $request->query('page', '1'));
+        return (new Response())->json($this->paginate($pages, $page, 20));
+    }
+
+    public function show(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $db   = $this->app->make(Database::class)->core();
+        $stmt = $db->prepare(
+            "SELECT id, title, slug, body, status, meta_title, meta_desc, published_at, updated_at
+             FROM pages WHERE id = ? AND status='published' AND deleted_at IS NULL LIMIT 1"
+        );
+        $stmt->execute([(int) $params['id']]);
+        $page = $stmt->fetch();
+        if (!$page) return $this->sendError(404, 'Page not found.');
+        return (new Response())->json(['data' => $page]);
+    }
+}
+"""
+
+# ── modules/api/controllers/PostsApiController.php ───────────────────────────
+files['modules/api/controllers/PostsApiController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Controllers;
+
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class PostsApiController extends ApiBaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $db    = $this->app->make(Database::class)->core();
+        $posts = $db->query(
+            "SELECT p.id, p.title, p.slug, p.status, p.published_at, p.updated_at, u.name AS author
+             FROM posts p LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.status='published' AND p.deleted_at IS NULL ORDER BY p.published_at DESC"
+        )->fetchAll();
+        $page = max(1, (int) $request->query('page', '1'));
+        return (new Response())->json($this->paginate($posts, $page, 20));
+    }
+
+    public function show(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $db   = $this->app->make(Database::class)->core();
+        $stmt = $db->prepare(
+            "SELECT p.id, p.title, p.slug, p.body, p.status, p.published_at, p.updated_at,
+                    u.name AS author
+             FROM posts p LEFT JOIN users u ON u.id = p.author_id
+             WHERE p.id = ? AND p.status='published' AND p.deleted_at IS NULL LIMIT 1"
+        );
+        $stmt->execute([(int) $params['id']]);
+        $post = $stmt->fetch();
+        if (!$post) return $this->sendError(404, 'Post not found.');
+        return (new Response())->json(['data' => $post]);
+    }
+}
+"""
+
+# ── modules/api/controllers/MediaApiController.php ───────────────────────────
+files['modules/api/controllers/MediaApiController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Controllers;
+
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+
+class MediaApiController extends ApiBaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $db    = $this->app->make(Database::class)->core();
+        $files = $db->query(
+            'SELECT id, filename, mime_type, size, alt, caption, created_at FROM media ORDER BY created_at DESC'
+        )->fetchAll();
+        $page = max(1, (int) $request->query('page', '1'));
+        return (new Response())->json($this->paginate($files, $page, 40));
+    }
+}
+"""
+
+# ── modules/api/controllers/SearchApiController.php ──────────────────────────
+files['modules/api/controllers/SearchApiController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Controllers;
+
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Search\Models\SearchIndex;
+
+class SearchApiController extends ApiBaseController
+{
+    public function index(Request $request, array $params): Response
+    {
+        if (!$this->authenticate($request)) return (new Response());
+        $q       = trim($request->query('q', ''));
+        $db      = $this->app->make(Database::class)->core();
+        $results = (new SearchIndex($db))->search($q);
+        return (new Response())->json(['data' => $results, 'meta' => ['total' => count($results)]]);
+    }
+}
+"""
+
+# ── modules/api/admin/controllers/ApiKeyAdminController.php ──────────────────
+files['modules/api/admin/controllers/ApiKeyAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Api\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Api\Models\ApiKey;
+
+class ApiKeyAdminController extends BaseController
+{
+    private function model(): ApiKey
+    {
+        return new ApiKey($this->app->make(Database::class)->core());
+    }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        return $this->layout('api/index.php', [
+            'user'    => $this->auth()->user(),
+            'page'    => 'api',
+            'csrf'    => $this->auth()->csrfToken(),
+            'keys'    => $this->model()->all(),
+            'newKey'  => null,
+        ]);
+    }
+
+    public function create(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/api');
+        $name = trim($req->post('name', ''));
+        if ($name === '') return $this->redirect('/admin/api');
+        $token = $this->model()->create((int) $this->auth()->id(), $name);
+        return $this->layout('api/index.php', [
+            'user'   => $this->auth()->user(),
+            'page'   => 'api',
+            'csrf'   => $this->auth()->csrfToken(),
+            'keys'   => $this->model()->all(),
+            'newKey' => $token,
+        ]);
+    }
+
+    public function revoke(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/api');
+        $this->model()->revoke((int) $params['id']);
+        return $this->redirect('/admin/api');
+    }
+}
+"""
+
+# ── admin/views/api/index.php ─────────────────────────────────────────────────
+files['admin/views/api/index.php'] = r"""<div class="vcms-section-header">
+    <h3>API Keys</h3>
+</div>
+
+<?php if (!empty($newKey)): ?>
+<div class="vcms-alert vcms-alert--success">
+    <strong>New API key created.</strong> Copy it now — it will not be shown again.<br>
+    <code style="font-size:0.85rem;word-break:break-all"><?= e($newKey) ?></code>
+</div>
+<?php endif; ?>
+
+<div style="display:grid;grid-template-columns:300px 1fr;gap:2rem;align-items:start">
+
+<div>
+<h4 style="margin-bottom:1rem">Create API Key</h4>
+<form method="post" action="/admin/api" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-form-group">
+        <label>Key Name</label>
+        <input type="text" name="name" placeholder="e.g. Mobile App" required>
+    </div>
+    <button type="submit" class="vcms-btn">Generate Key</button>
+</form>
+
+<div style="margin-top:2rem">
+<h4>API Base URL</h4>
+<p><code><?= e('http://' . ($_SERVER['HTTP_HOST'] ?? 'your-domain.com') . '/api/v1/') ?></code></p>
+<p style="font-size:.85rem;color:#64748b">
+    Send requests with header:<br>
+    <code>Authorization: Bearer &lt;token&gt;</code>
+</p>
+<h4 style="margin-top:1rem">Endpoints</h4>
+<ul style="font-size:.85rem;color:#475569;padding-left:1.25rem">
+    <li>GET /api/v1/pages</li>
+    <li>GET /api/v1/pages/{id}</li>
+    <li>GET /api/v1/posts</li>
+    <li>GET /api/v1/posts/{id}</li>
+    <li>GET /api/v1/media</li>
+    <li>GET /api/v1/search?q=term</li>
+</ul>
+</div>
+</div>
+
+<div>
+<?php if (empty($keys)): ?>
+    <p class="vcms-empty">No API keys created yet.</p>
+<?php else: ?>
+<table class="vcms-table">
+    <thead>
+        <tr><th>Name</th><th>Created By</th><th>Last Used</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($keys as $k): ?>
+    <tr>
+        <td><?= e($k['name']) ?></td>
+        <td><?= e($k['user_name'] ?? '—') ?></td>
+        <td><?= $k['last_used_at'] ? e(substr($k['last_used_at'], 0, 16)) : '<em>Never</em>' ?></td>
+        <td><?= e(substr($k['created_at'], 0, 10)) ?></td>
+        <td>
+            <form method="post" action="/admin/api/<?= $k['id'] ?>/revoke" style="display:inline">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                        onclick="return confirm('Revoke this key?')">Revoke</button>
+            </form>
+        </td>
+    </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+<?php endif; ?>
+</div>
+
+</div>
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 4d done — API module written.')

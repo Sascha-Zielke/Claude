@@ -1,0 +1,176 @@
+---
+tags: [veloSolutions, velocms, translation, ideen, phase-3]
+status: brainstorm
+---
+
+# Translation-App — Advanced Ideas
+
+Zusätzliche Features für **Phase 2-3**, wenn MVP stabil läuft.
+
+## 🧠 Übersetzungs-Qualität & Konsistenz
+
+### Translation Memory
+- **Was:** Gespeicherte Übersetzungen wiederverwenden
+- **Nutzen:** Selber Englischer Text = selbe Übersetzung überall (Konsistenz)
+- **Implementierung:** Vor KI-Übersetzung in TM abfragen
+- **UI:** "Translation Memory Hit: Diesen Text haben wir schon übersetzt"
+
+### Machine Translation Quality Score
+- **Was:** KI-Übersetzung bewerten (0-100%)
+- **Nutzen:** Redakteur weiß, welche Übersetzungen manuell reviewed werden müssen
+- **Berechnung:** 
+  - Länge des Textes
+  - Sprachenpaar (manche Paare schwieriger)
+  - Terminologie-Matches
+- **Visuelle Indicator:** 🟢 90%+ | 🟡 70-89% | 🔴 <70%
+
+### Kontext-Hinweise für Übersetzer
+- **Was:** Meta-Informationen für bessere Übersetzungen
+- **Beispiele:**
+  - "Das ist ein Button in der Navigation"
+  - "Das ist eine SEO-Description"
+  - "Das ist ein Call-to-Action"
+- **KI-Prompt:** Kontext in Übersetzungs-Request einbauen
+
+---
+
+## 🔄 Prozess & Workflow
+
+### Übersetzungs-Workflow (Optional)
+- **States:** Draft → Review → Veröffentlichung
+- **Rollen:** Übersetzer | Reviewer | Publisher
+- **Für wen:** Wenn Kundenwebsites komplexe Übersetzungs-Prozesse brauchen
+- **UI:** Status im Dashboard
+
+### Revisions-History
+- **Was:** Audit-Trail von Übersetzungen
+- **Informationen:** 
+  - Wer hat was wann übersetzt?
+  - Original-Änderung erkannt (veraltete Übersetzung)?
+  - Welche KI-Model wurde verwendet?
+- **UI:** "Show History" per Übersetzung
+
+### Benachrichtigungen
+- **Email:** "3 Übersetzungen sind veraltet"
+- **In-App Alert:** Rote Markierung
+- **Täglicher Report:** (Optional) "Translation Status Daily Digest"
+
+---
+
+## 🌍 Technische Features
+
+### Sprach-Varianten
+- **Was:** de-DE, de-AT, de-CH unterscheiden
+- **Nutzen:** Regionale Besonderheiten (z.B. "Fahrstuhl" vs. "Aufzug")
+- **Implementation:** Language Code von ISO 639-1 zu ISO 15924
+- **Fallback-Kette:** de-CH → de → EN
+
+### Komplexe Pluralformen
+- **Problem:** Russisch/Arabisch haben komplexe Plural-Regeln (nicht nur singular/plural)
+- **Lösung:** ICU MessageFormat unterstützen
+- **Beispiel:** "{count, plural, =0{keine Artikel} one{1 Artikel} other{# Artikel}}"
+
+### RTL-Sprachen-Support
+- **Was:** Arabisch, Hebräisch, Persisch (Right-to-Left)
+- **Implementierung:** 
+  - HTML dir="rtl" automatisch setzen
+  - CSS RTL-optimiert
+  - Zahlen/Sonderzeichen korrekt ausrichten
+- **Testing:** Mit nativen Sprechern testen
+
+---
+
+## 📊 Marketing & SEO
+
+### Hreflang-Tags automatisch
+- **Was:** Sagt Google: "Diese Seite existiert auch auf Deutsch/Französisch"
+- **Format:** 
+  ```html
+  <link rel="alternate" hreflang="de" href="https://example.com/de/about" />
+  <link rel="alternate" hreflang="fr" href="https://example.com/fr/about" />
+  <link rel="alternate" hreflang="x-default" href="https://example.com/en/about" />
+  ```
+- **Automatisch:** Pro Sprache automatisch generieren
+
+### Canonical URLs pro Sprache
+- **Was:** Jede Sprachversion hat canonical URL
+- **Nutzen:** SEO-Duplikat-Problem vermeiden
+- **Implementierung:** `<link rel="canonical" href="...de/..." />` in DE-Version
+
+### Sprach-Analytics
+- **Was:** Welche Sprache wird am meisten benutzt?
+- **Tracking:** Google Analytics / Matomo Integration
+- **Dashboard:** Traffic pro Sprache zeigen
+- **Nutzen:** Wissen, welche Sprache Priorität ist
+
+---
+
+## 🎯 Spezielle Use-Cases
+
+### A/B-Testing für Übersetzungen
+- **Was:** Teste 2 Übersetzungen gegen einander
+- **Nutzen:** Welche Übersetzung konvertiert besser?
+- **Implementation:** Variante A vs. B für 50% der User
+- **Messung:** Conversion Rate pro Übersetzung
+
+### Glossar-Management UI
+- **Was:** Admin-Interface zum Verwalten von Glossar
+- **Features:**
+  - Import vom Kundenglossar (CSV)
+  - "Approved Terms" vs. "Forbidden Terms"
+  - Verknüpfung: Wo wird dieser Begriff verwendet?
+- **UI:** Tabelle mit Source → Target → Status → Häufigkeit
+
+### Übersetzungs-Status-Report
+- **Format:** PDF/CSV Report
+- **Inhalt:**
+  - Completion % pro Sprache
+  - Fehlerhafte Übersetzungen (QS < 70%)
+  - Veraltete Übersetzungen
+  - Recommendations
+- **Automation:** Wöchentlich/monatlich automatisch versenden
+
+---
+
+## 🔐 Sicherheit & Datenschutz
+
+### Datenschutz bei KI-Übersetzung
+- **Problem:** Texte gehen an DeepL/Anthropic
+- **Lösung:** 
+  - Option: On-Premise Übersetzungs-Server
+  - Oder: Clear Policy in Datenschutz
+- **Datensparsamkeit:** Texte nach Übersetzung löschen
+
+### Rollback & Undo
+- **Was:** Bulk-Übersetzung war falsch → Alle löschen
+- **UI:** "Undo last 50 translations"
+
+---
+
+## 📈 Performance
+
+### Caching
+- **Was:** Übersetzungen cachen (DB + Redis)
+- **Nutzen:** Keine redundanten Lookups
+- **Cache-Invalidation:** Bei Update automatisch invalidieren
+
+### Batch-Übersetzung
+- **Was:** Mehrere Texte auf einmal übersetzen
+- **UI:** "Translate all 23 missing German texts" Button
+- **Performance:** Parallel-Requests, nicht sequenziell
+
+---
+
+## 🎓 Empfehlung für Phasierung
+
+| Phase | Features |
+|-------|----------|
+| **MVP (Phase 1)** | Kern-Features aus Translation-App.md |
+| **Phase 2** | Status-Dashboard, QS-Score, Glossar, Browser-Erkennung, Hreflang |
+| **Phase 3** | Translation Memory, Workflows, RTL, A/B-Testing |
+| **Later** | On-Prem Server, Advanced Analytics |
+
+---
+
+Erstellt: 2026-05-26  
+Status: Ideen-Sammlung für zukünftige Phasen

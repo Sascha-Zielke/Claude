@@ -1,0 +1,351 @@
+import os
+import json
+import subprocess
+
+base = '/var/www/velocms'
+files = {}
+
+# ── tests/bootstrap.php ──────────────────────────────────────────────────────
+files['tests/bootstrap.php'] = r"""<?php declare(strict_types=1);
+
+define('VELOCMS_ROOT', dirname(__DIR__));
+
+require VELOCMS_ROOT . '/vendor/autoload.php';
+require VELOCMS_ROOT . '/core/helpers.php';
+
+$_ENV['VELOCMS_ENV']  = 'testing';
+$_ENV['CORE_DB_HOST'] = '127.0.0.1';
+$_ENV['CORE_DB_NAME'] = 'velocms_core';
+$_ENV['CORE_DB_USER'] = 'velocms';
+$_ENV['CORE_DB_PASS'] = getenv('CORE_DB_PASS') ?: '';
+"""
+
+# ── tests/Unit/HelpersTest.php ───────────────────────────────────────────────
+files['tests/Unit/HelpersTest.php'] = r"""<?php declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+
+class HelpersTest extends TestCase
+{
+    // ── slug() ───────────────────────────────────────────────────────────────
+
+    public function test_slug_lowercases_and_replaces_spaces(): void
+    {
+        $this->assertSame('hello-world', slug('Hello World'));
+    }
+
+    public function test_slug_collapses_multiple_hyphens(): void
+    {
+        $this->assertSame('a-b-c', slug('a -- b -- c'));
+    }
+
+    public function test_slug_trims_leading_and_trailing_hyphens(): void
+    {
+        $this->assertSame('hello', slug('-hello-'));
+    }
+
+    public function test_slug_empty_string(): void
+    {
+        $this->assertSame('', slug(''));
+    }
+
+    public function test_slug_numbers_preserved(): void
+    {
+        $this->assertSame('phase-6b-test', slug('Phase 6b Test'));
+    }
+
+    // ── excerpt() ────────────────────────────────────────────────────────────
+
+    public function test_excerpt_strips_html_tags(): void
+    {
+        $result = excerpt('<p>Hello <strong>World</strong></p>', 100);
+        $this->assertStringNotContainsString('<', $result);
+        $this->assertStringContainsString('Hello World', $result);
+    }
+
+    public function test_excerpt_truncates_to_length(): void
+    {
+        $text = str_repeat('a', 300);
+        $result = excerpt($text, 100);
+        $this->assertLessThanOrEqual(103, strlen($result)); // 100 + '...'
+    }
+
+    public function test_excerpt_does_not_truncate_short_text(): void
+    {
+        $result = excerpt('<p>Short text</p>', 200);
+        $this->assertSame('Short text', $result);
+    }
+
+    public function test_excerpt_appends_ellipsis_when_truncated(): void
+    {
+        $text = str_repeat('b', 300);
+        $result = excerpt($text, 50);
+        $this->assertStringEndsWith('...', $result);
+    }
+
+    // ── e() ─────────────────────────────────────────────────────────────────
+
+    public function test_e_escapes_script_tag(): void
+    {
+        $this->assertSame('&lt;script&gt;alert(1)&lt;/script&gt;', e('<script>alert(1)</script>'));
+    }
+
+    public function test_e_handles_ampersand(): void
+    {
+        $this->assertSame('Tom &amp; Jerry', e('Tom & Jerry'));
+    }
+
+    public function test_e_handles_quotes(): void
+    {
+        $this->assertSame('say &quot;hi&quot;', e('say "hi"'));
+    }
+
+    // ── date_fmt() ───────────────────────────────────────────────────────────
+
+    public function test_date_fmt_formats_timestamp(): void
+    {
+        $result = date_fmt('2026-01-15 12:00:00', 'Y-m-d');
+        $this->assertSame('2026-01-15', $result);
+    }
+
+    public function test_date_fmt_returns_empty_for_null(): void
+    {
+        $this->assertSame('', date_fmt(null));
+    }
+
+    public function test_date_fmt_returns_empty_for_empty_string(): void
+    {
+        $this->assertSame('', date_fmt(''));
+    }
+}
+"""
+
+# ── tests/Unit/ResponseTest.php ──────────────────────────────────────────────
+files['tests/Unit/ResponseTest.php'] = r"""<?php declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use VeloCMS\Core\Response;
+
+class ResponseTest extends TestCase
+{
+    public function test_default_status_is_200(): void
+    {
+        $r = new Response();
+        $this->assertSame(200, $r->getStatus());
+    }
+
+    public function test_status_can_be_set(): void
+    {
+        $r = (new Response())->status(404);
+        $this->assertSame(404, $r->getStatus());
+    }
+
+    public function test_body_can_be_set(): void
+    {
+        $r = (new Response())->body('hello');
+        $this->assertSame('hello', $r->getBody());
+    }
+
+    public function test_json_response_encodes_array(): void
+    {
+        $r = Response::json(['ok' => true]);
+        $this->assertSame(200, $r->getStatus());
+        $decoded = json_decode($r->getBody(), true);
+        $this->assertTrue($decoded['ok']);
+    }
+
+    public function test_json_response_with_custom_status(): void
+    {
+        $r = Response::json(['error' => 'not found'], 404);
+        $this->assertSame(404, $r->getStatus());
+    }
+}
+"""
+
+# ── tests/Unit/AuditLogTest.php ──────────────────────────────────────────────
+files['tests/Unit/AuditLogTest.php'] = r"""<?php declare(strict_types=1);
+
+use PHPUnit\Framework\TestCase;
+use VeloCMS\Modules\Audit\Models\AuditLog;
+
+class AuditLogTest extends TestCase
+{
+    private PDO $pdo;
+
+    protected function setUp(): void
+    {
+        $this->pdo = new PDO(
+            'mysql:host=' . ($_ENV['CORE_DB_HOST'] ?? '127.0.0.1')
+            . ';dbname=' . ($_ENV['CORE_DB_NAME'] ?? 'velocms_core')
+            . ';charset=utf8mb4',
+            $_ENV['CORE_DB_USER'] ?? 'velocms',
+            $_ENV['CORE_DB_PASS'] ?? '',
+            [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
+        );
+    }
+
+    public function test_write_inserts_row(): void
+    {
+        $before = (int)$this->pdo->query('SELECT COUNT(*) FROM audit_log')->fetchColumn();
+
+        AuditLog::write(
+            $this->pdo,
+            null,
+            'PHPUNIT_TEST',
+            'unit_test',
+            null,
+            ['note' => 'phpunit'],
+            '127.0.0.1'
+        );
+
+        $after = (int)$this->pdo->query('SELECT COUNT(*) FROM audit_log')->fetchColumn();
+        $this->assertSame($before + 1, $after);
+    }
+
+    public function test_write_stores_correct_action(): void
+    {
+        AuditLog::write($this->pdo, null, 'PHPUNIT_ACTION_CHECK', 'test', null, [], '10.0.0.1');
+
+        $row = $this->pdo
+            ->query("SELECT action FROM audit_log WHERE action='PHPUNIT_ACTION_CHECK' ORDER BY id DESC LIMIT 1")
+            ->fetch(PDO::FETCH_ASSOC);
+
+        $this->assertSame('PHPUNIT_ACTION_CHECK', $row['action']);
+    }
+
+    public function test_prune_removes_old_rows(): void
+    {
+        $this->pdo->exec(
+            "INSERT INTO audit_log (user_id, action, entity_type, entity_id, meta, ip, created_at)
+             VALUES (NULL, 'PHPUNIT_OLD', NULL, NULL, '{}', '1.2.3.4', DATE_SUB(NOW(), INTERVAL 100 DAY))"
+        );
+
+        $pruned = AuditLog::prune($this->pdo, 90);
+        $this->assertGreaterThanOrEqual(1, $pruned);
+    }
+}
+"""
+
+# ── phpunit.xml ──────────────────────────────────────────────────────────────
+files['phpunit.xml'] = r"""<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         stopOnFailure="false">
+
+    <testsuites>
+        <testsuite name="Unit">
+            <directory suffix="Test.php">tests/Unit</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory suffix=".php">core</directory>
+            <directory suffix=".php">modules</directory>
+        </include>
+        <exclude>
+            <directory>vendor</directory>
+        </exclude>
+    </source>
+
+</phpunit>
+"""
+
+# Write all files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# ── Add slug() and date_fmt() to core/helpers.php if missing ─────────────────
+helpers_path = base + '/core/helpers.php'
+helpers = open(helpers_path).read()
+
+new_helpers = ''
+
+if 'function slug(' not in helpers:
+    new_helpers += r"""
+if (!function_exists('slug')) {
+    function slug(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace('/[^a-z0-9\s-]/', '', $text) ?? $text;
+        return trim(preg_replace('/[\s-]+/', '-', $text) ?? $text, '-');
+    }
+}
+"""
+
+if 'function date_fmt(' not in helpers:
+    new_helpers += r"""
+if (!function_exists('date_fmt')) {
+    function date_fmt(mixed $dateStr, string $format = 'F j, Y'): string
+    {
+        if ($dateStr === null || $dateStr === '') {
+            return '';
+        }
+        $dt = \DateTime::createFromFormat('Y-m-d H:i:s', (string)$dateStr)
+           ?: \DateTime::createFromFormat('Y-m-d', (string)$dateStr);
+        return $dt ? $dt->format($format) : '';
+    }
+}
+"""
+
+if new_helpers:
+    # Append before closing PHP tag or at end
+    if helpers.rstrip().endswith('?>'):
+        helpers = helpers.rstrip()[:-2].rstrip() + new_helpers + '?>'
+    else:
+        helpers = helpers.rstrip() + new_helpers
+    open(helpers_path, 'w').write(helpers)
+    print('OK  core/helpers.php (slug() + date_fmt() added)')
+else:
+    print('OK  core/helpers.php (helpers already present)')
+
+# ── Add getStatus() and getBody() to Response.php ────────────────────────────
+response_path = base + '/core/Response.php'
+response = open(response_path).read()
+
+if 'function getStatus' not in response:
+    # The property is $this->status (not $this->statusCode)
+    response = response.rstrip()
+    if response.endswith('}'):
+        insert = '\n\n    public function getStatus(): int { return $this->status; }\n    public function getBody(): string { return $this->body; }\n}\n'
+        response = response[:-1].rstrip() + insert
+        open(response_path, 'w').write(response)
+        print('OK  core/Response.php (getStatus() + getBody() added)')
+else:
+    print('OK  core/Response.php (getters already present)')
+
+# ── Install PHPUnit via composer (dev dependency) ────────────────────────────
+print('\nInstalling PHPUnit via composer...')
+result = subprocess.run(
+    ['composer', 'require', '--dev', 'phpunit/phpunit', '^12.1',
+     '--no-interaction', '--no-progress'],
+    cwd=base, capture_output=True, text=True
+)
+if result.returncode == 0:
+    print('OK  PHPUnit installed')
+else:
+    print('WARN:', result.stderr[:600])
+    subprocess.run(['composer', 'dump-autoload'], cwd=base)
+
+# ── Run the tests ─────────────────────────────────────────────────────────────
+print('\nRunning PHPUnit tests...')
+env = dict(__import__('os').environ)
+env['CORE_DB_PASS'] = 'xXP41rzY9n0haVsQILOX6F8BvREJ'
+result2 = subprocess.run(
+    ['./vendor/bin/phpunit', '--testdox'],
+    cwd=base, capture_output=True, text=True, env=env
+)
+output = result2.stdout
+if len(output) > 4000:
+    output = output[-4000:]
+print(output)
+if result2.returncode != 0 and result2.stderr:
+    print('STDERR:', result2.stderr[-600:])
+
+print('\nPhase 6b done — PHPUnit test suite installed.')

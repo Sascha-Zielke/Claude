@@ -1,0 +1,50 @@
+Fix and improve the Booking Settings page with these 
+changes:
+
+1. AUTO-SAVE (Option 1):
+All settings save automatically on field blur (onBlur) 
+via AJAX — no Save button needed. Show a brief 
+"✓ Saved" indicator after each save. Apply this pattern 
+to ALL admin settings pages, not just booking.
+
+2. TOGGLE SWITCHES:
+Fix all boolean settings to use proper styled toggle 
+switches (Enable Booking Module, Allow Guest Bookings, 
+Require Manual Confirmation, Google Calendar Sync). 
+Consistent with admin panel style.
+
+3. BOOKING TYPES — Checkboxes:
+Replace current input with three checkboxes:
+- Hourly (with slot duration options: 15min, 30min, 
+  45min, 60min, 90min, 120min, Half Day, Full Day)
+- Packages (admin defines packages manually)
+- Products / Services (admin defines products manually)
+Slot Duration field only shows when Hourly is checked.
+When Half Day or Full Day selected, time picker changes 
+to date picker.
+
+4. COLLAPSIBLE SECTIONS:
+Each section (General, Business Hours, Payment, Email 
+Notifications, Integrations) gets an ON/OFF toggle 
+next to its heading. When toggled OFF, the section 
+collapses smoothly (CSS animation) showing only the 
+heading and toggle. When ON, it expands. State saved 
+automatically via auto-save.
+
+5. BOOKING TYPES CONTENT — Manual Entry:
+When Packages is enabled, show a sub-section where 
+admin can add/edit/delete packages (name, duration, 
+price, description).
+When Products/Services is enabled, show a sub-section 
+where admin can add/edit/delete products (name, price, 
+description).
+Both use inline editing — no separate page needed.
+
+6. BUSINESS HOURS:
+Open/close time as proper time pickers.
+Days of week as toggle switches (Mon–Sun).
+Each day can have individual open/close times 
+(expandable per day).
+
+After all fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Then tell me to verify.

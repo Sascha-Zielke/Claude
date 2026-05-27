@@ -1,0 +1,204 @@
+---
+tags: [veloSolutions, velocms, visual-editor, frontend]
+status: aktiv
+---
+
+# veloCMS — Visual Editor App
+
+Frontend-Editor mit Live-Preview. Das gesamte Frontend wird gespiegelt und ist direkt editierbar.
+
+---
+
+## ⚡ WICHTIG: Technische Spezifikation
+
+**Lese ZUERST:** [[Visual-Editor-Grid-System|Visual Editor — Grid-System Spezifikation]]
+
+Diese Datei enthält:
+- Detaillierte Grid-System Anforderungen
+- JavaScript-Bibliotheks-Optionen (Gridstack.js vs. Muuri vs. Interact.js)
+- JSON-Datenstruktur für Grid-State
+- PHP-Backend Anforderungen
+- Alternative Umsetzungsmöglichkeiten (Varianten)
+
+**Vor Claude Code Implementierung:** Sascha muss die Varianten überprüfen und entscheiden.
+
+---
+
+## 🎯 Core-Konzept
+
+**Das Frontend wird im Editor angezeigt. Änderungen sind sofort sichtbar. Kein Reload.**
+
+Der User sieht:
+- **Links:** Editor (Text-Felder, Elemente)
+- **Rechts:** Echtes Frontend (Live-Preview)
+
+Wenn User auf Text im Frontend klickt → Text wird im Editor editierbar.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Split-View Layout
+- Editor (50%) | Frontend Preview (50%)
+- Responsive: Auf Mobile Stack übereinander
+- Resizable: User kann die Spalten verbreitern/verkleinern
+
+### 2. Seitenwahl
+- Dropdown/Liste: Alle Seiten aus Navigation-App
+- Selected: Aktuelle Seite
+- Quick-Links zu häufig editierten Seiten
+
+### 3. Text-Editing
+**Interaktion:**
+- User klickt Text im Frontend-Preview
+- Text wird im Editor fokussiert (Cursor erscheint)
+- User tippt
+- Text updated LIVE im Preview (kein Delay, kein Reload)
+
+**Rich Text Features (falls nicht nur plain text):**
+- Bold, Italic
+- Links
+- Könnte später erweitert werden
+
+### 4. Element-Verschieben
+**Booking-Tools + andere Elemente:**
+- User sieht Booking-Tool im Preview
+- User kann es drag-and-droppen
+- Position wird aktualisiert
+- Änderung wird in DB gespeichert
+
+### 5. Auto-Save
+- Während User tippt: Auto-Save aktivieren (nach 2-3 Sekunden)
+- Visual Feedback: "Saved" Indicator
+- Keine Button-Clicks nötig für Speichern
+
+### 6. Undo/Redo
+- Undo: Letzte Änderung rückgängig
+- Redo: Änderung wiederherstellen
+- Keyboard Shortcuts: Ctrl+Z, Ctrl+Y
+
+### 7. Booking-Tools im Editor
+- Aus Booking-App verfügbare Tools zeigen
+- User kann Tool auf Seite platzieren
+- Tool soll im Preview sichtbar sein
+- Position kann angepasst werden
+
+---
+
+## 🎨 UI/UX Mockup
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Visual Editor — About Us                    [x]    │
+├─────────────────────────────────────────────────────┤
+│ [Seite wählen ▼]  [Undo] [Redo]  [Saved ✓]         │
+├──────────────────────┬──────────────────────────────┤
+│  EDITOR              │  FRONTEND PREVIEW            │
+│  ─────────────────  │  ──────────────────────────  │
+│                     │                               │
+│  Überschrift:       │  ┌──────────────────────────┐│
+│  [Über uns...    ]  │  │ Über uns...              ││
+│                     │  │ Wir sind ein...          ││
+│  Text:              │  │                          ││
+│  [Wir sind ein  ]   │  │ [Booking-Tool hier]     ││
+│  [innovatives...]   │  │                          ││
+│                     │  │                          ││
+│  [+ Booking-Tool]   │  └──────────────────────────┘│
+│                     │                               │
+│                     │  💾 Saving...                 │
+└──────────────────────┴──────────────────────────────┘
+```
+
+---
+
+## 🔄 User-Workflow
+
+**Szenario: Text ändern**
+1. User öffnet Visual Editor
+2. Wählt Seite "About Us"
+3. Frontend wird rechts angezeigt
+4. User klickt auf "Über uns..." im Preview
+5. Text wird im Editor fokussiert (highlight)
+6. User ändert zu "Unser Team"
+7. Preview updated SOFORT → "Unser Team" sichtbar
+8. Auto-Save speichert die Änderung (2-3s später)
+9. "Saved ✓" Indicator zeigt Success
+
+**Szenario: Booking-Tool hinzufügen**
+1. User klickt "[+ Booking-Tool]" im Editor
+2. Dialog: Verfügbare Tools zeigen (aus Booking-App)
+3. User wählt "Termin buchen"
+4. Tool wird auf der Seite hinzugefügt (unten, erstmal)
+5. Tool sichtbar im Preview
+6. User draggt Tool an richtige Position (oben, nach Text)
+7. Position wird aktualisiert
+8. Auto-Save speichert
+
+---
+
+## 📊 Datenbank-Struktur (Konzept)
+
+### Tabelle: velocms_page_content
+```
+- id
+- page_id (Link zu Navigation-App)
+- field_name (title, content, etc.)
+- content (Text oder JSON)
+- type (text, rich_text, booking_tool, etc.)
+- position (order, für Elemente)
+- created_at
+- updated_at
+- edited_by (Benutzer-ID)
+```
+
+### Tabelle: velocms_page_elements
+```
+- id
+- page_id
+- element_type (booking_tool, etc.)
+- element_id (ID des Tools)
+- position_x, position_y (falls needed)
+- created_at
+- updated_at
+```
+
+---
+
+## 🔧 Technical Notes
+
+### Live-Update ohne Reload
+- **WebSocket oder Polling?** — Polling alle 500ms ist OK (kein WebSocket-Overhead nötig)
+- **Update nur geänderte Felder:** User ändert "title" → nur "title" wird aktualisiert
+- **Konflikt-Handling:** Wenn zwei User gleichzeitig editieren → "Last Write Wins" (oder Konflikt-Dialog)
+
+### Performance
+- **Large Content:** Wenn Seite sehr viel Text hat → Lazy Load?
+- **Image-Handling:** Bilder im Preview können über Media-App geladen werden
+
+---
+
+## ✅ Success-Kriterien (Phase 1 MVP)
+
+- [ ] Split-View funktioniert (Editor + Preview)
+- [ ] Text-Clicking im Preview macht Text editierbar
+- [ ] Auto-Save funktioniert
+- [ ] Live-Update im Preview funktioniert (kein Reload)
+- [ ] Seitenwahl funktioniert
+- [ ] Undo/Redo funktioniert
+- [ ] Booking-Tools können platziert werden
+- [ ] Position von Tools wird gespeichert
+- [ ] Keine Fehler wenn Content fehlt
+
+---
+
+## 📅 Abhängigkeiten
+
+- **Navigation-App:** Liste der Seiten
+- **Booking-App:** Verfügbare Tools zum Platzieren
+- **Benutzer-App:** Wer hat editiert (tracking)
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]] | [[veloCMS-Apps-Übersicht|Apps Übersicht alt]]

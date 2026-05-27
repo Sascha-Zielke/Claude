@@ -1,0 +1,710 @@
+import os
+
+base = '/var/www/velocms'
+
+# ── 1. Add nav() helper to core/helpers.php ───────────────────────────────────
+helpers_path = base + '/core/helpers.php'
+helpers = open(helpers_path).read()
+
+nav_fn = r"""
+if (!function_exists('nav')) {
+    /** Returns menu items for the named menu slug. Falls back to empty array. */
+    function nav(string $menuSlug = 'main-nav'): array
+    {
+        static $cache = [];
+        if (isset($cache[$menuSlug])) return $cache[$menuSlug];
+        try {
+            $pdo  = app(\VeloCMS\Core\Database::class)->core();
+            $stmt = $pdo->prepare(
+                'SELECT mi.label, mi.url FROM menu_items mi
+                 JOIN menus m ON m.id = mi.menu_id
+                 WHERE m.slug = ? AND mi.parent_id IS NULL
+                 ORDER BY mi.sort_order ASC'
+            );
+            $stmt->execute([$menuSlug]);
+            $cache[$menuSlug] = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        } catch (\Throwable) {
+            $cache[$menuSlug] = [];
+        }
+        return $cache[$menuSlug];
+    }
+}
+
+if (!function_exists('excerpt')) {
+    /** Strip HTML and truncate to $length characters, appending ellipsis. */
+    function excerpt(string $html, int $length = 200): string
+    {
+        $text = strip_tags($html);
+        $text = preg_replace('/\s+/', ' ', trim($text)) ?? $text;
+        return mb_strlen($text) > $length
+            ? mb_substr($text, 0, $length) . '…'
+            : $text;
+    }
+}
+"""
+
+if 'function nav' not in helpers:
+    with open(helpers_path, 'a') as f:
+        f.write(nav_fn)
+    print('OK  core/helpers.php (nav() + excerpt() added)')
+else:
+    print('OK  core/helpers.php (helpers already present)')
+
+# ── 2. Production CSS (full rewrite) ─────────────────────────────────────────
+css = r"""/* ── VeloCMS Default Theme ── */
+:root {
+  --color-primary:    #2563eb;
+  --color-primary-dk: #1d4ed8;
+  --color-text:       #0f172a;
+  --color-muted:      #64748b;
+  --color-light:      #94a3b8;
+  --color-border:     #e2e8f0;
+  --color-bg:         #ffffff;
+  --color-bg-subtle:  #f8fafc;
+  --color-accent:     #f59e0b;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, monospace;
+  --radius:    6px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+  --shadow:    0 4px 16px rgba(0,0,0,.10);
+  --max-w:     1100px;
+  --content-w: 740px;
+  --transition: .15s ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+a   { color: var(--color-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Container ────────────────────────────────────────────────────────────── */
+.container     { max-width: var(--max-w); margin: 0 auto; padding: 0 1.5rem; }
+.container--sm { max-width: var(--content-w); }
+
+/* ── Typography ───────────────────────────────────────────────────────────── */
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 700; letter-spacing: -.01em; }
+h1 { font-size: clamp(1.75rem, 4vw, 2.5rem); }
+h2 { font-size: clamp(1.375rem, 3vw, 1.875rem); }
+h3 { font-size: 1.375rem; }
+h4 { font-size: 1.125rem; }
+p  { margin-bottom: 1.25rem; }
+
+/* Prose (rich-text content areas) */
+.prose { max-width: var(--content-w); }
+.prose h2 { margin: 2rem 0 .75rem; }
+.prose h3 { margin: 1.75rem 0 .5rem; }
+.prose ul, .prose ol { margin: 0 0 1.25rem 1.5rem; }
+.prose li  { margin-bottom: .35rem; }
+.prose blockquote {
+  border-left: 4px solid var(--color-primary);
+  margin: 1.5rem 0;
+  padding: .75rem 1.25rem;
+  background: var(--color-bg-subtle);
+  color: var(--color-muted);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.prose code {
+  font-family: var(--font-mono);
+  font-size: .875em;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: .1em .4em;
+}
+.prose pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 1.25rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  margin-bottom: 1.5rem;
+  font-family: var(--font-mono);
+  font-size: .875rem;
+  line-height: 1.7;
+}
+.prose pre code { background: none; border: none; padding: 0; font-size: inherit; color: inherit; }
+.prose img { border-radius: var(--radius); margin: 1.5rem 0; }
+.prose table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: .9rem; }
+.prose th, .prose td { padding: .5rem .75rem; border: 1px solid var(--color-border); }
+.prose th { background: var(--color-bg-subtle); font-weight: 600; }
+.prose hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
+
+/* ── Site Header ──────────────────────────────────────────────────────────── */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(255,255,255,.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--color-border);
+}
+.site-header__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+.site-logo {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -.03em;
+}
+.site-logo span { color: var(--color-primary); }
+.site-logo:hover { text-decoration: none; opacity: .85; }
+
+.site-nav { display: flex; align-items: center; gap: .25rem; }
+.site-nav a {
+  padding: .4rem .75rem;
+  font-size: .9375rem;
+  color: var(--color-muted);
+  border-radius: var(--radius);
+  transition: color var(--transition), background var(--transition);
+}
+.site-nav a:hover { color: var(--color-text); background: var(--color-bg-subtle); text-decoration: none; }
+.site-nav a.active { color: var(--color-primary); font-weight: 500; }
+
+.nav-search-link {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .4rem .75rem;
+  font-size: .875rem;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 9999px;
+}
+.nav-search-link:hover { border-color: var(--color-primary); color: var(--color-primary); text-decoration: none; }
+
+/* ── Main Content ─────────────────────────────────────────────────────────── */
+.site-main { padding: 3.5rem 0 4rem; }
+
+/* ── Site Footer ──────────────────────────────────────────────────────────── */
+.site-footer {
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  padding: 3rem 0 2rem;
+  color: var(--color-muted);
+  font-size: .875rem;
+}
+.site-footer__grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+.footer-brand { font-weight: 700; font-size: 1.1rem; color: var(--color-text); margin-bottom: .5rem; }
+.footer-tagline { color: var(--color-muted); font-size: .875rem; }
+.footer-col h4 { font-size: .8125rem; text-transform: uppercase; letter-spacing: .06em; color: var(--color-light); margin-bottom: .75rem; }
+.footer-col a { display: block; color: var(--color-muted); padding: .2rem 0; }
+.footer-col a:hover { color: var(--color-primary); text-decoration: none; }
+.site-footer__bottom {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: .8125rem;
+}
+
+/* ── Hero (homepage) ─────────────────────────────────────────────────────── */
+.hero {
+  padding: 5rem 0 4rem;
+  text-align: center;
+}
+.hero h1 { margin-bottom: 1.25rem; }
+.hero-lead {
+  font-size: 1.1875rem;
+  color: var(--color-muted);
+  max-width: 560px;
+  margin: 0 auto 2rem;
+}
+.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .65rem 1.4rem;
+  border-radius: var(--radius);
+  font-size: .9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+.btn-primary   { background: var(--color-primary); color: #fff; }
+.btn-primary:hover { background: var(--color-primary-dk); text-decoration: none; }
+.btn-outline   { border: 1px solid var(--color-border); color: var(--color-text); background: #fff; }
+.btn-outline:hover { border-color: var(--color-primary); color: var(--color-primary); text-decoration: none; }
+
+/* ── Blog Index ───────────────────────────────────────────────────────────── */
+.blog-header   { margin-bottom: 2.5rem; }
+.blog-header h1 { margin-bottom: .5rem; }
+.blog-grid     { display: grid; gap: 1.75rem; }
+.post-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1.75rem;
+  transition: box-shadow var(--transition), border-color var(--transition);
+  background: var(--color-bg);
+}
+.post-card:hover { box-shadow: var(--shadow); border-color: #c7d2e6; }
+.post-card__meta {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: .6rem;
+  font-size: .8125rem;
+  color: var(--color-light);
+}
+.post-card__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: .5rem;
+  line-height: 1.3;
+}
+.post-card__title a { color: var(--color-text); }
+.post-card__title a:hover { color: var(--color-primary); text-decoration: none; }
+.post-card__excerpt { color: var(--color-muted); font-size: .9375rem; margin-bottom: 1rem; line-height: 1.65; }
+.post-card__footer  { display: flex; align-items: center; justify-content: space-between; }
+.read-more { font-size: .875rem; font-weight: 500; }
+
+/* ── Category tag ─────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-block;
+  padding: .2em .65em;
+  border-radius: 9999px;
+  font-size: .75rem;
+  font-weight: 500;
+  background: #dbeafe;
+  color: #1e40af;
+  text-decoration: none;
+}
+.tag:hover { background: #bfdbfe; text-decoration: none; }
+.tag--gray { background: var(--color-bg-subtle); color: var(--color-muted); }
+
+/* ── Single Post ──────────────────────────────────────────────────────────── */
+.post-layout          { display: grid; grid-template-columns: 1fr; gap: 3rem; }
+.post-header          { margin-bottom: 2.5rem; padding-bottom: 2rem; border-bottom: 1px solid var(--color-border); }
+.post-header h1       { margin-bottom: 1rem; }
+.post-meta            { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; color: var(--color-muted); font-size: .875rem; }
+.post-meta time       { }
+.post-body            { margin-top: 2rem; }
+.post-body img        { border-radius: var(--radius); }
+.post-footer          { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--color-border); }
+.post-tags            { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+/* ── Page Content ─────────────────────────────────────────────────────────── */
+.page-content h1 { margin-bottom: 1.5rem; }
+
+/* ── Search ───────────────────────────────────────────────────────────────── */
+.search-page              { max-width: var(--content-w); }
+.search-page h1           { margin-bottom: 1.5rem; }
+.search-bar               { display: flex; gap: .5rem; margin-bottom: 2rem; }
+.search-bar input {
+  flex: 1;
+  padding: .7rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-family: inherit;
+}
+.search-bar input:focus   { outline: 2px solid var(--color-primary); border-color: transparent; }
+.search-bar button        { padding: .7rem 1.4rem; background: var(--color-primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; font-size: .9375rem; }
+.search-bar button:hover  { background: var(--color-primary-dk); }
+.search-summary           { color: var(--color-muted); margin-bottom: 1.25rem; font-size: .9375rem; }
+.search-results           { list-style: none; }
+.search-result            { padding: 1rem 0; border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.search-result a          { font-size: 1.0625rem; font-weight: 500; color: var(--color-text); }
+.search-result a:hover    { color: var(--color-primary); }
+.search-type              { font-size: .75rem; }
+.search-empty             { color: var(--color-muted); padding: 2rem 0; }
+
+/* ── Forms (public) ───────────────────────────────────────────────────────── */
+.form-page               { max-width: 660px; }
+.form-page h1            { margin-bottom: 1.75rem; }
+.vcms-form               { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 10px; padding: 2rem; }
+.form-field              { margin-bottom: 1.25rem; }
+.form-field label        { display: block; font-weight: 500; font-size: .9375rem; margin-bottom: .35rem; }
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  padding: .6rem .875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border-color var(--transition);
+}
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus { outline: 2px solid var(--color-primary); border-color: transparent; }
+.form-field textarea      { resize: vertical; }
+.form-field.has-error input,
+.form-field.has-error select,
+.form-field.has-error textarea { border-color: #ef4444; }
+.form-error               { color: #ef4444; font-size: .82rem; margin-top: .25rem; display: block; }
+.required                 { color: #ef4444; }
+.form-checkbox, .form-radio { display: flex; align-items: center; gap: .5rem; margin: .25rem 0; }
+.form-checkbox input, .form-radio input { width: auto; }
+.form-submit              { padding: .7rem 1.75rem; background: var(--color-primary); color: #fff; border: none; border-radius: var(--radius); font-size: 1rem; cursor: pointer; font-weight: 500; }
+.form-submit:hover        { background: var(--color-primary-dk); }
+.form-success             { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; border-radius: 10px; padding: 2rem; text-align: center; }
+.form-success p           { margin: 0; font-size: 1.0625rem; }
+
+/* ── 404 ──────────────────────────────────────────────────────────────────── */
+.not-found      { text-align: center; padding: 6rem 0; }
+.not-found h1   { font-size: 5rem; font-weight: 800; color: var(--color-border); line-height: 1; margin-bottom: 1rem; }
+.not-found h2   { font-size: 1.5rem; margin-bottom: 1rem; }
+.not-found p    { color: var(--color-muted); margin-bottom: 2rem; }
+
+/* ── Welcome (no content yet) ────────────────────────────────────────────── */
+.welcome        { text-align: center; padding: 5rem 0; }
+.welcome h1     { margin-bottom: 1rem; }
+.welcome p      { color: var(--color-muted); font-size: 1.125rem; margin-bottom: 2rem; }
+
+/* ── Utility ──────────────────────────────────────────────────────────────── */
+.vcms-empty     { color: var(--color-light); text-align: center; padding: 3rem; }
+
+/* ── Responsive ───────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .site-footer__grid       { grid-template-columns: 1fr; }
+  .site-footer__bottom     { flex-direction: column; gap: .5rem; text-align: center; }
+  .nav-search-link span    { display: none; }
+  .site-main               { padding: 2rem 0 3rem; }
+}
+@media (max-width: 480px) {
+  .site-nav a              { padding: .4rem .4rem; font-size: .875rem; }
+  .post-card               { padding: 1.25rem; }
+}
+"""
+
+css_path = base + '/themes/default/assets/style.css'
+with open(css_path, 'w') as f:
+    f.write(css.lstrip('\n'))
+print('OK  themes/default/assets/style.css (production CSS written)')
+
+# ── 3. Updated main.php layout ────────────────────────────────────────────────
+main_php = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><?= e(($metaTitle ?? $title ?? '') !== '' ? ($metaTitle ?? $title) . ' — ' . setting('site','name','VeloCMS') : setting('site','name','VeloCMS')) ?></title>
+    <?php if (!empty($metaDesc)): ?>
+    <meta name="description" content="<?= e($metaDesc) ?>">
+    <?php endif ?>
+    <meta property="og:title"       content="<?= e($metaTitle ?? $title ?? setting('site','name','VeloCMS')) ?>">
+    <meta property="og:description" content="<?= e($metaDesc ?? setting('site','tagline','')) ?>">
+    <meta property="og:type"        content="<?= e($ogType ?? 'website') ?>">
+    <?php if (!empty($ogImage)): ?>
+    <meta property="og:image"       content="<?= e($ogImage) ?>">
+    <?php endif ?>
+    <?php if (!empty($canonical)): ?>
+    <link rel="canonical" href="<?= e($canonical) ?>">
+    <?php endif ?>
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+    <?php if (!empty($jsonLd)): ?>
+    <script type="application/ld+json"><?= $jsonLd ?></script>
+    <?php endif ?>
+    <link rel="stylesheet" href="/assets/theme/style.css">
+</head>
+<body>
+
+<header class="site-header">
+    <div class="container">
+        <div class="site-header__inner">
+            <?php
+            $siteName = setting('site', 'name', 'VeloCMS');
+            $parts    = explode(' ', $siteName, 2);
+            $first    = $parts[0];
+            $rest     = isset($parts[1]) ? ' ' . $parts[1] : '';
+            ?>
+            <a href="/" class="site-logo"><?= e($first) ?><span><?= e($rest) ?></span></a>
+
+            <nav class="site-nav" aria-label="Main navigation">
+                <?php
+                $navItems = nav('main-nav');
+                if (!empty($navItems)):
+                    foreach ($navItems as $item):
+                        $active = rtrim($_SERVER['REQUEST_URI'] ?? '/', '/') === rtrim($item['url'], '/') ? ' active' : '';
+                ?>
+                    <a href="<?= e($item['url']) ?>" class="<?= $active ?>"><?= e($item['label']) ?></a>
+                <?php
+                    endforeach;
+                else:
+                ?>
+                    <a href="/">Home</a>
+                    <a href="/blog">Blog</a>
+                <?php endif ?>
+                <a href="/search" class="nav-search-link" aria-label="Search">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <span>Search</span>
+                </a>
+            </nav>
+        </div>
+    </div>
+</header>
+
+<main class="site-main" id="main">
+    <div class="container">
+        <?= $bodyContent ?? '' ?>
+    </div>
+</main>
+
+<footer class="site-footer">
+    <div class="container">
+        <div class="site-footer__grid">
+            <div>
+                <div class="footer-brand"><?= e(setting('site', 'name', 'VeloCMS')) ?></div>
+                <?php if ($tagline = setting('site', 'tagline', '')): ?>
+                    <p class="footer-tagline"><?= e($tagline) ?></p>
+                <?php endif ?>
+            </div>
+            <div class="footer-col">
+                <h4>Navigation</h4>
+                <?php foreach (nav('main-nav') ?: [['label'=>'Home','url'=>'/'],['label'=>'Blog','url'=>'/blog']] as $item): ?>
+                    <a href="<?= e($item['url']) ?>"><?= e($item['label']) ?></a>
+                <?php endforeach ?>
+            </div>
+            <div class="footer-col">
+                <h4>More</h4>
+                <a href="/search">Search</a>
+                <a href="/sitemap.xml">Sitemap</a>
+            </div>
+        </div>
+        <div class="site-footer__bottom">
+            <span>&copy; <?= date('Y') ?> <?= e(setting('site', 'name', 'VeloCMS')) ?>. All rights reserved.</span>
+            <span>Powered by <a href="https://github.com/Sascha-Zielke/velocms">VeloCMS</a></span>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>
+"""
+
+with open(base + '/themes/default/layouts/main.php', 'w') as f:
+    f.write(main_php.lstrip('\n'))
+print('OK  themes/default/layouts/main.php')
+
+# ── 4. Blog index layout ──────────────────────────────────────────────────────
+blog_index_php = r"""<?php
+ob_start(); ?>
+<div class="blog-header">
+    <h1><?= e($title ?? 'Blog') ?></h1>
+    <?php if ($category ?? null): ?>
+    <p style="color:var(--color-muted)">Posts in: <strong><?= e($category['name']) ?></strong></p>
+    <?php endif ?>
+</div>
+
+<?php if (empty($posts)): ?>
+    <div class="vcms-empty">No posts published yet.</div>
+<?php else: ?>
+<div class="blog-grid">
+    <?php foreach ($posts as $post):
+        $exc = excerpt($post['body'] ?? '', 185);
+        $date = date('j F Y', strtotime($post['published_at'] ?? $post['created_at']));
+    ?>
+    <article class="post-card">
+        <div class="post-card__meta">
+            <time datetime="<?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>">
+                <?= e($date) ?>
+            </time>
+            <span>&middot;</span>
+            <span><?= e($post['author_name'] ?? 'Unknown') ?></span>
+        </div>
+        <h2 class="post-card__title">
+            <a href="/blog/<?= e($post['slug']) ?>"><?= e($post['title']) ?></a>
+        </h2>
+        <?php if ($exc): ?>
+        <p class="post-card__excerpt"><?= e($exc) ?></p>
+        <?php endif ?>
+        <div class="post-card__footer">
+            <a href="/blog/<?= e($post['slug']) ?>" class="read-more">Read article &rarr;</a>
+        </div>
+    </article>
+    <?php endforeach ?>
+</div>
+<?php endif ?>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $title ?? 'Blog';
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/blog-index.php', 'w') as f:
+    f.write(blog_index_php.lstrip('\n'))
+print('OK  themes/default/layouts/blog-index.php')
+
+# ── 5. Blog post layout ───────────────────────────────────────────────────────
+blog_post_php = r"""<?php
+ob_start();
+$date = date('j F Y', strtotime($post['published_at'] ?? $post['created_at']));
+?>
+<div class="container--sm">
+    <article class="blog-post" itemscope itemtype="https://schema.org/Article">
+        <header class="post-header">
+            <h1 itemprop="headline"><?= e($post['title']) ?></h1>
+            <div class="post-meta">
+                <span>By <span itemprop="author"><?= e($post['author_name'] ?? 'Unknown') ?></span></span>
+                <span>&middot;</span>
+                <time itemprop="datePublished"
+                      datetime="<?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>">
+                    <?= e($date) ?>
+                </time>
+                <?php if (!empty($post['categories'])): ?>
+                <span>&middot;</span>
+                <?php foreach ($post['categories'] as $cat): ?>
+                    <a href="/blog/category/<?= e($cat['slug']) ?>" class="tag"><?= e($cat['name']) ?></a>
+                <?php endforeach ?>
+                <?php endif ?>
+            </div>
+        </header>
+
+        <div class="post-body prose" itemprop="articleBody">
+            <?= $post['body'] ?>
+        </div>
+
+        <?php if (!empty($post['tags'])): ?>
+        <footer class="post-footer">
+            <div class="post-tags">
+                <?php foreach ($post['tags'] as $tag): ?>
+                    <span class="tag tag--gray">#<?= e($tag['name']) ?></span>
+                <?php endforeach ?>
+            </div>
+        </footer>
+        <?php endif ?>
+    </article>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $post['title'];
+$metaDesc    = excerpt($post['body'], 155);
+$ogType      = 'article';
+$jsonLd = json_encode([
+    '@context'      => 'https://schema.org',
+    '@type'         => 'Article',
+    'headline'      => $post['title'],
+    'description'   => $metaDesc,
+    'author'        => ['@type' => 'Person', 'name' => $post['author_name'] ?? ''],
+    'datePublished' => $post['published_at'] ?? $post['created_at'],
+    'publisher'     => ['@type' => 'Organization', 'name' => setting('site', 'name', 'VeloCMS')],
+]);
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/blog-post.php', 'w') as f:
+    f.write(blog_post_php.lstrip('\n'))
+print('OK  themes/default/layouts/blog-post.php')
+
+# ── 6. Page layout ────────────────────────────────────────────────────────────
+page_php = r"""<?php
+$bodyContent  = '<div class="container--sm"><article class="page-content prose"><h1>'
+              . e($page['title'])
+              . '</h1>'
+              . ($page['body'] ?? '')
+              . '</article></div>';
+$metaTitle    = $page['title'];
+$metaDesc     = excerpt($page['body'] ?? '', 155);
+$jsonLd = json_encode([
+    '@context' => 'https://schema.org',
+    '@type'    => 'WebPage',
+    'name'     => $page['title'],
+    'url'      => $canonical ?? '',
+]);
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/page.php', 'w') as f:
+    f.write(page_php.lstrip('\n'))
+print('OK  themes/default/layouts/page.php')
+
+# ── 7. 404 layout ─────────────────────────────────────────────────────────────
+not_found_php = r"""<?php
+$bodyContent = '<div class="not-found">
+    <h1>404</h1>
+    <h2>Page Not Found</h2>
+    <p>The page you\'re looking for doesn\'t exist or has been moved.</p>
+    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
+        <a href="/" class="btn btn-primary">Go Home</a>
+        <a href="/search" class="btn btn-outline">Search</a>
+    </div>
+</div>';
+$metaTitle = '404 — Not Found';
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/404.php', 'w') as f:
+    f.write(not_found_php.lstrip('\n'))
+print('OK  themes/default/layouts/404.php')
+
+# ── 8. Search layout ──────────────────────────────────────────────────────────
+search_php = r"""<?php ob_start(); ?>
+<div class="search-page">
+    <h1>Search</h1>
+    <form class="search-bar" action="/search" method="get" role="search">
+        <input type="search" name="q" value="<?= e($query ?? '') ?>"
+               placeholder="Search pages and posts…" autocomplete="off"
+               aria-label="Search query" autofocus>
+        <button type="submit">Search</button>
+    </form>
+
+    <?php if (!empty($query) && empty($results)): ?>
+        <p class="search-empty">No results found for <strong><?= e($query) ?></strong>.</p>
+    <?php elseif (!empty($results)): ?>
+        <p class="search-summary">
+            <?= count($results) ?> result<?= count($results) !== 1 ? 's' : '' ?>
+            for <strong><?= e($query) ?></strong>
+        </p>
+        <ul class="search-results">
+        <?php foreach ($results as $r): ?>
+            <li class="search-result">
+                <a href="<?= e($r['url']) ?>"><?= e($r['title']) ?></a>
+                <span class="tag tag--gray"><?= e($r['entity_type']) ?></span>
+            </li>
+        <?php endforeach ?>
+        </ul>
+    <?php endif ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = !empty($query) ? 'Search: ' . $query : 'Search';
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/search.php', 'w') as f:
+    f.write(search_php.lstrip('\n'))
+print('OK  themes/default/layouts/search.php')
+
+# ── 9. Welcome layout (when no pages published yet) ───────────────────────────
+welcome_php = r"""<?php
+$bodyContent = '<div class="welcome">
+    <h1>Welcome to ' . e(setting('site', 'name', 'VeloCMS')) . '</h1>
+    <p>Your site is live. <a href="/admin">Go to the admin panel</a> to create your first page.</p>
+    <a href="/admin" class="btn btn-primary">Open Admin Panel</a>
+</div>';
+$metaTitle = setting('site', 'name', 'VeloCMS');
+require __DIR__ . '/main.php';
+"""
+
+with open(base + '/themes/default/layouts/welcome.php', 'w') as f:
+    f.write(welcome_php.lstrip('\n'))
+print('OK  themes/default/layouts/welcome.php')
+
+print('\nPhase 6a done — production theme written.')

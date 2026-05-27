@@ -1,0 +1,328 @@
+"""vcms_s11a_routes_resource.py
+1. Fix route ordering (resources before {id} wildcard)
+2. Add daily_rate column + 'daily' to pricing_mode ENUM
+3. Fix ResourceAdminController: pass csrf to index view, add daily_rate to extractData
+4. Update resources list view (show daily rate)
+5. Update resources form view (daily_rate field + daily pricing mode)
+"""
+BASE = '/var/www/velocms'
+import subprocess, os
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+def env():
+    e = dict(os.environ)
+    for line in open(BASE + '/.env'):
+        line = line.strip()
+        if '=' in line and not line.startswith('#'):
+            k, v = line.split('=', 1)
+            e[k] = v
+    return e
+
+def mysql(sql):
+    env_vars = env()
+    return subprocess.run(
+        ['mysql',
+         '-u', env_vars.get('CORE_DB_USER', 'velocms'),
+         '-p' + env_vars.get('CORE_DB_PASS', ''),
+         env_vars.get('CORE_DB_NAME', 'velocms'),
+         '-e', sql],
+        capture_output=True, text=True, env=env_vars
+    )
+
+def php_lint(path, label):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label}')
+    if r.returncode != 0:
+        print(r.stderr)
+
+# ── 1. Fix route ordering in admin/routes.php ─────────────────────────────────
+routes_path = BASE + '/admin/routes.php'
+routes = open(routes_path).read()
+
+old_booking_section = (
+    "// ── Booking — Overview & Settings ─────────────────────────────────────────────\n"
+    "$router->get('/admin/booking',                          [BookingAdminController::class, 'index']);\n"
+    "$router->get('/admin/booking/create',                   [BookingAdminController::class, 'createForm']);\n"
+    "$router->post('/admin/booking/create',                  [BookingAdminController::class, 'createStore']);\n"
+    "$router->get('/admin/booking/settings',                 [BookingAdminController::class, 'settingsForm']);\n"
+    "$router->post('/admin/booking/settings',                [BookingAdminController::class, 'saveSettings']);\n"
+    "$router->get('/admin/booking/{id}',                     [BookingAdminController::class, 'detail']);\n"
+    "$router->post('/admin/booking/{id}/status',             [BookingAdminController::class, 'updateStatus']);\n"
+    "\n"
+    "// ── Booking — Resources ───────────────────────────────────────────────────────\n"
+    "$router->get('/admin/booking/resources',                        [ResourceAdminController::class, 'index']);\n"
+    "$router->get('/admin/booking/resources/create',                 [ResourceAdminController::class, 'create']);\n"
+    "$router->post('/admin/booking/resources',                       [ResourceAdminController::class, 'store']);\n"
+    "$router->get('/admin/booking/resources/{id}/edit',              [ResourceAdminController::class, 'edit']);\n"
+    "$router->post('/admin/booking/resources/{id}',                  [ResourceAdminController::class, 'update']);\n"
+    "$router->post('/admin/booking/resources/{id}/delete',           [ResourceAdminController::class, 'delete']);\n"
+    "$router->post('/admin/booking/resources/{id}/packages',         [ResourceAdminController::class, 'storePackage']);\n"
+    "$router->post('/admin/booking/resources/{id}/packages/{pkg_id}/delete', [ResourceAdminController::class, 'deletePackage']);\n"
+    "$router->post('/admin/booking/resources/{id}/products',         [ResourceAdminController::class, 'storeProduct']);\n"
+    "$router->post('/admin/booking/resources/{id}/products/{prod_id}/delete', [ResourceAdminController::class, 'deleteProduct']);"
+)
+
+new_booking_section = (
+    "// ── Booking — Overview & Settings ─────────────────────────────────────────────\n"
+    "$router->get('/admin/booking',                          [BookingAdminController::class, 'index']);\n"
+    "$router->get('/admin/booking/create',                   [BookingAdminController::class, 'createForm']);\n"
+    "$router->post('/admin/booking/create',                  [BookingAdminController::class, 'createStore']);\n"
+    "$router->get('/admin/booking/settings',                 [BookingAdminController::class, 'settingsForm']);\n"
+    "$router->post('/admin/booking/settings',                [BookingAdminController::class, 'saveSettings']);\n"
+    "\n"
+    "// ── Booking — Resources (must be before /{id} wildcard) ─────────────────────\n"
+    "$router->get('/admin/booking/resources',                        [ResourceAdminController::class, 'index']);\n"
+    "$router->get('/admin/booking/resources/create',                 [ResourceAdminController::class, 'create']);\n"
+    "$router->post('/admin/booking/resources',                       [ResourceAdminController::class, 'store']);\n"
+    "$router->get('/admin/booking/resources/{id}/edit',              [ResourceAdminController::class, 'edit']);\n"
+    "$router->post('/admin/booking/resources/{id}',                  [ResourceAdminController::class, 'update']);\n"
+    "$router->post('/admin/booking/resources/{id}/delete',           [ResourceAdminController::class, 'delete']);\n"
+    "$router->post('/admin/booking/resources/{id}/packages',         [ResourceAdminController::class, 'storePackage']);\n"
+    "$router->post('/admin/booking/resources/{id}/packages/{pkg_id}/delete', [ResourceAdminController::class, 'deletePackage']);\n"
+    "$router->post('/admin/booking/resources/{id}/products',         [ResourceAdminController::class, 'storeProduct']);\n"
+    "$router->post('/admin/booking/resources/{id}/products/{prod_id}/delete', [ResourceAdminController::class, 'deleteProduct']);\n"
+    "\n"
+    "// ── Booking — Individual booking (wildcard — must be LAST) ──────────────────\n"
+    "$router->get('/admin/booking/{id}',                     [BookingAdminController::class, 'detail']);\n"
+    "$router->post('/admin/booking/{id}/status',             [BookingAdminController::class, 'updateStatus']);"
+)
+
+if 'must be before' not in routes:
+    if old_booking_section in routes:
+        routes = routes.replace(old_booking_section, new_booking_section)
+        with open(routes_path, 'w') as f:
+            f.write(routes)
+        print('OK  admin/routes.php — route ordering fixed')
+    else:
+        print('ERR admin/routes.php — pattern not found')
+        # Show the relevant portion
+        idx = routes.find('/admin/booking/resources')
+        print('  Context:', routes[max(0,idx-200):idx+100])
+else:
+    print('SKIP admin/routes.php — already fixed')
+
+# ── 2. DB: add daily_rate column + 'daily' to pricing_mode ENUM ─────────────
+r = mysql("SHOW COLUMNS FROM booking_resources LIKE 'daily_rate';")
+if not r.stdout.strip():
+    r2 = mysql(
+        "ALTER TABLE booking_resources "
+        "ADD COLUMN daily_rate DECIMAL(10,2) DEFAULT NULL AFTER hourly_rate, "
+        "MODIFY pricing_mode ENUM('hourly','package','product','combined','daily') NOT NULL DEFAULT 'hourly';"
+    )
+    if r2.returncode == 0:
+        print('OK  DB — daily_rate added, pricing_mode ENUM updated')
+    else:
+        print('ERR DB:', r2.stderr)
+else:
+    print('SKIP DB — daily_rate already exists')
+
+# ── 3. ResourceAdminController: pass csrf to index(), add daily_rate ──────────
+ctrl_path = BASE + '/modules/booking/admin/controllers/ResourceAdminController.php'
+ctrl = open(ctrl_path).read()
+
+# Fix index() — add csrf
+old_index = (
+    "        return $this->layout('booking/resources/index.php', [\n"
+    "            'user'      => $this->auth()->user(),\n"
+    "            'page'      => 'booking',\n"
+    "            'resources' => $this->resource()->all(),\n"
+    "            'flash'     => $flash,\n"
+    "        ]);"
+)
+new_index = (
+    "        return $this->layout('booking/resources/index.php', [\n"
+    "            'user'      => $this->auth()->user(),\n"
+    "            'page'      => 'booking',\n"
+    "            'resources' => $this->resource()->all(),\n"
+    "            'flash'     => $flash,\n"
+    "            'csrf'      => $this->auth()->csrfToken(),\n"
+    "        ]);"
+)
+
+# Fix extractData() — add daily_rate
+old_extract = (
+    "    private function extractData(Request $req): array\n"
+    "    {\n"
+    "        return [\n"
+    "            'name'                  => trim($req->post('name', '')),\n"
+    "            'slug'                  => trim($req->post('slug', '')),\n"
+    "            'description'           => trim($req->post('description', '')),\n"
+    "            'image'                 => trim($req->post('image', '')),\n"
+    "            'active'                => $req->post('active', '0') === '1',\n"
+    "            'pricing_mode'          => $req->post('pricing_mode', 'hourly'),\n"
+    "            'hourly_rate'           => $req->post('hourly_rate', ''),\n"
+    "            'min_duration_mins'     => $req->post('min_duration_mins', 60),\n"
+    "            'max_duration_mins'     => $req->post('max_duration_mins', 480),\n"
+    "            'advance_booking_hours' => $req->post('advance_booking_hours', 24),\n"
+    "            'sort_order'            => $req->post('sort_order', 0),\n"
+    "        ];\n"
+    "    }"
+)
+new_extract = (
+    "    private function extractData(Request $req): array\n"
+    "    {\n"
+    "        return [\n"
+    "            'name'                  => trim($req->post('name', '')),\n"
+    "            'slug'                  => trim($req->post('slug', '')),\n"
+    "            'description'           => trim($req->post('description', '')),\n"
+    "            'image'                 => trim($req->post('image', '')),\n"
+    "            'active'                => $req->post('active', '0') === '1',\n"
+    "            'pricing_mode'          => $req->post('pricing_mode', 'hourly'),\n"
+    "            'hourly_rate'           => $req->post('hourly_rate', '') !== '' ? $req->post('hourly_rate') : null,\n"
+    "            'daily_rate'            => $req->post('daily_rate', '') !== '' ? $req->post('daily_rate') : null,\n"
+    "            'min_duration_mins'     => $req->post('min_duration_mins', 60),\n"
+    "            'max_duration_mins'     => $req->post('max_duration_mins', 480),\n"
+    "            'advance_booking_hours' => $req->post('advance_booking_hours', 24),\n"
+    "            'sort_order'            => $req->post('sort_order', 0),\n"
+    "        ];\n"
+    "    }"
+)
+
+changed = 0
+for old, new, label in [
+    (old_index,   new_index,   'index() csrf'),
+    (old_extract, new_extract, 'extractData() daily_rate'),
+]:
+    if old in ctrl:
+        ctrl = ctrl.replace(old, new)
+        changed += 1
+        print(f'OK  ResourceAdminController — {label}')
+    else:
+        print(f'SKIP ResourceAdminController — {label} (already patched?)')
+
+with open(ctrl_path, 'w') as f:
+    f.write(ctrl)
+
+# ── 4. Update resources list view ─────────────────────────────────────────────
+list_path = BASE + '/admin/views/booking/resources/index.php'
+list_view = open(list_path).read()
+
+# Replace table header to add daily_rate column and fix Rate column
+old_thead = (
+    "        <tr>\n"
+    "            <th>Name</th>\n"
+    "            <th>Pricing mode</th>\n"
+    "            <th>Rate</th>\n"
+    "            <th>Min/Max</th>\n"
+    "            <th>Advance notice</th>\n"
+    "            <th>Status</th>\n"
+    "            <th></th>\n"
+    "        </tr>"
+)
+new_thead = (
+    "        <tr>\n"
+    "            <th>Name</th>\n"
+    "            <th>Pricing</th>\n"
+    "            <th>Hourly</th>\n"
+    "            <th>Daily</th>\n"
+    "            <th>Status</th>\n"
+    "            <th></th>\n"
+    "        </tr>"
+)
+
+old_tbody_row = (
+    "        <td><?= ucfirst(e($r['pricing_mode'])) ?></td>\n"
+    "            <td>\n"
+    "                <?php if ($r['hourly_rate'] !== null): ?>\n"
+    "                    €<?= number_format((float)$r['hourly_rate'], 2) ?>/hr\n"
+    "                <?php else: ?>—<?php endif ?>\n"
+    "            </td>\n"
+    "            <td><?= (int)$r['min_duration_mins'] ?>–<?= (int)$r['max_duration_mins'] ?> min</td>\n"
+    "            <td><?= (int)$r['advance_booking_hours'] ?>h</td>\n"
+    "            <td>"
+)
+new_tbody_row = (
+    "        <td><?= ucfirst(e($r['pricing_mode'])) ?></td>\n"
+    "            <td><?= $r['hourly_rate'] !== null ? '€'.number_format((float)$r['hourly_rate'],2).'/h' : '—' ?></td>\n"
+    "            <td><?= isset($r['daily_rate']) && $r['daily_rate'] !== null ? '€'.number_format((float)$r['daily_rate'],2).'/day' : '—' ?></td>\n"
+    "            <td>"
+)
+
+for old, new, label in [(old_thead, new_thead, 'thead'), (old_tbody_row, new_tbody_row, 'tbody row')]:
+    if old in list_view:
+        list_view = list_view.replace(old, new)
+        print(f'OK  resources/index.php — {label} updated')
+    else:
+        print(f'SKIP resources/index.php — {label} already updated')
+
+with open(list_path, 'w') as f:
+    f.write(list_view)
+
+# ── 5. Update resources form view ─────────────────────────────────────────────
+form_path = BASE + '/admin/views/booking/resources/form.php'
+form_view = open(form_path).read()
+
+# Update pricing_mode select to include 'daily'
+old_pricing_loop = (
+    "        <?php foreach (['hourly' => 'Hourly', 'package' => 'Package only', 'product' => 'Product only', 'combined' => 'Combined (all types)'] as $v => $l): ?>"
+)
+new_pricing_loop = (
+    "        <?php foreach (['hourly' => 'Hourly', 'daily' => 'Daily (per day)', 'package' => 'Package only', 'product' => 'Product only', 'combined' => 'Combined (all types)'] as $v => $l): ?>"
+)
+
+# Replace the onchange handler and add daily rate field
+old_rate_group = (
+    "            <div class=\"vcms-form-group\" id=\"hourly-rate-group\">\n"
+    "                <label for=\"r-rate\">Hourly rate (€)</label>\n"
+    "                <input type=\"number\" id=\"r-rate\" name=\"hourly_rate\" step=\"0.01\" min=\"0\"\n"
+    "                       value=\"<?= e($record['hourly_rate'] ?? '') ?>\" placeholder=\"0.00\">\n"
+    "            </div>"
+)
+new_rate_group = (
+    "            <div class=\"vcms-form-group\" id=\"hourly-rate-group\">\n"
+    "                <label for=\"r-rate\">Hourly rate (€)</label>\n"
+    "                <input type=\"number\" id=\"r-rate\" name=\"hourly_rate\" step=\"0.01\" min=\"0\"\n"
+    "                       value=\"<?= e($record['hourly_rate'] ?? '') ?>\" placeholder=\"0.00\">\n"
+    "            </div>\n"
+    "            <div class=\"vcms-form-group\" id=\"daily-rate-group\">\n"
+    "                <label for=\"r-daily-rate\">Daily rate (€/day)</label>\n"
+    "                <input type=\"number\" id=\"r-daily-rate\" name=\"daily_rate\" step=\"0.01\" min=\"0\"\n"
+    "                       value=\"<?= e($record['daily_rate'] ?? '') ?>\" placeholder=\"0.00\">\n"
+    "            </div>"
+)
+
+# Update the JS toggleHourlyRate function
+old_js = (
+    "<script>\n"
+    "function toggleHourlyRate() {\n"
+    "    const mode  = document.getElementById('r-pricing').value;\n"
+    "    const group = document.getElementById('hourly-rate-group');\n"
+    "    group.style.display = (mode === 'hourly' || mode === 'combined') ? '' : 'none';\n"
+    "}\n"
+    "toggleHourlyRate();\n"
+    "</script>"
+)
+new_js = (
+    "<script>\n"
+    "function toggleHourlyRate() {\n"
+    "    const mode  = document.getElementById('r-pricing').value;\n"
+    "    document.getElementById('hourly-rate-group').style.display  = (mode === 'hourly' || mode === 'combined') ? '' : 'none';\n"
+    "    document.getElementById('daily-rate-group').style.display   = (mode === 'daily'  || mode === 'combined') ? '' : 'none';\n"
+    "}\n"
+    "toggleHourlyRate();\n"
+    "</script>"
+)
+
+for old, new, label in [
+    (old_pricing_loop, new_pricing_loop, 'pricing mode select'),
+    (old_rate_group,   new_rate_group,   'rate group'),
+    (old_js,           new_js,           'JS toggle function'),
+]:
+    if old in form_view:
+        form_view = form_view.replace(old, new)
+        print(f'OK  resources/form.php — {label}')
+    else:
+        print(f'SKIP resources/form.php — {label} already updated')
+
+with open(form_path, 'w') as f:
+    f.write(form_view)
+
+# ── 6. PHP syntax checks ─────────────────────────────────────────────────────
+for path, label in [
+    (ctrl_path, 'ResourceAdminController.php'),
+    (list_path, 'resources/index.php'),
+    (form_path, 'resources/form.php'),
+]:
+    php_lint(path, label)
+
+print('\nDone.')

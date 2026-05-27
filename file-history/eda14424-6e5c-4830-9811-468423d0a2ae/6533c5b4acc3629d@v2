@@ -1,0 +1,27 @@
+content = r"""<?php declare(strict_types=1);
+
+$app = require dirname(__DIR__) . '/core/bootstrap.php';
+
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Blog\BlogModule;
+use VeloCMS\Modules\Pages\PagesModule;
+
+// Load frontend modules (blog before pages so /blog/* routes take priority)
+$router = $app->make(Router::class);
+$modules = [
+    new BlogModule($app),
+    new PagesModule($app),
+];
+foreach ($modules as $module) {
+    $module->register($router);
+}
+
+// Admin + dispatch
+require $app->basePath('admin/routes.php');
+$app->run(new Request());
+"""
+
+with open('/var/www/velocms/public/index.php', 'w') as f:
+    f.write(content.lstrip('\n'))
+print('public/index.php rewritten')

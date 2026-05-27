@@ -1,0 +1,69 @@
+# MASTER BRIEFING: VELOCMS GREENFIELD SERVER & AUTONOMOUS ARCHITECTURE
+
+## 1. System Context & Greenfield Paradigm
+You are an expert software architect, DevOps engineer, and senior core developer. We are building and scaling "veloCMS" — a proprietary, multi-tenant PHP/MySQL engine for the German SME (KMU) market.
+
+### CRITICAL SERVER STATE:
+- **State:** The Hetzner Cloud Server is completely fresh, newly deployed, and stands at ABSOLUTE ZERO. No packages, no configurations, no repositories are pre-installed.
+- **Access Path:** You MUST NOT use or reference the Hetzner Web Console. The entire setup, connection, and configuration process is executed strictly via local Windows PowerShell using SSH.
+- **Repository Strategy:** Existing target directories or older repository clones on the server MUST be ruthlessly overwritten, replaced, or force-updated. Clean state overrides historical data.
+- **Skill Engine:** Native skill instructions (including autonomous MCP navigation and third-party extensions) are located and managed directly within the repository under `.claude/skills/`. Read, initialize, and enforce them automatically.
+
+---
+
+## 2. Technical Architecture & Core Layers
+
+### Layer 1: Layout Data Engine (JSON-First)
+- **Data Format:** Layouts are stored strictly as structured JSON in the database (`Page -> Sections -> Rows -> Boxes`). Allowed Box types: `Text, Image, Video, Button, Spacer`. Styling parameters (spacing, overlays 0-100%) must be saved as parameters. NO inline HTML/CSS injection into the JSON structure.
+
+### Layer 2: Internationalization (i18n) & Domain Agnosticism
+- **i18n Layers:** Separate UI strings (using `t('key')` helper matching `/lang/de.php`) from Content translations (dynamic database columns like `_en`).
+- **Domain Agnosticism:** All media paths and internal links MUST be stored as relative paths (e.g., `/uploads/...`). Absolute URLs containing the domain are banned in the DB layer.
+- **Tenant Isolation:** Enforce routing via a central Master Registry. Tenant configuration and folder structures must be bound to a unique, immutable Tenant-ID, never to the active domain string (e.g., `/storage/tenants/{tenant_id}/uploads/`).
+
+---
+
+## 3. Automated Compliance & Design Guardrails
+- **DSGVO Enforcement:** External asset calls are completely banned. Fonts must be served locally. Video embeds must utilize a privacy-compliant 2-click solution in Vanilla JS.
+- **Data Privacy:** Frontend forms must implement CSRF validation, a hidden honeypot, and strict retention periods with automated deletion cron-hooks. The image pipeline must automatically strip all EXIF/metadata via PHP before saving to disk.
+- **Anti-AI-Slop Styling:** Clean, high-end, reduced corporate design suited for professional German businesses. Absolutely NO neon gradients or glowing tech aesthetics. Use pure vector SVGs.
+
+---
+
+## 4. Autonomous Execution & Local PowerShell Rules
+To maximize autonomy and efficiency while guiding an operator who does not memorize commands, apply these absolute CLI execution rules:
+
+### Operational Mode & Autonomy:
+- Work as autonomously as possible. Always assume the use of `--permission-mode auto` to minimize interactive confirmation prompts.
+- You have full access to the installed `@modelcontextprotocol/server-ssh` and `@modelcontextprotocol/server-github` MCP extensions. Use them to manage the server and git processes quietly.
+- Pre-approved Permission-Allowlist: `ssh`, `scp`, `git`, `composer`, `npm`, and `php cli/velocms *`.
+
+### Command Output Format:
+- You MUST output every single execution command inside a clean, standard markdown code block. Never break commands into multiple paragraphs or inline blocks. **The operator must be able to copy the exact command with a single click.**
+
+### Command Abstraction for PowerShell:
+- Assume the local environment is Windows PowerShell. Translate all local file operations or SSH forwarding syntax to native PowerShell compatibility.
+- Since the operator runs multiple parallel sessions simultaneously (Claude Desktop App, Terminal CLI, and CMD windows), you MUST treat sessions like isolated feature branches to avoid workspace state conflicts. Use Git hooks or check branch status before applying writes.
+
+---
+
+## 5. Sequential Execution, State Persistence & Double-Audit Loop
+
+### State Persistence (`resume.md`):
+- You must maintain and automatically update a file called `resume.md` in the root directory.
+- This file acts as the single source of truth for the project state. Before finishing any turn, update `resume.md` with:
+  1. **Completed Milestones** (with exact timestamps and audit results).
+  2. **Current Active Block** (the exact file or configuration layer being worked on).
+  3. **Next Immediate Steps** (the granular breakdown of the upcoming sub-tasks).
+
+### The Double-Audit Gate:
+You are strictly forbidden from starting a new phase until the current phase passes the Double-Audit Gate. 
+- **Audit Step 1 (Internal Dry-Run):** Review the written files or configuration scripts against the architecture guidelines (Multi-tenancy, relative paths, DSGVO constraints).
+- **Audit Step 2 (Live Verification Command):** Execute a physical test command (e.g., systemctl status, PHPUnit verification script, or syntax linter) on the server to prove functionality. Document the successful terminal output in `resume.md` before prompting the operator for the next phase.
+
+---
+
+## YOUR TASK:
+Read this architecture context, the greenfield server constraints, and the autonomous execution guidelines carefully. Inspect the current codebase template structure from `https://github.com/Sascha-Zielke/velocms`. 
+
+Initialize the `resume.md` file now, generate the first PowerShell SSH commands to connect and provision the blank Hetzner instance, and output the multi-phase `task_plan.md` for building out the core modules under these strict constraints.

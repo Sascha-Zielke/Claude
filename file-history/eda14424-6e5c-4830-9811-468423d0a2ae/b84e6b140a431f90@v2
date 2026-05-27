@@ -1,0 +1,188 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── admin/controllers/ProfileController.php ──────────────────────────────────
+files['admin/controllers/ProfileController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Admin;
+
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Audit\Models\AuditLog;
+
+class ProfileController extends BaseController
+{
+    public function show(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        if (!$auth->check()) {
+            return $this->redirect('/admin/login');
+        }
+        return $this->layout('profile.php', [
+            'page' => 'profile',
+            'user' => $auth->user(),
+        ]);
+    }
+
+    public function changePassword(Request $request, array $params): Response
+    {
+        $auth = $this->auth();
+        if (!$auth->check()) {
+            return $this->redirect('/admin/login');
+        }
+
+        Auth::verifyCsrf();
+
+        $current  = trim($request->post('current_password', ''));
+        $new      = trim($request->post('new_password', ''));
+        $confirm  = trim($request->post('confirm_password', ''));
+
+        $error = null;
+
+        if ($current === '' || $new === '' || $confirm === '') {
+            $error = 'All fields are required.';
+        } elseif (strlen($new) < 12) {
+            $error = 'New password must be at least 12 characters.';
+        } elseif ($new !== $confirm) {
+            $error = 'New passwords do not match.';
+        } else {
+            $db   = $this->app->make(\VeloCMS\Core\Database::class);
+            $pdo  = $db->core();
+            $user = $auth->user();
+
+            $row = $pdo->prepare('SELECT password_hash FROM users WHERE id = ?');
+            $row->execute([$user['id']]);
+            $hash = $row->fetchColumn();
+
+            if (!password_verify($current, $hash)) {
+                $error = 'Current password is incorrect.';
+            } else {
+                $newHash = password_hash($new, PASSWORD_DEFAULT);
+                $pdo->prepare('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?')
+                    ->execute([$newHash, $user['id']]);
+
+                AuditLog::write(
+                    $pdo,
+                    $user['id'],
+                    'PASSWORD_CHANGED',
+                    'user',
+                    $user['id'],
+                    [],
+                    $request->ip()
+                );
+
+                $_SESSION['_flash'] = 'Password changed successfully.';
+                return $this->redirect('/admin/profile');
+            }
+        }
+
+        return $this->layout('profile.php', [
+            'page'  => 'profile',
+            'user'  => $auth->user(),
+            'error' => $error,
+        ]);
+    }
+}
+"""
+
+# ── admin/views/profile.php ───────────────────────────────────────────────────
+files['admin/views/profile.php'] = r"""<?php
+$flash = $_SESSION['_flash'] ?? null;
+unset($_SESSION['_flash']);
+?>
+<div class="admin-page-header">
+    <h1>My Profile</h1>
+</div>
+
+<?php if ($flash): ?>
+    <div class="alert alert-success"><?= e($flash) ?></div>
+<?php endif; ?>
+<?php if (!empty($error)): ?>
+    <div class="alert alert-danger"><?= e($error) ?></div>
+<?php endif; ?>
+
+<div class="card" style="max-width:520px">
+    <div class="card-body">
+        <dl style="margin:0 0 1.5rem">
+            <dt style="color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em">Email</dt>
+            <dd style="margin:.25rem 0 1rem;font-weight:600"><?= e($user['email']) ?></dd>
+            <dt style="color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.05em">Role</dt>
+            <dd style="margin:.25rem 0 0;font-weight:600"><?= e($user['role']) ?></dd>
+        </dl>
+
+        <hr style="border-color:var(--border);margin:1.25rem 0">
+
+        <h2 style="font-size:1rem;margin:0 0 1rem">Change Password</h2>
+        <form method="POST" action="/admin/profile/password" autocomplete="off">
+            <input type="hidden" name="_csrf" value="<?= e(Auth::csrfToken()) ?>">
+
+            <div class="form-group">
+                <label for="current_password">Current Password</label>
+                <input type="password" id="current_password" name="current_password"
+                       class="form-control" required autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label for="new_password">New Password <small style="color:var(--muted)">(min 12 chars)</small></label>
+                <input type="password" id="new_password" name="new_password"
+                       class="form-control" required minlength="12" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+                <label for="confirm_password">Confirm New Password</label>
+                <input type="password" id="confirm_password" name="confirm_password"
+                       class="form-control" required minlength="12" autocomplete="new-password">
+            </div>
+
+            <button type="submit" class="btn btn-primary">Update Password</button>
+        </form>
+    </div>
+</div>
+"""
+
+# Write files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# ── Add routes to admin/routes.php ────────────────────────────────────────────
+routes_path = base + '/admin/routes.php'
+routes = open(routes_path).read()
+
+if 'ProfileController' not in routes:
+    routes += """
+use VeloCMS\\Admin\\ProfileController;
+
+// ── Profile / password change ─────────────────────────────────────────────────
+$router->get('/admin/profile',           [ProfileController::class, 'show']);
+$router->post('/admin/profile/password', [ProfileController::class, 'changePassword']);
+"""
+    open(routes_path, 'w').write(routes)
+    print('OK  admin/routes.php (profile routes added)')
+else:
+    print('OK  admin/routes.php (profile routes already present)')
+
+# ── Add "My Profile" link to admin layout header/nav ─────────────────────────
+layout_path = base + '/admin/views/layout.php'
+layout = open(layout_path).read()
+
+# Add profile link in the top-right user area if it exists, else add to sidebar
+if 'href="/admin/profile"' not in layout:
+    # Look for logout link and add profile before it
+    if 'href="/admin/logout"' in layout:
+        layout = layout.replace(
+            'href="/admin/logout"',
+            'href="/admin/profile">My Profile</a> &nbsp;|&nbsp; <a href="/admin/logout"'
+        )
+        # Remove duplicate text if it got duplicated
+        open(layout_path, 'w').write(layout)
+        print('OK  admin/views/layout.php (profile link added)')
+    else:
+        print('WARN admin/views/layout.php: could not find logout link — add profile link manually')
+else:
+    print('OK  admin/views/layout.php (profile link already present)')
+
+print('\nProfile / password-change feature deployed.')

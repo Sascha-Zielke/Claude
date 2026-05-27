@@ -1,0 +1,52 @@
+base = '/var/www/velocms'
+path = base + '/VELOCMS_MASTERPLAN.md'
+
+content = open(path).read()
+
+# Remove everything from the corrupted section header onward
+cut = content.find('\n## 16. SESSION WORKFLOW')
+if cut >= 0:
+    content = content[:cut]
+
+# Also strip the old end marker if it exists
+old_end = '\n---\n\n*End of VELOCMS_MASTERPLAN.md*\n*This document is the contract between the developer, the AI agent, and the codebase.*\n*When in doubt: read this first.*'
+content = content.replace(old_end, '')
+content = content.rstrip()
+
+# Append the clean session workflow section
+section = """
+
+---
+
+## 16. SESSION WORKFLOW
+
+At the **start** of every Claude Code session:
+1. Read `CLAUDE_START.md` — server, repo, stack, critical rules
+2. Read `RESUME.md` — current status and next tasks
+
+At the **end** of every Claude Code session:
+1. Update `RESUME.md`:
+   - Set "Date of last update" to today
+   - Update "What was last done" section
+   - Tick off completed tasks, add new ones
+   - Add any new gotchas discovered
+2. Add a new entry to `SESSION_LOG.md` with date and bullet list of what was built
+3. Commit and push both files:
+
+       git add RESUME.md SESSION_LOG.md VELOCMS_MASTERPLAN.md
+       git commit -m 'docs: update session log and resume'
+       git push origin main
+
+4. If the masterplan feature checklist changed, update it too.
+
+---
+
+*End of VELOCMS_MASTERPLAN.md*
+*This document is the contract between the developer, the AI agent, and the codebase.*
+*When in doubt: read this first.*
+"""
+
+content = content + section
+open(path, 'w').write(content)
+print('OK  VELOCMS_MASTERPLAN.md (session workflow section written cleanly)')
+print('    Total lines:', content.count('\n'))

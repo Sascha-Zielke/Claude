@@ -1,0 +1,72 @@
+"""vcms_s10d_booking_model.py — patch Booking::generateAvailableSlots for per-day config"""
+BASE = '/var/www/velocms'
+
+model_path = BASE + '/modules/booking/models/Booking.php'
+model = open(model_path).read()
+
+old_block = (
+    "        $businessStart = $settings['business_hours_start'] ?? '09:00';\n"
+    "        $businessEnd   = $settings['business_hours_end']   ?? '21:00';\n"
+    "        $businessDays  = json_decode($settings['business_days'] ?? '[1,2,3,4,5,6]', true)\n"
+    "                         ?: [1, 2, 3, 4, 5, 6];\n"
+    "\n"
+    "        $dayOfWeek = (int) date('N', strtotime($date)); // 1=Mon … 7=Sun\n"
+    "        if (!in_array($dayOfWeek, $businessDays, true)) {\n"
+    "            return [];\n"
+    "        }\n"
+    "\n"
+    "        $booked   = $this->getBookedSlots($resourceId, $date);\n"
+    "        $start    = strtotime(\"{$date} {$businessStart}\");\n"
+    "        $end      = strtotime(\"{$date} {$businessEnd}\");"
+)
+
+new_block = (
+    "        $dayOfWeek = (int) date('N', strtotime($date)); // 1=Mon 7=Sun\n"
+    "\n"
+    "        // Per-day config (Session 10)\n"
+    "        $bhConfigRaw = json_decode($settings['business_days_config'] ?? '{}', true) ?: [];\n"
+    "        if (!empty($bhConfigRaw) && isset($bhConfigRaw[$dayOfWeek])) {\n"
+    "            $dayCfg = $bhConfigRaw[$dayOfWeek];\n"
+    "            if (empty($dayCfg['enabled'])) return [];\n"
+    "            $businessStart = $dayCfg['start'] ?? '09:00';\n"
+    "            $businessEnd   = $dayCfg['end']   ?? '21:00';\n"
+    "        } else {\n"
+    "            $businessStart = $settings['business_hours_start'] ?? '09:00';\n"
+    "            $businessEnd   = $settings['business_hours_end']   ?? '21:00';\n"
+    "            $businessDays  = json_decode($settings['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1, 2, 3, 4, 5, 6];\n"
+    "            if (!in_array($dayOfWeek, $businessDays, true)) return [];\n"
+    "        }\n"
+    "\n"
+    "        // Slot duration: support 'half_day' / 'full_day' string values\n"
+    "        $slotDurSetting = $settings['slot_duration_mins'] ?? null;\n"
+    "        if ($slotDurSetting === 'half_day')         $slotMins = 240;\n"
+    "        elseif ($slotDurSetting === 'full_day')      $slotMins = 480;\n"
+    "        elseif (is_numeric($slotDurSetting))         $slotMins = (int) $slotDurSetting;\n"
+    "\n"
+    "        $booked   = $this->getBookedSlots($resourceId, $date);\n"
+    "        $start    = strtotime(\"{$date} {$businessStart}\");\n"
+    "        $end      = strtotime(\"{$date} {$businessEnd}\");"
+)
+
+if 'business_days_config' not in model:
+    if old_block in model:
+        model = model.replace(old_block, new_block)
+        with open(model_path, 'w') as f:
+            f.write(model)
+        print('OK  Booking.php — generateAvailableSlots patched')
+    else:
+        print('ERR pattern still not found — writing debug info')
+        # Find the line with businessStart
+        for i, line in enumerate(model.splitlines()):
+            if 'businessStart' in line or 'businessDays' in line:
+                print(f'  line {i+1}: {repr(line)}')
+else:
+    print('SKIP Booking.php — already patched')
+
+import subprocess
+r = subprocess.run(['php', '-l', model_path], capture_output=True, text=True)
+print(('OK ' if r.returncode == 0 else 'ERR') + '  php -l Booking.php')
+if r.returncode != 0:
+    print(r.stderr)
+
+print('\nDone.')

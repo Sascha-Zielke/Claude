@@ -1,0 +1,31 @@
+Two fixes needed:
+
+1. DAILY BOOKING — Remove time fields:
+When "Daily (overnight / multi-day)" is the active 
+booking type, the booking form must show ONLY:
+- Check-in DATE picker (no time)
+- Check-out DATE picker (no time)
+- Automatic calculation: nights = check-out minus 
+  check-in, total price = nights × daily rate
+Remove all hourly/time slot fields when Daily mode 
+is active. Daily and Hourly are mutually exclusive 
+— when Daily is on, Hourly is automatically off 
+and vice versa. Make this clear in the UI with a 
+note: "Daily and Hourly booking cannot be active 
+at the same time."
+
+2. REMOVE FIELDS FROM RESOURCE FORM:
+Remove these fields from the Resource create/edit 
+form — they will be re-introduced later in 
+industry-specific templates:
+- Min duration (min)
+- Max duration (min)
+- Advance booking (hours)
+- Sort order
+
+Keep these fields in the database (do NOT remove 
+the DB columns) but hide them from the UI for now.
+
+After fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

@@ -1,0 +1,303 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── public/assets/admin/editor.js — rich text editor ─────────────────────────
+files['public/assets/admin/editor.js'] = r"""(function () {
+  'use strict';
+
+  const editor   = document.getElementById('vcms-editor');
+  const textarea = document.getElementById('vcms-body');
+  const toolbar  = document.getElementById('editor-toolbar');
+
+  if (!editor || !textarea || !toolbar) return;
+
+  // Sync contenteditable → hidden textarea on every keystroke
+  editor.addEventListener('input', () => { textarea.value = editor.innerHTML; });
+
+  // Sync before form submit (catches paste/drag events too)
+  editor.closest('form')?.addEventListener('submit', () => {
+    textarea.value = editor.innerHTML;
+  });
+
+  // Toolbar button handler
+  toolbar.addEventListener('click', e => {
+    const btn = e.target.closest('[data-cmd]');
+    if (!btn) return;
+    e.preventDefault();
+    editor.focus();
+    const cmd = btn.dataset.cmd;
+    switch (cmd) {
+      case 'bold':          document.execCommand('bold');                      break;
+      case 'italic':        document.execCommand('italic');                    break;
+      case 'h2':            document.execCommand('formatBlock', false, 'h2'); break;
+      case 'h3':            document.execCommand('formatBlock', false, 'h3'); break;
+      case 'ul':            document.execCommand('insertUnorderedList');       break;
+      case 'ol':            document.execCommand('insertOrderedList');         break;
+      case 'blockquote':    document.execCommand('formatBlock', false, 'blockquote'); break;
+      case 'removeFormat':  document.execCommand('removeFormat');              break;
+      case 'link': {
+        const url = prompt('Enter URL:');
+        if (url) document.execCommand('createLink', false, url);
+        break;
+      }
+    }
+    textarea.value = editor.innerHTML;
+  });
+
+  // Keyboard shortcuts
+  editor.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === 'b') { e.preventDefault(); document.execCommand('bold'); }
+      if (e.key === 'i') { e.preventDefault(); document.execCommand('italic'); }
+      if (e.key === 'k') {
+        e.preventDefault();
+        const url = prompt('Enter URL:');
+        if (url) document.execCommand('createLink', false, url);
+      }
+    }
+    textarea.value = editor.innerHTML;
+  });
+
+  // Initialise textarea with current editor content
+  textarea.value = editor.innerHTML;
+})();
+"""
+
+# ── public/assets/admin/slug.js — auto-slug from title ───────────────────────
+files['public/assets/admin/slug.js'] = r"""(function () {
+  'use strict';
+
+  const titleInput = document.getElementById('f-title');
+  const slugInput  = document.getElementById('f-slug');
+
+  if (!titleInput || !slugInput) return;
+
+  let userEdited = slugInput.value.trim() !== '';
+
+  function slugify(text) {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/[\s-]+/g, '-');
+  }
+
+  titleInput.addEventListener('input', () => {
+    if (!userEdited) {
+      slugInput.value = slugify(titleInput.value);
+    }
+  });
+
+  slugInput.addEventListener('input', () => {
+    userEdited = slugInput.value.trim() !== '';
+  });
+
+  slugInput.addEventListener('blur', () => {
+    slugInput.value = slugify(slugInput.value);
+  });
+})();
+"""
+
+# ── themes/default/layouts/main.php — base frontend layout ───────────────────
+files['themes/default/layouts/main.php'] = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><?= e($metaTitle ?? $title ?? 'VeloCMS') ?></title>
+    <?php if (!empty($metaDesc)): ?>
+    <meta name="description" content="<?= e($metaDesc) ?>">
+    <?php endif; ?>
+    <link rel="stylesheet" href="/assets/theme/style.css">
+</head>
+<body>
+<header class="site-header">
+    <div class="container">
+        <a href="/" class="site-logo">VeloCMS</a>
+        <nav class="site-nav">
+            <a href="/">Home</a>
+            <a href="/blog">Blog</a>
+        </nav>
+    </div>
+</header>
+
+<main class="site-main">
+    <div class="container">
+        <?= $bodyContent ?? '' ?>
+    </div>
+</main>
+
+<footer class="site-footer">
+    <div class="container">
+        <p>&copy; <?= date('Y') ?> VeloCMS</p>
+    </div>
+</footer>
+</body>
+</html>
+"""
+
+# ── themes/default/layouts/page.php ──────────────────────────────────────────
+files['themes/default/layouts/page.php'] = r"""<?php
+$bodyContent = '<article class="page-content"><h1>' . e($page['title']) . '</h1>'
+             . ($page['body'] ?? '')
+             . '</article>';
+require __DIR__ . '/main.php';
+"""
+
+# ── themes/default/layouts/blog-index.php ────────────────────────────────────
+files['themes/default/layouts/blog-index.php'] = r"""<?php
+ob_start(); ?>
+<div class="blog-index">
+    <h1><?= e($title ?? 'Blog') ?></h1>
+    <?php if (empty($posts)): ?>
+        <p>No posts yet.</p>
+    <?php else: foreach ($posts as $post): ?>
+    <article class="post-card">
+        <h2><a href="/blog/<?= e($post['slug']) ?>"><?= e($post['title']) ?></a></h2>
+        <p class="post-meta">
+            By <?= e($post['author_name'] ?? 'Unknown') ?>
+            &middot; <?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>
+        </p>
+    </article>
+    <?php endforeach; endif; ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $title ?? 'Blog';
+require __DIR__ . '/main.php';
+"""
+
+# ── themes/default/layouts/blog-post.php ─────────────────────────────────────
+files['themes/default/layouts/blog-post.php'] = r"""<?php
+ob_start(); ?>
+<article class="blog-post">
+    <h1><?= e($post['title']) ?></h1>
+    <p class="post-meta">
+        By <?= e($post['author_name'] ?? 'Unknown') ?>
+        &middot; <?= e(substr($post['published_at'] ?? $post['created_at'], 0, 10)) ?>
+    </p>
+    <div class="post-body"><?= $post['body'] ?></div>
+</article>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = $post['title'];
+require __DIR__ . '/main.php';
+"""
+
+# ── themes/default/layouts/welcome.php ───────────────────────────────────────
+files['themes/default/layouts/welcome.php'] = r"""<?php
+$bodyContent = '<div class="welcome"><h1>Welcome to VeloCMS</h1>'
+             . '<p>Your site is up and running. <a href="/admin">Go to the admin panel</a> to create your first page.</p>'
+             . '</div>';
+require __DIR__ . '/main.php';
+"""
+
+# ── themes/default/layouts/404.php ───────────────────────────────────────────
+files['themes/default/layouts/404.php'] = r"""<?php
+$bodyContent = '<div class="not-found"><h1>404 &mdash; Page Not Found</h1>'
+             . '<p><a href="/">Return to homepage</a></p></div>';
+$metaTitle = '404 Not Found';
+require __DIR__ . '/main.php';
+"""
+
+# ── themes/default/assets/style.css — minimal frontend CSS ───────────────────
+files['themes/default/assets/style.css'] = """:root {
+  --color-primary: #2563eb;
+  --color-text: #1e293b;
+  --color-muted: #64748b;
+  --color-bg: #fff;
+  --font: system-ui, -apple-system, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  color: var(--color-text);
+  background: var(--color-bg);
+  margin: 0;
+  line-height: 1.7;
+}
+
+.container { max-width: 860px; margin: 0 auto; padding: 0 1.5rem; }
+
+.site-header {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 1rem 0;
+}
+.site-header .container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.site-logo {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.site-nav a {
+  margin-left: 1.5rem;
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: 0.9375rem;
+}
+.site-nav a:hover { color: var(--color-primary); }
+
+.site-main { padding: 3rem 0; }
+
+.site-footer {
+  border-top: 1px solid #e2e8f0;
+  padding: 1.5rem 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+h1 { font-size: 2rem; font-weight: 700; margin: 0 0 1rem; }
+h2 { font-size: 1.5rem; font-weight: 600; }
+h3 { font-size: 1.25rem; font-weight: 600; }
+
+a { color: var(--color-primary); }
+
+.post-card { border-bottom: 1px solid #e2e8f0; padding-bottom: 1.5rem; margin-bottom: 1.5rem; }
+.post-card h2 { margin: 0 0 0.25rem; }
+.post-card h2 a { text-decoration: none; color: var(--color-text); }
+.post-card h2 a:hover { color: var(--color-primary); }
+.post-meta { color: var(--color-muted); font-size: 0.875rem; margin: 0 0 0.5rem; }
+
+.blog-post h1 { margin-bottom: 0.5rem; }
+.blog-post .post-body { margin-top: 2rem; }
+.blog-post .post-body img { max-width: 100%; height: auto; }
+
+.welcome, .not-found { text-align: center; padding: 4rem 0; }
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# ── Nginx: create symlink so /assets/theme/ serves themes/default/assets/ ────
+theme_assets_src = base + '/themes/default/assets'
+theme_assets_link = base + '/public/assets/theme'
+if not os.path.exists(theme_assets_link):
+    os.symlink(theme_assets_src, theme_assets_link)
+    print('OK  public/assets/theme -> themes/default/assets (symlink)')
+else:
+    print('OK  public/assets/theme symlink already exists')
+
+# ── Nginx: create symlink so /storage/uploads/ serves uploaded files ──────────
+# The actual upload path depends on domain; for now link the storage root
+storage_link = base + '/public/storage'
+storage_src  = base + '/storage'
+if not os.path.exists(storage_link):
+    os.symlink(storage_src, storage_link)
+    print('OK  public/storage -> storage (symlink)')
+else:
+    print('OK  public/storage symlink already exists')
+
+print('\nPhase 3e done — editor, theme, and assets written.')

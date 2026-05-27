@@ -1,0 +1,774 @@
+#!/usr/bin/env python3
+"""Batch 4b: t() wrap forms/edit.php and settings/index.php"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    path = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── 1. admin/views/forms/edit.php ────────────────────────────────────────────
+write('admin/views/forms/edit.php', r'''<?php
+$isNew    = $form === null;
+$flash    = $flash ?? null;
+unset($_SESSION['_flash']);
+$formData = $form ?? ['name' => '', 'slug' => '', 'notify_email' => '', 'fields' => []];
+$action   = $isNew ? '/admin/forms' : '/admin/forms/' . $formData['id'];
+?>
+<div class="vcms-page-header">
+    <h2><?= $isNew ? t('forms.create_title','Formular erstellen') : t('forms.edit_title','Formular bearbeiten') . ': ' . e($formData['name']) ?></h2>
+    <?php if (!$isNew): ?>
+        <div style="display:flex;gap:.5rem">
+            <a href="/forms/<?= e($formData['slug']) ?>" target="_blank"
+               class="vcms-btn vcms-btn--ghost"><?= t('forms.view_form','Formular anzeigen') ?></a>
+            <a href="/admin/forms/<?= $formData['id'] ?>/submissions"
+               class="vcms-btn vcms-btn--ghost"><?= t('forms.submissions','Einsendungen') ?></a>
+        </div>
+    <?php endif ?>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<form method="post" action="<?= $action ?>">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-card">
+        <h3 style="margin-top:0"><?= t('forms.details','Formulardetails') ?></h3>
+        <div class="vcms-field-row">
+            <label><?= t('forms.name','Formularname') ?></label>
+            <input type="text" name="name" value="<?= e($formData['name']) ?>"
+                   required id="form-name" autocomplete="off">
+        </div>
+        <div class="vcms-field-row">
+            <label><?= t('forms.slug','Slug') ?> <small>(URL: /forms/slug)</small></label>
+            <input type="text" name="slug" value="<?= e($formData['slug']) ?>"
+                   id="form-slug" autocomplete="off">
+        </div>
+        <div class="vcms-field-row">
+            <label><?= t('forms.notify_email','Benachrichtigungs-E-Mail') ?> <small>(<?= t('forms.optional','optional') ?>)</small></label>
+            <input type="email" name="notify_email" value="<?= e($formData['notify_email'] ?? '') ?>">
+        </div>
+    </div>
+
+    <div class="vcms-card" id="field-builder">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+            <h3 style="margin:0"><?= t('forms.fields','Felder') ?></h3>
+            <button type="button" class="vcms-btn vcms-btn--sm" onclick="addField()">+ <?= t('forms.add_field','Feld hinzufügen') ?></button>
+        </div>
+        <div id="field-list"></div>
+        <input type="hidden" name="fields_json" id="fields-json"
+               value="<?= e(json_encode($formData['fields'])) ?>">
+    </div>
+
+    <div style="display:flex;gap:.75rem;align-items:center">
+        <button type="submit" class="vcms-btn vcms-btn--primary">
+            <?= $isNew ? t('forms.create_btn','Formular erstellen') : t('btn.save_changes','Änderungen speichern') ?>
+        </button>
+        <a href="/admin/forms" class="vcms-btn vcms-btn--ghost"><?= t('btn.cancel','Abbrechen') ?></a>
+        <?php if (!$isNew): ?>
+            <form method="post" action="/admin/forms/<?= $formData['id'] ?>/delete"
+                  style="margin:0"
+                  onsubmit="return confirm(<?= json_encode(t('forms.confirm_delete','Dieses Formular und alle Einsendungen löschen?')) ?>)">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--danger"><?= t('forms.delete','Formular löschen') ?></button>
+            </form>
+        <?php endif ?>
+    </div>
+</form>
+
+<script>
+const FIELD_TYPES = ['text','email','textarea','select','checkbox','radio','date','number','tel','url','file'];
+let fields = <?= json_encode($formData['fields']) ?>;
+
+const I18N = {
+    noFields:    <?= json_encode(t('forms.no_fields','Noch keine Felder. Klicken Sie auf „+ Feld hinzufügen".')) ?>,
+    labelLabel:  <?= json_encode(t('forms.field.label','Bezeichnung')) ?>,
+    nameLabel:   <?= json_encode(t('forms.field.name','Feldname')) ?>,
+    typeLabel:   <?= json_encode(t('forms.field.type','Typ')) ?>,
+    required:    <?= json_encode(t('forms.field.required','Pflichtfeld')) ?>,
+    optionsLabel:<?= json_encode(t('forms.field.options','Optionen (eine pro Zeile)')) ?>,
+    newFieldLabel:<?= json_encode(t('forms.field.new_label','Neues Feld')) ?>,
+};
+
+function render() {
+    const list = document.getElementById('field-list');
+    if (!fields.length) {
+        list.innerHTML = `<p style="color:#94a3b8;text-align:center;padding:1rem">${esc(I18N.noFields)}</p>`;
+    } else {
+        list.innerHTML = fields.map((f, i) => `
+<div class="vcms-field-row-builder" data-i="${i}">
+  <div style="display:flex;gap:.5rem;align-items:flex-start;flex-wrap:wrap">
+    <div style="flex:1;min-width:160px">
+      <label style="font-size:.75rem;color:#64748b">${esc(I18N.labelLabel)}</label>
+      <input type="text" value="${esc(f.label)}" oninput="update(${i},'label',this.value)" required>
+    </div>
+    <div style="flex:1;min-width:120px">
+      <label style="font-size:.75rem;color:#64748b">${esc(I18N.nameLabel)}</label>
+      <input type="text" value="${esc(f.name)}" oninput="update(${i},'name',this.value)" required>
+    </div>
+    <div>
+      <label style="font-size:.75rem;color:#64748b">${esc(I18N.typeLabel)}</label>
+      <select onchange="update(${i},'type',this.value)">
+        ${FIELD_TYPES.map(tp => `<option value="${tp}" ${f.type===tp?'selected':''}>${tp}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:.25rem;padding-top:1.4rem">
+      <input type="checkbox" id="req-${i}" ${f.required?'checked':''} onchange="update(${i},'required',this.checked)">
+      <label for="req-${i}" style="font-size:.8rem">${esc(I18N.required)}</label>
+    </div>
+    <div style="display:flex;gap:.25rem;padding-top:1.4rem">
+      <button type="button" class="vcms-btn vcms-btn--sm vcms-btn--ghost" onclick="moveUp(${i})" ${i===0?'disabled':''}>&#8593;</button>
+      <button type="button" class="vcms-btn vcms-btn--sm vcms-btn--ghost" onclick="moveDown(${i})" ${i===fields.length-1?'disabled':''}>&#8595;</button>
+      <button type="button" class="vcms-btn vcms-btn--sm vcms-btn--danger" onclick="remove(${i})">&#10005;</button>
+    </div>
+  </div>
+  ${(f.type==='select'||f.type==='radio') ? `
+  <div style="margin-top:.5rem">
+    <label style="font-size:.75rem;color:#64748b">${esc(I18N.optionsLabel)}</label>
+    <textarea rows="3" oninput="update(${i},'options',this.value.split('\\n').filter(Boolean))">${esc((f.options||[]).join('\\n'))}</textarea>
+  </div>` : ''}
+</div>`).join('');
+    }
+    document.getElementById('fields-json').value = JSON.stringify(fields);
+}
+
+function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function update(i, key, val) { fields[i][key] = val; sync(); }
+function sync() { document.getElementById('fields-json').value = JSON.stringify(fields); }
+function addField() {
+    fields.push({label:I18N.newFieldLabel,name:'field_'+Date.now(),type:'text',required:false});
+    render();
+}
+function remove(i) { fields.splice(i,1); render(); }
+function moveUp(i)   { if(i>0){ [fields[i-1],fields[i]]=[fields[i],fields[i-1]]; render(); } }
+function moveDown(i) { if(i<fields.length-1){ [fields[i],fields[i+1]]=[fields[i+1],fields[i]]; render(); } }
+
+document.getElementById('form-name').addEventListener('input', function() {
+    const slugEl = document.getElementById('form-slug');
+    if (!slugEl.dataset.edited) {
+        slugEl.value = this.value.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    }
+});
+document.getElementById('form-slug').addEventListener('input', function() {
+    this.dataset.edited = '1';
+});
+
+render();
+</script>
+
+<style>
+.vcms-field-row-builder { background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:1rem; margin-bottom:.75rem; }
+.vcms-field-row-builder input[type=text],
+.vcms-field-row-builder input[type=email],
+.vcms-field-row-builder select,
+.vcms-field-row-builder textarea { width:100%; padding:.35rem .5rem; border:1px solid #cbd5e1; border-radius:4px; font-size:.85rem; }
+.vcms-field-row { margin-bottom:1rem; }
+.vcms-field-row label { display:block; font-size:.8rem; color:#475569; margin-bottom:.25rem; font-weight:500; }
+.vcms-field-row input,.vcms-field-row select { width:100%; max-width:480px; padding:.5rem .75rem; border:1px solid #cbd5e1; border-radius:6px; font-size:.875rem; }
+</style>
+''')
+
+# ── 2. admin/views/settings/index.php ────────────────────────────────────────
+write('admin/views/settings/index.php', r'''<?php
+$flash = $flash ?? null;
+unset($_SESSION['_flash']);
+
+$tabs = [
+    'site'    => t('settings.tab.site',    'Website'),
+    'email'   => t('settings.tab.email',   'E-Mail'),
+    'booking' => t('settings.tab.booking', 'Buchung'),
+];
+$activeTab = isset($tabs[$_GET['tab'] ?? '']) ? $_GET['tab'] : 'site';
+?>
+<div class="vcms-page-header">
+    <h2><?= t('settings.title','Einstellungen') ?></h2>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div class="vcms-tabs">
+    <?php foreach ($tabs as $key => $label): ?>
+        <a href="/admin/settings?tab=<?= e($key) ?>"
+           class="vcms-tab <?= $activeTab === $key ? 'active' : '' ?>">
+            <?= e($label) ?>
+        </a>
+    <?php endforeach ?>
+</div>
+
+<?php foreach ($definitions as $module => $fields):
+    if ($module !== $activeTab) continue; ?>
+<form method="post" action="/admin/settings/<?= e($module) ?>">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+    <div class="vcms-card">
+        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+            <?php foreach ($fields as $field):
+                $val = $current[$module][$field['key']] ?? $field['default'];
+            ?>
+            <tr>
+                <th><label for="<?= e($field['key']) ?>"><?= e($field['label']) ?></label></th>
+                <td>
+                <?php if ($field['type'] === 'select'): ?>
+                    <select name="<?= e($field['key']) ?>" id="<?= e($field['key']) ?>">
+                        <?php foreach ($field['options'] as $optVal => $optLabel): ?>
+                            <option value="<?= e($optVal) ?>" <?= $val === $optVal ? 'selected' : '' ?>>
+                                <?= e($optLabel) ?>
+                            </option>
+                        <?php endforeach ?>
+                    </select>
+                <?php else: ?>
+                    <input type="<?= e($field['type']) ?>"
+                           name="<?= e($field['key']) ?>"
+                           id="<?= e($field['key']) ?>"
+                           value="<?= $field['type'] === 'password' ? '' : e($val) ?>"
+                           placeholder="<?= $field['type'] === 'password' ? '(unchanged)' : '' ?>">
+                <?php endif ?>
+                </td>
+            </tr>
+            <?php endforeach ?>
+        </table></div>
+        <div class="vcms-form-actions">
+            <button type="submit" class="vcms-btn vcms-btn--primary"><?= t('settings.save_btn','Einstellungen speichern') ?></button>
+        </div>
+    </div>
+</form>
+<?php endforeach ?>
+
+<?php if ($activeTab === 'booking'):
+    $bk = $current['booking'] ?? [];
+    $boolCheck = fn(string $k) => !empty($bk[$k]) && $bk[$k] !== '0' ? 'checked' : '';
+    $sectionOpen = fn(string $k) => ($bk[$k] ?? '1') !== '0';
+
+    $bkTypes   = json_decode($bk['booking_types'] ?? '["hourly","package","product"]', true) ?: [];
+    $hasHourly  = in_array('hourly',  $bkTypes);
+    $hasPackage = in_array('package', $bkTypes);
+    $hasProduct = in_array('product', $bkTypes);
+    $hasDaily   = in_array('daily',   $bkTypes);
+    if ($hasDaily && $hasHourly) { $hasHourly = false; }
+
+    $slotOpts = [
+        '15'       => '15 min',
+        '30'       => '30 min',
+        '45'       => '45 min',
+        '60'       => t('booking.slot.1h','1 Stunde'),
+        '90'       => '90 min',
+        '120'      => t('booking.slot.2h','2 Stunden'),
+        'half_day' => t('booking.slot.half_day','Halbtag (4 h)'),
+        'full_day' => t('booking.slot.full_day','Ganztag (8 h)'),
+    ];
+    $currentSlot = (string)($bk['slot_duration_mins'] ?? '60');
+
+    $dayNames = [
+        1 => t('day.mon','Mo'), 2 => t('day.tue','Di'),
+        3 => t('day.wed','Mi'), 4 => t('day.thu','Do'),
+        5 => t('day.fri','Fr'), 6 => t('day.sat','Sa'),
+        7 => t('day.sun','So'),
+    ];
+    $bhConfigRaw = json_decode($bk['business_days_config'] ?? '{}', true) ?: [];
+    $bhConfig = [];
+    foreach ([1,2,3,4,5,6,7] as $d) {
+        $bhConfig[$d] = $bhConfigRaw[$d] ?? [
+            'enabled' => in_array($d, [1,2,3,4,5,6]),
+            'start'   => '09:00',
+            'end'     => '21:00',
+        ];
+    }
+
+    $bkResources = $bkResources ?? [];
+    $bkPackages  = $bkPackages  ?? [];
+    $bkProducts  = $bkProducts  ?? [];
+    $csrf = $csrf ?? '';
+?>
+<form method="post" action="/admin/settings/booking" data-autosave="true" id="bk-settings-form">
+<input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+<!-- General -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <div class="vcms-section-header">
+        <h4><?= t('booking.settings.general','Allgemein') ?></h4>
+        <label class="vcms-toggle">
+            <input type="hidden"   name="section_general_open" value="0">
+            <input type="checkbox" name="section_general_open" value="1"
+                   <?= $sectionOpen('section_general_open') ? 'checked' : '' ?>
+                   data-section="bk-general-body">
+            <span class="vcms-toggle__track"></span>
+        </label>
+    </div>
+    <div class="vcms-section-body <?= $sectionOpen('section_general_open') ? '' : 'vcms-collapsed' ?>"
+         id="bk-general-body">
+        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+            <tr>
+                <th><?= t('booking.settings.enable_module','Buchungsmodul aktivieren') ?></th>
+                <td>
+                    <label class="vcms-toggle">
+                        <input type="hidden"   name="enabled" value="0">
+                        <input type="checkbox" name="enabled" value="1" <?= $boolCheck('enabled') ?>>
+                        <span class="vcms-toggle__track"></span>
+                    </label>
+                </td>
+            </tr>
+            <tr>
+                <th><?= t('booking.settings.guest_booking','Gastbuchungen erlauben') ?></th>
+                <td>
+                    <label class="vcms-toggle">
+                        <input type="hidden"   name="guest_booking" value="0">
+                        <input type="checkbox" name="guest_booking" value="1" <?= $boolCheck('guest_booking') ?>>
+                        <span class="vcms-toggle__track"></span>
+                    </label>
+                </td>
+            </tr>
+            <tr>
+                <th><?= t('booking.settings.require_confirmation','Manuelle Bestätigung erforderlich') ?></th>
+                <td>
+                    <label class="vcms-toggle">
+                        <input type="hidden"   name="require_confirmation" value="0">
+                        <input type="checkbox" name="require_confirmation" value="1" <?= $boolCheck('require_confirmation') ?>>
+                        <span class="vcms-toggle__track"></span>
+                    </label>
+                </td>
+            </tr>
+            <tr>
+                <th><?= t('booking.settings.booking_types','Buchungstypen') ?></th>
+                <td>
+                    <div style="display:flex;flex-direction:column;gap:.6rem">
+                        <label class="vcms-toggle">
+                            <input type="hidden"   name="bktype_hourly" value="0">
+                            <input type="checkbox" name="bktype_hourly" value="1"
+                                   <?= $hasHourly ? 'checked' : '' ?> id="bk-type-hourly">
+                            <span class="vcms-toggle__track"></span>
+                            <span class="vcms-toggle__label"><?= t('booking.type.hourly_slots','Stündlich / Zeitslots') ?></span>
+                        </label>
+                        <div id="bk-slot-row" style="<?= $hasHourly ? '' : 'display:none' ?>">
+                            <label style="font-size:.875rem;color:#6b7280"><?= t('booking.settings.slot_duration','Slotdauer:') ?></label>
+                            <select name="slot_duration_mins">
+                                <?php foreach ($slotOpts as $sv => $sl): ?>
+                                <option value="<?= $sv ?>" <?= $currentSlot === $sv ? 'selected' : '' ?>><?= $sl ?></option>
+                                <?php endforeach ?>
+                            </select>
+                        </div>
+                        <label class="vcms-toggle">
+                            <input type="hidden"   name="bktype_package" value="0">
+                            <input type="checkbox" name="bktype_package" value="1"
+                                   <?= $hasPackage ? 'checked' : '' ?> id="bk-type-package">
+                            <span class="vcms-toggle__track"></span>
+                            <span class="vcms-toggle__label"><?= t('booking.type.package','Pakete') ?></span>
+                        </label>
+                        <label class="vcms-toggle">
+                            <input type="hidden"   name="bktype_product" value="0">
+                            <input type="checkbox" name="bktype_product" value="1"
+                                   <?= $hasProduct ? 'checked' : '' ?> id="bk-type-product">
+                            <span class="vcms-toggle__track"></span>
+                            <span class="vcms-toggle__label"><?= t('booking.type.product','Produkte / Dienstleistungen') ?></span>
+                        </label>
+                        <p style="font-size:.8rem;color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:.375rem;padding:.4rem .75rem;margin:.25rem 0 .25rem 3.6rem">
+                            <?= t('booking.settings.daily_hourly_note','Täglich und Stündlich können nicht gleichzeitig aktiv sein.') ?>
+                        </p>
+                        <label class="vcms-toggle">
+                            <input type="hidden"   name="bktype_daily" value="0">
+                            <input type="checkbox" name="bktype_daily" value="1"
+                                   <?= $hasDaily ? 'checked' : '' ?> id="bk-type-daily">
+                            <span class="vcms-toggle__track"></span>
+                            <span class="vcms-toggle__label"><?= t('booking.type.daily','Täglich (Übernachtung / mehrtägig)') ?></span>
+                        </label>
+                        <div id="bk-daily-row" style="<?= $hasDaily ? '' : 'display:none' ?>;padding-left:3.6rem;display:<?= $hasDaily ? 'flex' : 'none' ?>;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.875rem">
+                            <label style="color:#6b7280"><?= t('booking.settings.checkin','Check-in:') ?>
+                                <input type="time" name="daily_checkin_time"
+                                       value="<?= e($bk['daily_checkin_time'] ?? '15:00') ?>"
+                                       style="margin-left:.4rem;width:108px">
+                            </label>
+                            <label style="color:#6b7280"><?= t('booking.settings.checkout','Check-out:') ?>
+                                <input type="time" name="daily_checkout_time"
+                                       value="<?= e($bk['daily_checkout_time'] ?? '11:00') ?>"
+                                       style="margin-left:.4rem;width:108px">
+                            </label>
+                            <small style="color:#9ca3af"><?= t('booking.settings.checkin_note','Zeiten für tägliche Buchungen.') ?></small>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="bk-tz"><?= t('booking.settings.timezone','Zeitzone') ?></label></th>
+                <td>
+                <?php
+                $tzCurrent = $bk['timezone'] ?? 'Europe/Berlin';
+                $tzAll     = DateTimeZone::listIdentifiers();
+                $tzEurope  = array_filter($tzAll, fn($z) => str_starts_with($z, 'Europe/'));
+                $tzOther   = array_filter($tzAll, fn($z) => !str_starts_with($z, 'Europe/'));
+                sort($tzEurope); sort($tzOther);
+                $tzEuropeSorted = array_merge(
+                    ['Europe/Berlin'],
+                    array_values(array_filter($tzEurope, fn($z) => $z !== 'Europe/Berlin'))
+                );
+                function renderTzOption(string $tz, string $current): string {
+                    try {
+                        $offset  = (new DateTimeZone($tz))->getOffset(new DateTime('now', new DateTimeZone($tz)));
+                        $sign    = $offset >= 0 ? '+' : '-';
+                        $h       = abs((int)($offset / 3600));
+                        $m       = abs((int)(($offset % 3600) / 60));
+                        $label   = $tz . ' (GMT' . $sign . $h . ($m ? ':' . str_pad($m,2,'0',STR_PAD_LEFT) : '') . ')';
+                    } catch (\Exception $e) {
+                        $label = $tz;
+                    }
+                    $sel = $tz === $current ? ' selected' : '';
+                    return '<option value="' . e($tz) . '"' . $sel . '>' . e($label) . '</option>';
+                }
+                ?>
+                <select id="bk-tz" name="timezone">
+                    <optgroup label="Europe">
+                    <?php foreach ($tzEuropeSorted as $tz): ?>
+                        <?= renderTzOption($tz, $tzCurrent) ?>
+                    <?php endforeach ?>
+                    </optgroup>
+                    <optgroup label="Other">
+                    <?php foreach ($tzOther as $tz): ?>
+                        <?= renderTzOption($tz, $tzCurrent) ?>
+                    <?php endforeach ?>
+                    </optgroup>
+                </select>
+                </td>
+            </tr>
+        </table></div>
+    </div>
+</div>
+
+<!-- Business Hours -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <div class="vcms-section-header">
+        <h4><?= t('booking.settings.business_hours','Geschäftszeiten') ?></h4>
+        <label class="vcms-toggle">
+            <input type="hidden"   name="section_hours_open" value="0">
+            <input type="checkbox" name="section_hours_open" value="1"
+                   <?= $sectionOpen('section_hours_open') ? 'checked' : '' ?>
+                   data-section="bk-hours-body">
+            <span class="vcms-toggle__track"></span>
+        </label>
+    </div>
+    <div class="vcms-section-body <?= $sectionOpen('section_hours_open') ? '' : 'vcms-collapsed' ?>"
+         id="bk-hours-body">
+        <div class="bh-days-grid">
+            <?php foreach ([1,2,3,4,5,6,7] as $d):
+                $dc = $bhConfig[$d];
+                $dn = $dayNames[$d];
+            ?>
+            <div class="bh-day-row">
+                <label class="vcms-toggle">
+                    <input type="hidden"   name="bh_<?= $d ?>_enabled" value="0">
+                    <input type="checkbox" name="bh_<?= $d ?>_enabled" value="1"
+                           <?= !empty($dc['enabled']) ? 'checked' : '' ?>
+                           class="bh-day-toggle" data-day="<?= $d ?>">
+                    <span class="vcms-toggle__track"></span>
+                </label>
+                <span class="bh-day-label"><?= $dn ?></span>
+                <div class="bh-day-times <?= empty($dc['enabled']) ? 'bh-hidden' : '' ?>"
+                     id="bh-times-<?= $d ?>">
+                    <input type="time" name="bh_<?= $d ?>_start"
+                           value="<?= e($dc['start'] ?? '09:00') ?>">
+                    <span style="color:#9ca3af">&#8211;</span>
+                    <input type="time" name="bh_<?= $d ?>_end"
+                           value="<?= e($dc['end'] ?? '21:00') ?>">
+                </div>
+            </div>
+            <?php endforeach ?>
+        </div>
+    </div>
+</div>
+
+<!-- Payment -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <div class="vcms-section-header">
+        <h4><?= t('booking.settings.payment','Zahlung') ?></h4>
+        <label class="vcms-toggle">
+            <input type="hidden"   name="section_payment_open" value="0">
+            <input type="checkbox" name="section_payment_open" value="1"
+                   <?= $sectionOpen('section_payment_open') ? 'checked' : '' ?>
+                   data-section="bk-payment-body">
+            <span class="vcms-toggle__track"></span>
+        </label>
+    </div>
+    <div class="vcms-section-body <?= $sectionOpen('section_payment_open') ? '' : 'vcms-collapsed' ?>"
+         id="bk-payment-body">
+        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+            <tr>
+                <th><label for="bk-pay"><?= t('booking.settings.payment_mode','Zahlungsmodus') ?></label></th>
+                <td>
+                    <select id="bk-pay" name="payment_mode">
+                        <option value="none"    <?= ($bk['payment_mode'] ?? 'none') === 'none'    ? 'selected' : '' ?>><?= t('booking.payment.none','Keine Zahlung (nur Anfrage)') ?></option>
+                        <option value="deposit" <?= ($bk['payment_mode'] ?? '') === 'deposit' ? 'selected' : '' ?>><?= t('booking.payment.deposit','Anzahlung erforderlich') ?></option>
+                        <option value="full"    <?= ($bk['payment_mode'] ?? '') === 'full'    ? 'selected' : '' ?>><?= t('booking.payment.full','Vollzahlung über Stripe') ?></option>
+                    </select>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="bk-dep-pct"><?= t('booking.settings.deposit_percent','Anzahlung %') ?></label></th>
+                <td><input type="number" id="bk-dep-pct" name="deposit_percent"
+                           min="1" max="100" value="<?= (int)($bk['deposit_percent'] ?? 30) ?>"></td>
+            </tr>
+            <tr>
+                <th>Stripe</th>
+                <td>
+                    <label class="vcms-toggle" style="margin-bottom:.65rem">
+                        <input type="hidden"   name="stripe_enabled" value="0">
+                        <input type="checkbox" name="stripe_enabled" value="1" <?= $boolCheck('stripe_enabled') ?>>
+                        <span class="vcms-toggle__track"></span>
+                        <span class="vcms-toggle__label"><?= t('booking.settings.stripe_enabled','Stripe aktivieren') ?></span>
+                    </label>
+                    <br>
+                    <input type="text" name="stripe_pk" placeholder="Publishable key (pk_…)"
+                           value="<?= e($bk['stripe_pk'] ?? '') ?>" style="margin-bottom:.4rem">
+                    <input type="password" name="stripe_sk"
+                           placeholder="<?= t('booking.settings.stripe_sk_hint','Secret key — leer lassen zum Beibehalten') ?>">
+                    <br><small style="color:#6b7280"><?= t('booking.settings.stripe_note','Stripe ist vorbereitet, aber noch nicht aktiv.') ?></small>
+                </td>
+            </tr>
+        </table></div>
+    </div>
+</div>
+
+<!-- Email Notifications -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <div class="vcms-section-header">
+        <h4><?= t('booking.settings.email_notifications','E-Mail-Benachrichtigungen') ?></h4>
+        <label class="vcms-toggle">
+            <input type="hidden"   name="section_email_open" value="0">
+            <input type="checkbox" name="section_email_open" value="1"
+                   <?= $sectionOpen('section_email_open') ? 'checked' : '' ?>
+                   data-section="bk-email-body">
+            <span class="vcms-toggle__track"></span>
+        </label>
+    </div>
+    <div class="vcms-section-body <?= $sectionOpen('section_email_open') ? '' : 'vcms-collapsed' ?>"
+         id="bk-email-body">
+        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+            <tr>
+                <th><label for="bk-notif"><?= t('booking.settings.notify_owner','Inhaber benachrichtigen an') ?></label></th>
+                <td><input type="email" id="bk-notif" name="notification_email"
+                           value="<?= e($bk['notification_email'] ?? '') ?>"></td>
+            </tr>
+            <tr>
+                <th><label for="bk-csubj"><?= t('booking.settings.customer_email_subject','Betreff Kundenmail') ?></label></th>
+                <td><input type="text" id="bk-csubj" name="customer_email_subject"
+                           value="<?= e($bk['customer_email_subject'] ?? '') ?>"></td>
+            </tr>
+            <tr>
+                <th><label for="bk-cbody"><?= t('booking.settings.customer_email_body','Text Kundenmail') ?></label></th>
+                <td>
+                    <textarea id="bk-cbody" name="customer_email_body" rows="5"><?= e($bk['customer_email_body'] ?? '') ?></textarea>
+                    <small style="color:#6b7280"><?= t('booking.settings.placeholders','Platzhalter:') ?> {reference} {customer_name} {resource} {date} {start_time} {end_time} {status} {total}</small>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="bk-osubj"><?= t('booking.settings.owner_email_subject','Betreff Inhabermail') ?></label></th>
+                <td><input type="text" id="bk-osubj" name="owner_email_subject"
+                           value="<?= e($bk['owner_email_subject'] ?? '') ?>"></td>
+            </tr>
+            <tr>
+                <th><label for="bk-obody"><?= t('booking.settings.owner_email_body','Text Inhabermail') ?></label></th>
+                <td><textarea id="bk-obody" name="owner_email_body" rows="4"><?= e($bk['owner_email_body'] ?? '') ?></textarea></td>
+            </tr>
+            <tr>
+                <th><label for="bk-cancel-subj"><?= t('booking.settings.cancel_email_subject','Betreff Stornierungs-Mail') ?></label></th>
+                <td><input type="text" id="bk-cancel-subj" name="cancel_email_subject"
+                           value="<?= e($bk['cancel_email_subject'] ?? 'Your booking {reference} has been cancelled') ?>"></td>
+            </tr>
+            <tr>
+                <th><label for="bk-cancel-body"><?= t('booking.settings.cancel_email_body','Text Stornierungs-Mail') ?></label></th>
+                <td>
+                    <textarea id="bk-cancel-body" name="cancel_email_body" rows="5"><?= e($bk['cancel_email_body'] ?? '') ?></textarea>
+                    <small style="color:#6b7280"><?= t('booking.settings.placeholders','Platzhalter:') ?> {reference} {customer_name} {resource} {date} {status} {total}</small>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="bk-modify-subj"><?= t('booking.settings.modify_email_subject','Betreff Änderungs-Mail') ?></label></th>
+                <td><input type="text" id="bk-modify-subj" name="modify_email_subject"
+                           value="<?= e($bk['modify_email_subject'] ?? 'Your booking {reference} has been updated') ?>"></td>
+            </tr>
+            <tr>
+                <th><label for="bk-modify-body"><?= t('booking.settings.modify_email_body','Text Änderungs-Mail') ?></label></th>
+                <td>
+                    <textarea id="bk-modify-body" name="modify_email_body" rows="5"><?= e($bk['modify_email_body'] ?? '') ?></textarea>
+                    <small style="color:#6b7280"><?= t('booking.settings.placeholders','Platzhalter:') ?> {reference} {customer_name} {resource} {date} {total} {status}</small>
+                </td>
+            </tr>
+        </table></div>
+    </div>
+</div>
+
+<!-- Integrations -->
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <div class="vcms-section-header">
+        <h4><?= t('booking.settings.integrations','Integrationen') ?></h4>
+        <label class="vcms-toggle">
+            <input type="hidden"   name="section_integrations_open" value="0">
+            <input type="checkbox" name="section_integrations_open" value="1"
+                   <?= $sectionOpen('section_integrations_open') ? 'checked' : '' ?>
+                   data-section="bk-int-body">
+            <span class="vcms-toggle__track"></span>
+        </label>
+    </div>
+    <div class="vcms-section-body <?= $sectionOpen('section_integrations_open') ? '' : 'vcms-collapsed' ?>"
+         id="bk-int-body">
+        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+            <tr>
+                <th><?= t('booking.settings.calendar_sync','Google Kalender-Synchronisation') ?></th>
+                <td>
+                    <label class="vcms-toggle">
+                        <input type="hidden"   name="calendar_sync" value="0">
+                        <input type="checkbox" name="calendar_sync" value="1" <?= $boolCheck('calendar_sync') ?>>
+                        <span class="vcms-toggle__track"></span>
+                    </label>
+                    <small style="color:#6b7280;margin-left:.75rem"><?= t('booking.settings.calendar_sync_note','OAuth in Website-Einstellungen konfigurieren.') ?></small>
+                </td>
+            </tr>
+        </table></div>
+    </div>
+</div>
+
+<div class="vcms-form-actions">
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary"><?= t('booking.settings.manage_resources','Ressourcen verwalten') ?> &#8594;</a>
+    <small style="color:#9ca3af;margin-left:.5rem"><?= t('booking.settings.autosave_note','Einstellungen werden automatisch gespeichert.') ?></small>
+</div>
+</form>
+
+<!-- Inline Packages -->
+<div id="bk-inline-packages" style="<?= $hasPackage ? '' : 'display:none' ?>">
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 .75rem"><?= t('booking.packages.title','Pakete') ?></h4>
+    <table class="vcms-inline-table">
+        <thead>
+            <tr>
+                <th><?= t('col.resource','Ressource') ?></th>
+                <th><?= t('col.name','Name') ?></th>
+                <th><?= t('booking.packages.col.duration','Dauer') ?></th>
+                <th><?= t('col.price','Preis') ?></th>
+                <th style="width:60px"></th>
+            </tr>
+        </thead>
+        <tbody id="bk-pkg-tbody">
+        <?php foreach ($bkPackages as $pkg): ?>
+            <tr id="bkpkg-<?= $pkg['id'] ?>">
+                <td><?= e($pkg['resource_name'] ?? '') ?></td>
+                <td><?= e($pkg['name']) ?></td>
+                <td><?= (int)$pkg['duration_mins'] ?> min</td>
+                <td>&#8364;<?= number_format((float)$pkg['price'], 2) ?></td>
+                <td>
+                    <button type="button" class="vcms-btn vcms-btn--danger vcms-btn--sm"
+                            onclick="vcmsDelete('/admin/booking/resources/<?= $pkg['resource_id'] ?>/packages/<?= $pkg['id'] ?>/delete','<?= e($csrf) ?>','bkpkg-<?= $pkg['id'] ?>')">
+                        <?= t('btn.delete','Löschen') ?>
+                    </button>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    <?php if (!empty($bkResources)): ?>
+    <form class="vcms-inline-add-row" style="margin-top:.85rem"
+          onsubmit="return vcmsAddRow(this,'bk-pkg-tbody')"
+          action="/admin/booking/resources/0/packages">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.resource','Ressource') ?>
+            <select name="resource_id" id="bk-pkg-res"
+                    onchange="this.form.action='/admin/booking/resources/'+this.value+'/packages'">
+                <?php foreach ($bkResources as $res): ?>
+                <option value="<?= $res['id'] ?>"><?= e($res['name']) ?></option>
+                <?php endforeach ?>
+            </select>
+        </label>
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.name','Name') ?>
+            <input type="text" name="pkg_name" placeholder="<?= t('booking.packages.form.name_ph','Paketname') ?>" required>
+        </label>
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('booking.packages.col.duration','Dauer (min)') ?>
+            <input type="number" name="pkg_duration_mins" value="60" min="15" step="15" style="max-width:100px">
+        </label>
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.price','Preis (€)') ?>
+            <input type="number" name="pkg_price" value="0" min="0" step="0.01" inputmode="decimal" style="max-width:100px">
+        </label>
+        <button type="submit" class="vcms-btn vcms-btn--primary vcms-btn--sm" style="margin-top:1.1rem">+ <?= t('btn.add','Hinzufügen') ?></button>
+    </form>
+    <?php else: ?>
+    <p style="color:#9ca3af;font-size:.875rem;margin:.75rem 0 0">
+        <a href="/admin/booking/resources/create"><?= t('booking.resources.create_first','Zuerst eine Ressource erstellen') ?></a>
+        <?= t('booking.packages.create_resource_note','bevor Pakete hinzugefügt werden können.') ?>
+    </p>
+    <?php endif ?>
+</div>
+</div>
+
+<!-- Inline Products -->
+<div id="bk-inline-products" style="<?= $hasProduct ? '' : 'display:none' ?>">
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 .75rem"><?= t('booking.products.title','Produkte / Dienstleistungen') ?></h4>
+    <table class="vcms-inline-table">
+        <thead>
+            <tr>
+                <th><?= t('col.resource','Ressource') ?></th>
+                <th><?= t('col.name','Name') ?></th>
+                <th><?= t('col.price','Preis') ?></th>
+                <th style="width:60px"></th>
+            </tr>
+        </thead>
+        <tbody id="bk-prod-tbody">
+        <?php foreach ($bkProducts as $prod): ?>
+            <tr id="bkprod-<?= $prod['id'] ?>">
+                <td><?= e($prod['resource_name'] ?? '') ?></td>
+                <td><?= e($prod['name']) ?></td>
+                <td>&#8364;<?= number_format((float)$prod['price'], 2) ?></td>
+                <td>
+                    <button type="button" class="vcms-btn vcms-btn--danger vcms-btn--sm"
+                            onclick="vcmsDelete('/admin/booking/resources/<?= $prod['resource_id'] ?>/products/<?= $prod['id'] ?>/delete','<?= e($csrf) ?>','bkprod-<?= $prod['id'] ?>')">
+                        <?= t('btn.delete','Löschen') ?>
+                    </button>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    <?php if (!empty($bkResources)): ?>
+    <form class="vcms-inline-add-row" style="margin-top:.85rem"
+          onsubmit="return vcmsAddRow(this,'bk-prod-tbody')"
+          action="/admin/booking/resources/0/products">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.resource','Ressource') ?>
+            <select name="resource_id" id="bk-prod-res"
+                    onchange="this.form.action='/admin/booking/resources/'+this.value+'/products'">
+                <?php foreach ($bkResources as $res): ?>
+                <option value="<?= $res['id'] ?>"><?= e($res['name']) ?></option>
+                <?php endforeach ?>
+            </select>
+        </label>
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.name','Name') ?>
+            <input type="text" name="prod_name" placeholder="<?= t('booking.products.form.name_ph','Produktname') ?>" required>
+        </label>
+        <label style="font-size:.8rem;color:#6b7280;display:flex;flex-direction:column;gap:.2rem">
+            <?= t('col.price','Preis (€)') ?>
+            <input type="number" name="prod_price" value="0" min="0" step="0.01" inputmode="decimal" style="max-width:100px">
+        </label>
+        <button type="submit" class="vcms-btn vcms-btn--primary vcms-btn--sm" style="margin-top:1.1rem">+ <?= t('btn.add','Hinzufügen') ?></button>
+    </form>
+    <?php else: ?>
+    <p style="color:#9ca3af;font-size:.875rem;margin:.75rem 0 0">
+        <a href="/admin/booking/resources/create"><?= t('booking.resources.create_first','Zuerst eine Ressource erstellen') ?></a>
+        <?= t('booking.products.create_resource_note','bevor Produkte hinzugefügt werden können.') ?>
+    </p>
+    <?php endif ?>
+</div>
+</div>
+
+<?php endif ?>
+''')
+
+print('\nBatch 4b done — forms/edit.php and settings/index.php written.')

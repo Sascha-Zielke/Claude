@@ -1,0 +1,326 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── migrations/core/002_create_users_table.php ───────────────────────────────
+files['migrations/core/002_create_users_table.php'] = r"""<?php declare(strict_types=1);
+
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS users (
+            id            BIGINT UNSIGNED  AUTO_INCREMENT PRIMARY KEY,
+            email         VARCHAR(255)     NOT NULL UNIQUE,
+            password_hash VARCHAR(255)     NOT NULL,
+            name          VARCHAR(255)     NOT NULL,
+            role          ENUM('superadmin','site-admin','editor','author','viewer')
+                          NOT NULL DEFAULT 'viewer',
+            last_login_at DATETIME         NULL,
+            created_at    DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at    DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP
+                          ON UPDATE CURRENT_TIMESTAMP,
+            deleted_at    DATETIME         NULL,
+            INDEX idx_email   (email),
+            INDEX idx_role    (role),
+            INDEX idx_deleted (deleted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+
+    public function down(\PDO $pdo): void
+    {
+        $pdo->exec('DROP TABLE IF EXISTS users');
+    }
+};
+"""
+
+# ── migrations/core/003_create_sessions_table.php ────────────────────────────
+files['migrations/core/003_create_sessions_table.php'] = r"""<?php declare(strict_types=1);
+
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS sessions (
+            id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id     BIGINT UNSIGNED NOT NULL,
+            token_hash  VARCHAR(64)     NOT NULL UNIQUE,
+            ip          VARCHAR(45)     NOT NULL,
+            user_agent  VARCHAR(512)    NOT NULL DEFAULT '',
+            expires_at  DATETIME        NOT NULL,
+            created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_token   (token_hash),
+            INDEX idx_expires (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+
+    public function down(\PDO $pdo): void
+    {
+        $pdo->exec('DROP TABLE IF EXISTS sessions');
+    }
+};
+"""
+
+# ── core/Auth.php ─────────────────────────────────────────────────────────────
+files['core/Auth.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Core;
+
+class Auth
+{
+    private const COOKIE_SESSION = 'vcms_sess';
+    private const COOKIE_CSRF    = 'vcms_csrf';
+    private const SESSION_TTL    = 604800; // 7 days
+    private const RATE_LIMIT     = 5;      // max failed attempts
+    private const RATE_WINDOW    = 900;    // 15 minutes
+
+    private ?array $currentUser = null;
+
+    public function __construct(
+        private readonly Database $db,
+        private readonly Cache    $cache,
+    ) {}
+
+    // ── Login / Logout ────────────────────────────────────────────────────────
+
+    /**
+     * Attempt to authenticate. Returns true on success.
+     * Throws RuntimeException if rate-limited.
+     */
+    public function attempt(string $email, string $password, string $ip): bool
+    {
+        if ($this->isRateLimited($ip)) {
+            throw new \RuntimeException('Too many failed attempts. Please wait 15 minutes.');
+        }
+
+        $stmt = $this->db->core()->prepare(
+            'SELECT * FROM users WHERE email = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([strtolower(trim($email))]);
+        $user = $stmt->fetch();
+
+        if (!$user || !password_verify($password, $user['password_hash'])) {
+            $this->recordFailure($ip);
+            return false;
+        }
+
+        $this->clearFailures($ip);
+        $this->createSession($user, $ip);
+        $this->updateLastLogin((int) $user['id']);
+        return true;
+    }
+
+    public function logout(): void
+    {
+        $token = $_COOKIE[self::COOKIE_SESSION] ?? null;
+        if ($token !== null) {
+            $stmt = $this->db->core()->prepare('DELETE FROM sessions WHERE token_hash = ?');
+            $stmt->execute([hash('sha256', $token)]);
+        }
+        $this->clearCookie(self::COOKIE_SESSION);
+        $this->clearCookie(self::COOKIE_CSRF);
+        $this->currentUser = null;
+    }
+
+    // ── Session check ─────────────────────────────────────────────────────────
+
+    public function check(): bool
+    {
+        return $this->user() !== null;
+    }
+
+    public function user(): ?array
+    {
+        if ($this->currentUser !== null) {
+            return $this->currentUser;
+        }
+
+        $token = $_COOKIE[self::COOKIE_SESSION] ?? null;
+        if ($token === null) {
+            return null;
+        }
+
+        $stmt = $this->db->core()->prepare(
+            'SELECT u.id, u.email, u.name, u.role, u.last_login_at,
+                    s.id AS session_id, s.expires_at
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id
+             WHERE s.token_hash = ?
+               AND s.expires_at > NOW()
+               AND u.deleted_at IS NULL
+             LIMIT 1'
+        );
+        $stmt->execute([hash('sha256', $token)]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            return null;
+        }
+
+        $this->currentUser = $row;
+        return $row;
+    }
+
+    public function id(): ?int
+    {
+        $user = $this->user();
+        return $user !== null ? (int) $user['id'] : null;
+    }
+
+    public function hasRole(string ...$roles): bool
+    {
+        $user = $this->user();
+        return $user !== null && in_array($user['role'], $roles, true);
+    }
+
+    /** Redirect to login page if not authenticated. */
+    public function requireLogin(string $redirect = '/admin/login'): void
+    {
+        if (!$this->check()) {
+            (new Response())->redirect($redirect)->send();
+        }
+    }
+
+    /** Redirect with 403 if user does not have the required role. */
+    public function requireRole(string ...$roles): void
+    {
+        $this->requireLogin();
+        if (!$this->hasRole(...$roles)) {
+            (new Response())->html('<h1>403 &mdash; Forbidden</h1>', 403)->send();
+        }
+    }
+
+    // ── CSRF ──────────────────────────────────────────────────────────────────
+
+    /** Return the current CSRF token, generating one if needed. */
+    public function csrfToken(): string
+    {
+        if (!isset($_COOKIE[self::COOKIE_CSRF]) || empty($_COOKIE[self::COOKIE_CSRF])) {
+            $token = bin2hex(random_bytes(16));
+            setcookie(self::COOKIE_CSRF, $token, [
+                'expires'  => 0,          // session cookie
+                'path'     => '/',
+                'httponly' => false,       // intentionally readable by JS if needed
+                'samesite' => 'Strict',
+            ]);
+            $_COOKIE[self::COOKIE_CSRF] = $token;
+        }
+        return $_COOKIE[self::COOKIE_CSRF];
+    }
+
+    /** Verify that the submitted _csrf field matches the cookie. */
+    public function verifyCsrf(): bool
+    {
+        $formToken   = $_POST['_csrf'] ?? '';
+        $cookieToken = $_COOKIE[self::COOKIE_CSRF] ?? '';
+        return $cookieToken !== '' && hash_equals($cookieToken, $formToken);
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private function createSession(array $user, string $ip): void
+    {
+        $token     = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $token);
+        $expires   = date('Y-m-d H:i:s', time() + self::SESSION_TTL);
+
+        $this->db->core()->prepare(
+            'INSERT INTO sessions (user_id, token_hash, ip, user_agent, expires_at)
+             VALUES (?, ?, ?, ?, ?)'
+        )->execute([
+            $user['id'],
+            $tokenHash,
+            $ip,
+            substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 512),
+            $expires,
+        ]);
+
+        setcookie(self::COOKIE_SESSION, $token, [
+            'expires'  => time() + self::SESSION_TTL,
+            'path'     => '/',
+            'httponly' => true,
+            'samesite' => 'Strict',
+        ]);
+
+        $this->currentUser = $user;
+    }
+
+    private function updateLastLogin(int $userId): void
+    {
+        $this->db->core()->prepare(
+            'UPDATE users SET last_login_at = NOW() WHERE id = ?'
+        )->execute([$userId]);
+    }
+
+    private function clearCookie(string $name): void
+    {
+        setcookie($name, '', ['expires' => time() - 3600, 'path' => '/', 'httponly' => true]);
+    }
+
+    private function cacheKey(string $ip): string
+    {
+        return 'login_fail:' . md5($ip);
+    }
+
+    private function isRateLimited(string $ip): bool
+    {
+        return ((int) ($this->cache->get($this->cacheKey($ip)) ?? 0)) >= self::RATE_LIMIT;
+    }
+
+    private function recordFailure(string $ip): void
+    {
+        $key   = $this->cacheKey($ip);
+        $count = (int) ($this->cache->get($key) ?? 0);
+        $this->cache->set($key, $count + 1, self::RATE_WINDOW);
+    }
+
+    private function clearFailures(string $ip): void
+    {
+        $this->cache->delete($this->cacheKey($ip));
+    }
+}
+"""
+
+# ── core/bootstrap.php — add Auth singleton ───────────────────────────────────
+# We read the file and inject the Auth singleton after the Migrator singleton
+files['_patch_bootstrap'] = 'PATCH'  # handled specially below
+
+# Write all files
+for rel_path, content in files.items():
+    if rel_path.startswith('_'):
+        continue
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# Patch bootstrap.php to add Auth import and singleton
+bootstrap_path = base + '/core/bootstrap.php'
+bootstrap = open(bootstrap_path).read()
+
+auth_import = 'use VeloCMS\Core\Auth;\n'
+auth_singleton = """
+// Auth
+$app->singleton(Auth::class, static function ($app): Auth {
+    return new Auth(
+        $app->make(Database::class),
+        $app->make(Cache::class),
+    );
+});
+"""
+
+if 'Auth::class' not in bootstrap:
+    bootstrap = bootstrap.replace(
+        'use VeloCMS\Core\Cache;',
+        'use VeloCMS\Core\Auth;\nuse VeloCMS\Core\Cache;'
+    )
+    bootstrap = bootstrap.replace(
+        "// Router\n$app->singleton(Router::class",
+        auth_singleton.lstrip('\n') + "\n// Router\n$app->singleton(Router::class"
+    )
+    open(bootstrap_path, 'w').write(bootstrap)
+    print('OK  core/bootstrap.php (Auth singleton injected)')
+else:
+    print('OK  core/bootstrap.php (Auth already present, skipped)')
+
+print('\nBatch 1 done.')

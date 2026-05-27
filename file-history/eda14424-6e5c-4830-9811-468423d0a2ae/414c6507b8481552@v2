@@ -1,0 +1,405 @@
+"""vcms_s14c_validation.py
+Fix 3 — Date/time validation:
+  - admin/views/booking/create.php: client-side end-time min + inline error
+  - BookingAdminController::createForm(): pass $settings to view
+  - BookingAdminController::createStore(): server-side end>start + try/catch
+  - BookingController::bookStore(): server-side validation + try/catch
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label=''):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label or path}')
+    if r.returncode != 0: print(r.stderr)
+
+# ── 1. admin create.php — client-side time validation ────────────────────────
+create_path = BASE + '/admin/views/booking/create.php'
+create = open(create_path).read()
+
+# a) Add time-error paragraph after the hourly date row
+old_hourly_row = (
+    "    <!-- Daily: check-in / check-out dates -->"
+)
+new_hourly_row = (
+    "    <p id=\"b-time-err\" style=\"display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0 .5rem\">End time must be after start time.</p>\n"
+    "\n"
+    "    <!-- Daily: check-in / check-out dates -->"
+)
+
+# b) Replace the existing JS block to add validation
+old_js = (
+    "function togglePricingFields() {\n"
+    "    const type = document.getElementById('b-pricing').value;\n"
+    "    document.getElementById('pkg-field').style.display      = type === 'package' ? '' : 'none';\n"
+    "    document.getElementById('prod-field').style.display     = type === 'product' ? '' : 'none';\n"
+    "    document.getElementById('hourly-date-row').style.display = type === 'daily'   ? 'none' : '';\n"
+    "    document.getElementById('daily-date-row').style.display  = type === 'daily'   ? '' : 'none';\n"
+    "}"
+)
+new_js = (
+    "function togglePricingFields() {\n"
+    "    const type = document.getElementById('b-pricing').value;\n"
+    "    document.getElementById('pkg-field').style.display       = type === 'package' ? '' : 'none';\n"
+    "    document.getElementById('prod-field').style.display      = type === 'product' ? '' : 'none';\n"
+    "    document.getElementById('hourly-date-row').style.display  = type === 'daily'   ? 'none' : '';\n"
+    "    document.getElementById('daily-date-row').style.display   = type === 'daily'   ? '' : 'none';\n"
+    "    document.getElementById('b-time-err').style.display = 'none';\n"
+    "}\n"
+    "\n"
+    "function validateHourlyTime() {\n"
+    "    const start = document.getElementById('b-start').value;\n"
+    "    const end   = document.getElementById('b-end').value;\n"
+    "    const err   = document.getElementById('b-time-err');\n"
+    "    const btn   = document.querySelector('#manual-booking-form button[type=submit]');\n"
+    "    const bad   = start && end && end <= start;\n"
+    "    err.style.display = bad ? '' : 'none';\n"
+    "    if (btn) btn.disabled = !!bad;\n"
+    "    if (start) document.getElementById('b-end').min = start;\n"
+    "}\n"
+    "\n"
+    "document.getElementById('b-start').addEventListener('change', validateHourlyTime);\n"
+    "document.getElementById('b-end').addEventListener('change', validateHourlyTime);"
+)
+
+changed = 0
+for old, new, label in [
+    (old_hourly_row, new_hourly_row, 'time-error paragraph'),
+    (old_js,         new_js,         'JS validation'),
+]:
+    if old in create:
+        create = create.replace(old, new)
+        changed += 1
+        print(f'OK  create.php — {label}')
+    elif 'validateHourlyTime' in create and label == 'JS validation':
+        print(f'SKIP create.php — {label} already present')
+    else:
+        print(f'ERR create.php — pattern not found for {label}')
+
+with open(create_path, 'w') as f: f.write(create)
+php_lint(create_path, 'admin/views/booking/create.php')
+
+# ── 2. BookingAdminController — pass $settings to createForm() + validate createStore() ──
+ctrl_path = BASE + '/modules/booking/admin/controllers/BookingAdminController.php'
+ctrl = open(ctrl_path).read()
+
+# a) createForm() — add $settings to view data
+old_create_form_layout = (
+    "        return $this->layout('booking/create.php', [\n"
+    "            'user'      => $this->auth()->user(),\n"
+    "            'page'      => 'booking',\n"
+    "            'csrf'      => $this->auth()->csrfToken(),\n"
+    "            'resources' => $this->resource()->all(true),\n"
+    "            'error'     => null,\n"
+    "        ]);\n"
+    "    }\n"
+    "\n"
+    "    public function createStore"
+)
+new_create_form_layout = (
+    "        return $this->layout('booking/create.php', [\n"
+    "            'user'      => $this->auth()->user(),\n"
+    "            'page'      => 'booking',\n"
+    "            'csrf'      => $this->auth()->csrfToken(),\n"
+    "            'resources' => $this->resource()->all(true),\n"
+    "            'settings'  => $this->settings(),\n"
+    "            'error'     => null,\n"
+    "        ]);\n"
+    "    }\n"
+    "\n"
+    "    public function createStore"
+)
+
+if "'settings'  => $this->settings()," not in ctrl:
+    if old_create_form_layout in ctrl:
+        ctrl = ctrl.replace(old_create_form_layout, new_create_form_layout)
+        print('OK  BookingAdminController::createForm() — settings passed')
+    else:
+        print('ERR BookingAdminController::createForm() — pattern not found')
+else:
+    print('SKIP BookingAdminController::createForm() — already updated')
+
+# b) createStore() — add server-side date/time validation + try/catch
+# Find the validation section for dates
+old_validate_dates = (
+        "        $missingDates = ($pricingType === 'daily')\n"
+        "            ? (!$req->post('checkin_date') || !$req->post('checkout_date'))\n"
+        "            : (!$req->post('booking_date') || !$req->post('start_time') || !$req->post('end_time'));\n"
+        "\n"
+        "        if (!$resourceId || !$name || !$email || $missingDates) {\n"
+        "            return $this->layout('booking/create.php', [\n"
+        "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+        "                'csrf'      => $this->auth()->csrfToken(),\n"
+        "                'resources' => $this->resource()->all(true),\n"
+        "                'error'     => 'All required fields must be filled.',\n"
+        "            ]);\n"
+        "        }"
+)
+new_validate_dates = (
+        "        $missingDates = ($pricingType === 'daily')\n"
+        "            ? (!$req->post('checkin_date') || !$req->post('checkout_date'))\n"
+        "            : (!$req->post('booking_date') || !$req->post('start_time') || !$req->post('end_time'));\n"
+        "\n"
+        "        $dateError = null;\n"
+        "        if ($pricingType === 'daily' && !$missingDates) {\n"
+        "            if (strtotime($req->post('checkout_date')) <= strtotime($req->post('checkin_date'))) {\n"
+        "                $dateError = 'Check-out date must be after check-in date.';\n"
+        "            }\n"
+        "        } elseif ($pricingType !== 'daily' && !$missingDates) {\n"
+        "            $bd = $req->post('booking_date'); $st = $req->post('start_time'); $et = $req->post('end_time');\n"
+        "            if (strtotime(\"{$bd} {$et}\") <= strtotime(\"{$bd} {$st}\")) {\n"
+        "                $dateError = 'End time must be after start time.';\n"
+        "            }\n"
+        "        }\n"
+        "\n"
+        "        if (!$resourceId || !$name || !$email || $missingDates || $dateError) {\n"
+        "            return $this->layout('booking/create.php', [\n"
+        "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+        "                'csrf'      => $this->auth()->csrfToken(),\n"
+        "                'resources' => $this->resource()->all(true),\n"
+        "                'settings'  => $this->settings(),\n"
+        "                'error'     => $dateError ?? 'All required fields must be filled.',\n"
+        "            ]);\n"
+        "        }"
+)
+
+if 'dateError' not in ctrl:
+    if old_validate_dates in ctrl:
+        ctrl = ctrl.replace(old_validate_dates, new_validate_dates)
+        print('OK  BookingAdminController::createStore() — date validation added')
+    else:
+        print('ERR BookingAdminController::createStore() — validation pattern not found')
+else:
+    print('SKIP BookingAdminController::createStore() — already updated')
+
+# c) Wrap the booking()->create() call in createStore() in try/catch
+old_create_call = (
+        "        $id = $this->booking()->create([\n"
+        "            'resource_id'    => $resourceId,\n"
+        "            'package_id'     => $packageId,\n"
+        "            'product_id'     => $productId,\n"
+        "            'customer_name'  => $name,\n"
+        "            'customer_email' => $email,\n"
+        "            'customer_phone' => trim($req->post('customer_phone', '')),\n"
+        "            'booking_date'   => $bookingDate,\n"
+        "            'end_date'       => $endDate,\n"
+        "            'nights'         => $nights,\n"
+        "            'start_time'     => $startTime,\n"
+        "            'end_time'       => $endTime,\n"
+        "            'duration_mins'  => $duration,\n"
+        "            'pricing_type'   => $pricingType,\n"
+        "            'subtotal'       => $subtotal,\n"
+        "            'deposit_amount' => $deposit,\n"
+        "            'total_amount'   => $subtotal,\n"
+        "            'payment_status' => 'none',\n"
+        "            'booking_status' => 'confirmed',\n"
+        "            'notes'          => trim($req->post('notes', '')),\n"
+        "            'ip_address'     => null,\n"
+        "        ]);\n"
+        "\n"
+        "        $_SESSION['_flash'] = 'Booking created.';\n"
+        "        return $this->redirect('/admin/booking/' . $id);"
+)
+new_create_call = (
+        "        try {\n"
+        "            $id = $this->booking()->create([\n"
+        "                'resource_id'    => $resourceId,\n"
+        "                'package_id'     => $packageId,\n"
+        "                'product_id'     => $productId,\n"
+        "                'customer_name'  => $name,\n"
+        "                'customer_email' => $email,\n"
+        "                'customer_phone' => trim($req->post('customer_phone', '')),\n"
+        "                'booking_date'   => $bookingDate,\n"
+        "                'end_date'       => $endDate,\n"
+        "                'nights'         => $nights,\n"
+        "                'start_time'     => $startTime,\n"
+        "                'end_time'       => $endTime,\n"
+        "                'duration_mins'  => $duration,\n"
+        "                'pricing_type'   => $pricingType,\n"
+        "                'subtotal'       => $subtotal,\n"
+        "                'deposit_amount' => $deposit,\n"
+        "                'total_amount'   => $subtotal,\n"
+        "                'payment_status' => 'none',\n"
+        "                'booking_status' => 'confirmed',\n"
+        "                'notes'          => trim($req->post('notes', '')),\n"
+        "                'ip_address'     => null,\n"
+        "            ]);\n"
+        "        } catch (\\Throwable $e) {\n"
+        "            error_log('[VeloCMS] Booking create error: ' . $e->getMessage());\n"
+        "            return $this->layout('booking/create.php', [\n"
+        "                'user'      => $this->auth()->user(), 'page' => 'booking',\n"
+        "                'csrf'      => $this->auth()->csrfToken(),\n"
+        "                'resources' => $this->resource()->all(true),\n"
+        "                'settings'  => $this->settings(),\n"
+        "                'error'     => 'Failed to create booking. Please try again.',\n"
+        "            ]);\n"
+        "        }\n"
+        "\n"
+        "        $_SESSION['_flash'] = 'Booking created.';\n"
+        "        return $this->redirect('/admin/booking/' . $id);"
+)
+
+if "catch (\\Throwable $e)" not in ctrl or "'Booking create error'" not in ctrl:
+    if old_create_call in ctrl:
+        ctrl = ctrl.replace(old_create_call, new_create_call)
+        print('OK  BookingAdminController::createStore() — try/catch added')
+    else:
+        print('ERR BookingAdminController::createStore() — create call pattern not found')
+else:
+    print('SKIP BookingAdminController::createStore() — try/catch already present')
+
+with open(ctrl_path, 'w') as f: f.write(ctrl)
+php_lint(ctrl_path, 'BookingAdminController.php')
+
+# ── 3. BookingController::bookStore() — server-side validation + try/catch ───
+front_ctrl_path = BASE + '/modules/booking/controllers/BookingController.php'
+front_ctrl = open(front_ctrl_path).read()
+
+# Find the validation errors block and the create call
+old_store_validate = (
+        "        $errors = [];\n"
+        "        if ($name === '') {\n"
+        "            $errors[] = 'Name is required.';\n"
+        "        }\n"
+        "        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {\n"
+        "            $errors[] = 'A valid email address is required.';\n"
+        "        }\n"
+        "        if ($pricingType === 'daily') {\n"
+        "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkinDate)) {\n"
+        "                $errors[] = 'Please select a check-in date.';\n"
+        "            }\n"
+        "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkoutDate)) {\n"
+        "                $errors[] = 'Please select a check-out date.';\n"
+        "            }\n"
+        "        } else {\n"
+        "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $date)) {\n"
+        "                $errors[] = 'Please select a date.';\n"
+        "            }\n"
+        "            if (!preg_match('/^\\d{2}:\\d{2}$/', $startTime)) {\n"
+        "                $errors[] = 'Please select a start time.';\n"
+        "            }\n"
+        "        }"
+)
+new_store_validate = (
+        "        $errors = [];\n"
+        "        if ($name === '') {\n"
+        "            $errors[] = 'Name is required.';\n"
+        "        }\n"
+        "        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {\n"
+        "            $errors[] = 'A valid email address is required.';\n"
+        "        }\n"
+        "        if ($pricingType === 'daily') {\n"
+        "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkinDate)) {\n"
+        "                $errors[] = 'Please select a check-in date.';\n"
+        "            } elseif (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $checkoutDate)) {\n"
+        "                $errors[] = 'Please select a check-out date.';\n"
+        "            } elseif (strtotime($checkoutDate) <= strtotime($checkinDate)) {\n"
+        "                $errors[] = 'Check-out date must be after check-in date.';\n"
+        "            }\n"
+        "        } else {\n"
+        "            if (!preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $date)) {\n"
+        "                $errors[] = 'Please select a date.';\n"
+        "            } elseif (!preg_match('/^\\d{2}:\\d{2}$/', $startTime)) {\n"
+        "                $errors[] = 'Please select a start time.';\n"
+        "            } elseif (!preg_match('/^\\d{2}:\\d{2}$/', $endTime ?? '')) {\n"
+        "                $errors[] = 'Please select an end time.';\n"
+        "            } elseif (strtotime(\"{$date} {$endTime}\") <= strtotime(\"{$date} {$startTime}\")) {\n"
+        "                $errors[] = 'End time must be after start time.';\n"
+        "            }\n"
+        "        }"
+)
+
+# Wrap the bookingModel->create() call in try/catch
+old_front_create = (
+        "        $bookingModel = new Booking($this->pdo());\n"
+        "        $id = $bookingModel->create([\n"
+        "            'resource_id'    => (int) $resource['id'],\n"
+        "            'package_id'     => $actualPkgId,\n"
+        "            'product_id'     => $actualProdId,\n"
+        "            'customer_name'  => $name,\n"
+        "            'customer_email' => $email,\n"
+        "            'customer_phone' => $phone,\n"
+        "            'booking_date'   => $date,\n"
+        "            'end_date'       => $endDate,\n"
+        "            'nights'         => $nights,\n"
+        "            'start_time'     => $startTime,\n"
+        "            'end_time'       => $endTime,\n"
+        "            'duration_mins'  => $slotMins,\n"
+        "            'pricing_type'   => $pricingType,\n"
+        "            'subtotal'       => $subtotal,\n"
+        "            'deposit_amount' => $deposit,\n"
+        "            'total_amount'   => $subtotal,\n"
+        "            'payment_status' => 'none',\n"
+        "            'booking_status' => $status,\n"
+        "            'notes'          => $notes,\n"
+        "            'ip_address'     => $req->ip(),\n"
+        "        ]);\n"
+        "\n"
+        "        $booking = $bookingModel->findById($id);"
+)
+new_front_create = (
+        "        $bookingModel = new Booking($this->pdo());\n"
+        "        try {\n"
+        "            $id = $bookingModel->create([\n"
+        "                'resource_id'    => (int) $resource['id'],\n"
+        "                'package_id'     => $actualPkgId,\n"
+        "                'product_id'     => $actualProdId,\n"
+        "                'customer_name'  => $name,\n"
+        "                'customer_email' => $email,\n"
+        "                'customer_phone' => $phone,\n"
+        "                'booking_date'   => $date,\n"
+        "                'end_date'       => $endDate,\n"
+        "                'nights'         => $nights,\n"
+        "                'start_time'     => $startTime,\n"
+        "                'end_time'       => $endTime,\n"
+        "                'duration_mins'  => $slotMins,\n"
+        "                'pricing_type'   => $pricingType,\n"
+        "                'subtotal'       => $subtotal,\n"
+        "                'deposit_amount' => $deposit,\n"
+        "                'total_amount'   => $subtotal,\n"
+        "                'payment_status' => 'none',\n"
+        "                'booking_status' => $status,\n"
+        "                'notes'          => $notes,\n"
+        "                'ip_address'     => $req->ip(),\n"
+        "            ]);\n"
+        "        } catch (\\Throwable $e) {\n"
+        "            error_log('[VeloCMS] Frontend booking error: ' . $e->getMessage());\n"
+        "            return $this->render('booking/form.php', [\n"
+        "                'resource'    => $resource,\n"
+        "                'packages'    => (new BookingPackage($this->pdo()))->allForResource((int) $resource['id']),\n"
+        "                'products'    => (new BookingProduct($this->pdo()))->allForResource((int) $resource['id']),\n"
+        "                'package'     => null,\n"
+        "                'product'     => null,\n"
+        "                'date'        => $date,\n"
+        "                'start'       => $startTime,\n"
+        "                'pricingType' => $pricingType,\n"
+        "                'checkin'     => $checkinDate,\n"
+        "                'checkout'    => $checkoutDate,\n"
+        "                'dailyNights' => $nights ?? 0,\n"
+        "                'dailyTotal'  => $subtotal,\n"
+        "                'settings'    => $settings,\n"
+        "                'error'       => 'Something went wrong. Please try again.',\n"
+        "            ]);\n"
+        "        }\n"
+        "\n"
+        "        $booking = $bookingModel->findById($id);"
+)
+
+changed_front = 0
+for old, new, label in [
+    (old_store_validate, new_store_validate, 'validation: date range checks'),
+    (old_front_create,   new_front_create,   'try/catch around create()'),
+]:
+    if old in front_ctrl:
+        front_ctrl = front_ctrl.replace(old, new)
+        changed_front += 1
+        print(f'OK  BookingController::bookStore() — {label}')
+    elif label == 'try/catch around create()' and 'Frontend booking error' in front_ctrl:
+        print(f'SKIP BookingController — {label} already present')
+    else:
+        print(f'ERR BookingController — pattern not found for {label}')
+
+with open(front_ctrl_path, 'w') as f: f.write(front_ctrl)
+php_lint(front_ctrl_path, 'BookingController.php')
+
+print('\nDone.')

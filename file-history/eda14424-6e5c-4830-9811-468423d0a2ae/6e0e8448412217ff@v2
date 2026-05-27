@@ -1,0 +1,34 @@
+import json
+
+path = '/var/www/velocms/composer.json'
+with open(path) as f:
+    data = json.load(f)
+
+psr4 = data['autoload']['psr-4']
+
+# Add sub-namespace mappings for all module directories
+# Pattern: namespace Admin\ -> admin/controllers/, Models\ -> models/, Controllers\ -> controllers/
+sub_maps = {
+    # Pages
+    'VeloCMS\\Modules\\Pages\\Admin\\':       'modules/pages/admin/controllers/',
+    'VeloCMS\\Modules\\Pages\\Models\\':      'modules/pages/models/',
+    'VeloCMS\\Modules\\Pages\\Controllers\\': 'modules/pages/controllers/',
+    # Blog
+    'VeloCMS\\Modules\\Blog\\Admin\\':        'modules/blog/admin/controllers/',
+    'VeloCMS\\Modules\\Blog\\Models\\':       'modules/blog/models/',
+    'VeloCMS\\Modules\\Blog\\Controllers\\':  'modules/blog/controllers/',
+    # Media
+    'VeloCMS\\Modules\\Media\\Admin\\':       'modules/media/admin/controllers/',
+    'VeloCMS\\Modules\\Media\\Models\\':      'modules/media/models/',
+    # Navigation
+    'VeloCMS\\Modules\\Navigation\\Admin\\':  'modules/navigation/admin/controllers/',
+    'VeloCMS\\Modules\\Navigation\\Models\\': 'modules/navigation/models/',
+}
+psr4.update(sub_maps)
+
+with open(path, 'w') as f:
+    json.dump(data, f, indent=4)
+
+print('composer.json updated with sub-namespace mappings')
+for k, v in sub_maps.items():
+    print(f'  {k} => {v}')

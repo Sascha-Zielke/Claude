@@ -1,0 +1,337 @@
+---
+tags: [veloSolutions, velocms, apps, entwicklung, architektur]
+status: aktiv
+---
+
+# veloCMS — App-Development Guide
+
+Richtlinien für die Entwicklung isolierter Apps im veloCMS.
+
+---
+
+## 🎯 Kern-Prinzip: Isolation
+
+**Apps sind eigenständige Systeme, die im CMS laufen — nicht Teil des CMS-Kerns.**
+
+**Konsequenzen:**
+- ✅ Wenn eine App crasht → CMS läuft weiter
+- ✅ Wenn eine App falsch gebaut ist → Andere Module bleiben unberührt
+- ✅ Apps können deaktiviert werden ohne CMS-Fehler
+- ✅ Apps können neu geschrieben werden ohne CMS-Migration
+
+**Das bedeutet konkret:**
+- Keine direkten Abhängigkeiten zu anderen Modulen
+- Eigene Datenbank-Tabellen (nicht in bestehende Tabellen greifen)
+- Eigene Routes, Controller, Models
+- Service-Ansatz: "App konsumiert Core-Services, aber nicht Core-Daten"
+
+---
+
+## 📋 App-Struktur
+
+Jede App folgt dieser Struktur:
+
+```
+Apps/[AppName]/
+├── [AppName].md                 ← Anforderungen
+├── Advanced-Ideas.md            ← Ideen für Phase 2-3
+├── Masterplan_[app-name].md    ← Claude Code schreibt das
+├── Resume_[app-name].md         ← Claude Code schreibt das (nach jeder Phase)
+├── Audits/
+│   ├── Phase-1-Audit-1.md
+│   └── Phase-1-Audit-2.md
+└── Learnings/
+    └── Erkenntnisse und Patterns
+```
+
+---
+
+## 🔧 Datei-Konventionen
+
+### Masterplan_[app-name].md
+
+**Claude Code schreibt diese Datei am Anfang.**
+
+**Inhalt:**
+- Phasen-Einteilung (MVP, Phase 2, Phase 3, etc.)
+- Timeline pro Phase
+- Success-Kriterien pro Phase
+- Abhängigkeiten & Blockers
+- Risiken & Mitigations
+- Architektur-Übersicht (high-level)
+
+**Beispiel:**
+```
+# Translation-App Masterplan
+
+## Phase 1: MVP (Woche 1-3)
+- 2-3 Sprachen funktional
+- Frontend Toggle
+- Backend Toggle
+- Auto-Translate für KI-generiert
+- Success: Alle MVP-Kriterien grün ✓
+
+## Phase 2: Status & Intelligenz (Woche 4-5)
+- Status-Dashboard
+- Browser-Erkennung
+- Fallback-Kette
+- Success: Phase 1 + neue Features funktionieren ✓
+```
+
+### Resume_[app-name].md
+
+**Claude Code schreibt diese NACH jeder Phase.**
+
+**Format:**
+```markdown
+# Translation-App Resume — Phase 1
+
+## ✅ Abgeschlossen
+- Feature A implementiert
+- Feature B implementiert
+- Alle Tests grün
+
+## ⏳ Ausstehend
+- Feature C braucht noch Refinement
+- Bug in Szenario XY behoben
+
+## 📊 Status
+- Deadline: 2026-06-10
+- Aktuell: On Track / At Risk / Blocked
+- Blockers: (falls vorhanden)
+
+## 🎯 Nächste Phase
+- Startet: 2026-06-11
+- Fokus: Phase 2 Features
+```
+
+---
+
+## 🏗️ Architektur-Regeln für Apps
+
+### 1. Eigene Module, nicht Core-Modifikation
+**FALSCH:**
+```
+Translation baut in Pages-Modul rein
+→ Pages-Tabelle wird geändert
+→ Wenn Translation broken ist, Pages auch broken
+```
+
+**RICHTIG:**
+```
+Translation-Modul mit eigenen Tabellen
+→ Pages bleibt unverändert
+→ Wenn Translation broken ist, Pages läuft weiter
+```
+
+### 2. Service-Dependency statt Data-Dependency
+**FALSCH:**
+```php
+// Translation greift direkt auf Pages-Datenbank zu
+$pages = $pagesDb->getAll();
+foreach($pages as $page) {
+    // Direkt Pages-Daten manipulieren
+}
+```
+
+**RICHTIG:**
+```php
+// Translation nutzt TranslationService (Core)
+$translator = new TranslationService();
+$translation = $translator->translate($text, 'DE', 'EN');
+// Speichert in eigener Tabelle, nicht in Pages
+```
+
+### 3. Optionale Integration
+**Apps müssen optional sein:**
+- CMS funktioniert auch ohne App
+- Routes sind nicht essentiell
+- Datenbankzugriff ist optional
+- Admin-Menu ist optional
+
+### 4. Feature Flags (Ein/Aus-Schalter)
+**Jede App muss ein Feature Flag haben:**
+- Aktivierung im Backend: **Einstellungen → Feature Flags**
+- Toggle: App aktivieren / deaktivieren
+- **Wichtig:** Wenn App deaktiviert:
+  - Routes sind nicht erreichbar (404)
+  - Admin-Menu-Items sind nicht sichtbar
+  - Datenbank-Operationen nicht möglich
+  - CMS läuft fehlerfrei weiter
+
+**Implementation:**
+```php
+// In AppModule::boot()
+if ($this->isFeatureEnabled('translation')) {
+    // Nur wenn Feature aktiviert → Routes registrieren
+    $this->router->get('/admin/translation', ...);
+    $this->admin->addMenuItem([...]);
+}
+
+// Helper-Funktion
+private function isFeatureEnabled(string $feature): bool
+{
+    $settings = new SettingsModel();
+    return (bool) $settings->get('feature_flag_' . $feature);
+}
+```
+
+**Settings-Datenbankfeld:**
+```
+velocms_settings Tabelle:
+- key: 'feature_flag_translation'
+- value: '1' (aktiviert) oder '0' (deaktiviert)
+```
+
+### 5. Fehlerbehandlung
+**App muss fehler-tolerant sein:**
+- Wenn API-Call zu DeepL/Anthropic failt → Graceful Fallback
+- Wenn Datenbank-Fehler → User-freundliche Message
+- Wenn Route nicht existiert → 404, nicht CMS-Fehler
+- Wenn Feature Flag OFF → Keine Fehlermeldungen, nur 404
+
+---
+
+## 📅 Workflow: Von Anforderung bis Production
+
+### Schritt 1: Anforderungen sammeln
+**Location:** `[AppName].md`
+- Features, User-Stories, Acceptance Criteria
+- Success-Kriterien
+- Abhängigkeiten
+
+**Beispiel:** Translation-App.md ✅
+
+### Schritt 2: Claude Code schreibt Masterplan
+**Location:** `Masterplan_[app-name].md`
+- Phasen-Planung
+- Timeline
+- Architektur-Entscheidungen
+
+**Trigger:** "Claude Code, schreib Masterplan nach diesem Format"
+
+### Schritt 3: Claude Code entwickelt Phase 1
+**Autonomer Prozess:**
+- Liest Masterplan
+- Implementiert Features
+- Schreibt Tests
+- Dokumentiert Code
+
+### Schritt 4: Claude Code schreibt Resume
+**Nach Phase 1:**
+
+**Location:** `Resume_[app-name].md`
+- Was wurde gemacht
+- Was funktioniert
+- Welche Bugs gibt es
+- Nächste Schritte
+
+**Format:** Siehe oben
+
+### Schritt 5: Doppeltes Audit (MANDATORY)
+
+**Nach jeder Phase MUSS folgendes passieren:**
+
+1. **Claude Code schreibt Resume_[app-name].md**
+   - Was wurde gemacht
+   - Was funktioniert
+   - Bekannte Fehler/Bugs
+
+2. **Claude Code führt selbst Audit 1 durch:**
+   - Checkt gegen Masterplan
+   - Checkt gegen Success-Kriterien
+   - Checkt Code-Quality
+   - Dokumentiert Findings in `Audits/Phase-X-Audit-1.md`
+   - Result: ✅ GRÜN oder ❌ ROT
+
+3. **Falls Audit 1 GRÜN:**
+   - Claudian führt Audit 2 durch
+   - Unabhängiger Review
+   - Dokumentiert in `Audits/Phase-X-Audit-2.md`
+   - Result: ✅ GRÜN oder ❌ ROT
+
+4. **Falls Audit 1 oder 2 ROT:**
+   - **Claude Code fixt die Fehler sofort**
+   - **Schreibt aktualisiertes Resume**
+   - **Macht Audit erneut (1 → 2 → 1 → 2...)**
+   - **Wiederholt bis beide ✅ GRÜN**
+
+5. **Erst wenn beide Audits GRÜN:** Nächste Phase starten
+
+**Das ist nicht optional — kein "Gut Genug", bis zum Masterplan perfekt.**
+
+### Schritt 6: Production
+- App ist stabil
+- Alle Features funktionieren
+- Keine bekannten Bugs
+- Ready for Kunden
+
+---
+
+## 🔍 Audit-Checkliste
+
+Wenn ich (Claudian) eine App audite, checke ich:
+
+**Funktionalität:**
+- [ ] Alle MVP-Features funktionieren?
+- [ ] Keine Crashes?
+- [ ] Edge Cases handled?
+
+**Isolation:**
+- [ ] Hat App eigene Tabellen?
+- [ ] Greift App auf andere Module zu (nicht Service)?
+- [ ] Wenn App disabled: CMS läuft weiter?
+- [ ] Feature Flag implementiert in Einstellungen?
+- [ ] Routes/Menu sind weg wenn Feature OFF?
+- [ ] Keine Fehler wenn Feature OFF?
+
+**Architektur:**
+- [ ] Folgt dem Module-Pattern?
+- [ ] Datenbank prepared statements?
+- [ ] CSRF-Protection vorhanden?
+- [ ] Error-Handling OK?
+
+**Code-Quality:**
+- [ ] Kein Copy-Paste-Code?
+- [ ] Type hints vorhanden?
+- [ ] Kommentare wo nötig?
+
+**Testing:**
+- [ ] Unit Tests vorhanden?
+- [ ] Happy-Path funktioniert?
+- [ ] Error-Paths funktionieren?
+
+---
+
+## 📝 Beispiel: Translation-App
+
+**Anforderungen:** [[Translation-App/Translation-App]]  
+**Ideen:** [[Translation-App/Advanced-Ideas]]  
+**Masterplan:** (Claude Code schreibt)  
+**Resume Phase 1:** (Claude Code schreibt nach Phase 1)  
+
+---
+
+## 🛠️ Für Claude Code: Standing Instructions
+
+**Beim Starten einer neuen App:**
+1. Lese die Anforderungen aus `[AppName].md`
+2. Schreibe `Masterplan_[app-name].md`
+3. Entwickle nach Masterplan
+4. Nach Phase: Schreibe `Resume_[app-name].md`
+5. Warte auf 2 Audits (beide müssen grün sein)
+6. Erst dann: Nächste Phase starten
+
+**Isolation = Sicherheit**
+- Immer überlegen: "Könnte diese App das CMS brechen?"
+- Wenn JA: Architektur ändern
+- Wenn NEIN: Weitermachen
+
+---
+
+## 🔗 Übergeordnet
+
+← [[_index|Apps Übersicht]] | [[../veloCMS|veloCMS Projekt Übersicht]]
+
+**Gültig ab:** 2026-05-27  
+**Für:** Alle Apps im veloCMS

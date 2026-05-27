@@ -1,0 +1,268 @@
+import os
+
+base = '/var/www/velocms'
+
+# ── admin/routes.php — add all module admin routes ────────────────────────────
+admin_routes_path = base + '/admin/routes.php'
+admin_routes = open(admin_routes_path).read()
+
+module_routes = r"""
+use VeloCMS\Modules\Pages\Admin\PageAdminController;
+use VeloCMS\Modules\Blog\Admin\PostAdminController;
+use VeloCMS\Modules\Blog\Admin\CategoryAdminController;
+use VeloCMS\Modules\Media\Admin\MediaAdminController;
+use VeloCMS\Modules\Navigation\Admin\MenuAdminController;
+
+// ── Pages ─────────────────────────────────────────────────────────────────────
+$router->get('/admin/pages',                  [PageAdminController::class, 'index']);
+$router->get('/admin/pages/create',           [PageAdminController::class, 'create']);
+$router->post('/admin/pages',                 [PageAdminController::class, 'store']);
+$router->get('/admin/pages/{id}/edit',        [PageAdminController::class, 'edit']);
+$router->post('/admin/pages/{id}',            [PageAdminController::class, 'update']);
+$router->post('/admin/pages/{id}/delete',     [PageAdminController::class, 'delete']);
+
+// ── Blog Posts ────────────────────────────────────────────────────────────────
+$router->get('/admin/blog',                   [PostAdminController::class, 'index']);
+$router->get('/admin/blog/create',            [PostAdminController::class, 'create']);
+$router->post('/admin/blog',                  [PostAdminController::class, 'store']);
+$router->get('/admin/blog/{id}/edit',         [PostAdminController::class, 'edit']);
+$router->post('/admin/blog/{id}',             [PostAdminController::class, 'update']);
+$router->post('/admin/blog/{id}/delete',      [PostAdminController::class, 'delete']);
+
+// ── Blog Categories ───────────────────────────────────────────────────────────
+$router->get('/admin/blog/categories',                        [CategoryAdminController::class, 'index']);
+$router->post('/admin/blog/categories',                       [CategoryAdminController::class, 'store']);
+$router->post('/admin/blog/categories/{id}/delete',           [CategoryAdminController::class, 'delete']);
+
+// ── Media ─────────────────────────────────────────────────────────────────────
+$router->get('/admin/media',                  [MediaAdminController::class, 'index']);
+$router->post('/admin/media/upload',          [MediaAdminController::class, 'upload']);
+$router->post('/admin/media/{id}/delete',     [MediaAdminController::class, 'delete']);
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+$router->get('/admin/navigation',                             [MenuAdminController::class, 'index']);
+$router->post('/admin/navigation',                            [MenuAdminController::class, 'store']);
+$router->get('/admin/navigation/{id}/edit',                   [MenuAdminController::class, 'edit']);
+$router->post('/admin/navigation/{id}/items',                 [MenuAdminController::class, 'addItem']);
+$router->post('/admin/navigation/{id}/items/{item_id}/delete',[MenuAdminController::class, 'deleteItem']);
+$router->post('/admin/navigation/{id}/delete',                [MenuAdminController::class, 'delete']);
+"""
+
+if 'PageAdminController' not in admin_routes:
+    admin_routes = admin_routes.rstrip() + '\n' + module_routes
+    open(admin_routes_path, 'w').write(admin_routes)
+    print('OK  admin/routes.php (module routes added)')
+else:
+    print('OK  admin/routes.php (already has module routes, skipped)')
+
+# ── admin/views/layout.php — update sidebar ───────────────────────────────────
+layout_path = base + '/admin/views/layout.php'
+layout = open(layout_path).read()
+
+old_nav = """        <nav class="vcms-nav">
+            <a href="/admin/dashboard" class="<?= ($page ?? '') === 'dashboard' ? 'active' : '' ?>">
+                Dashboard
+            </a>
+            <a href="/admin/sites" class="<?= ($page ?? '') === 'sites' ? 'active' : '' ?>">
+                Sites
+            </a>
+            <a href="/admin/users" class="<?= ($page ?? '') === 'users' ? 'active' : '' ?>">
+                Users
+            </a>
+            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">
+                Settings
+            </a>
+        </nav>"""
+
+new_nav = """        <nav class="vcms-nav">
+            <a href="/admin/dashboard" class="<?= ($page ?? '') === 'dashboard' ? 'active' : '' ?>">
+                Dashboard
+            </a>
+            <div class="vcms-nav-group">Content</div>
+            <a href="/admin/pages" class="<?= ($page ?? '') === 'pages' ? 'active' : '' ?>">
+                Pages
+            </a>
+            <a href="/admin/blog" class="<?= ($page ?? '') === 'blog' ? 'active' : '' ?>">
+                Blog
+            </a>
+            <a href="/admin/media" class="<?= ($page ?? '') === 'media' ? 'active' : '' ?>">
+                Media
+            </a>
+            <a href="/admin/navigation" class="<?= ($page ?? '') === 'navigation' ? 'active' : '' ?>">
+                Navigation
+            </a>
+            <div class="vcms-nav-group">System</div>
+            <a href="/admin/sites" class="<?= ($page ?? '') === 'sites' ? 'active' : '' ?>">
+                Sites
+            </a>
+            <a href="/admin/users" class="<?= ($page ?? '') === 'users' ? 'active' : '' ?>">
+                Users
+            </a>
+            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">
+                Settings
+            </a>
+        </nav>"""
+
+if 'vcms-nav-group' not in layout:
+    if old_nav in layout:
+        layout = layout.replace(old_nav, new_nav)
+        open(layout_path, 'w').write(layout)
+        print('OK  admin/views/layout.php (sidebar updated)')
+    else:
+        print('ERROR  admin/views/layout.php — nav block not found as expected')
+else:
+    print('OK  admin/views/layout.php (already updated, skipped)')
+
+# ── public/index.php — add module loading + CSRF passthrough ─────────────────
+index_path = base + '/public/index.php'
+index = open(index_path).read()
+
+module_loader = r"""
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Blog\BlogModule;
+use VeloCMS\Modules\Pages\PagesModule;
+
+// Load frontend modules (blog before pages so /blog/* routes take priority)
+$router = $app->make(Router::class);
+$modules = [
+    new BlogModule($app),
+    new PagesModule($app),
+];
+foreach ($modules as $module) {
+    $module->register($router);
+}
+"""
+
+if 'BlogModule' not in index:
+    # Replace the old router line and health-check route with module loader
+    old_index_block = """$router = $app->make(Router::class);
+
+// ── Health-check / welcome route ──────────────────────────────────────────
+// This will be replaced by module routes in Phase 2.
+$router->get('/', static function (Request $request): Response {
+    return (new Response())->json([
+        'cms'     => 'VeloCMS',
+        'version' => '0.1.0',
+        'status'  => 'Phase 1 — Core framework operational',
+        'php'     => PHP_VERSION,
+        'host'    => $request->host(),
+    ]);
+});"""
+    if old_index_block in index:
+        index = index.replace(old_index_block, module_loader.strip())
+    else:
+        # Fallback: just append before admin/routes.php line
+        index = index.replace(
+            "require $app->basePath('admin/routes.php');",
+            module_loader.strip() + "\n\nrequire $app->basePath('admin/routes.php');"
+        )
+    open(index_path, 'w').write(index)
+    print('OK  public/index.php (module loading added)')
+else:
+    print('OK  public/index.php (already has module loading, skipped)')
+
+# ── public/assets/admin/style.css — add missing CSS for Phase 3 ──────────────
+style_path = base + '/public/assets/admin/style.css'
+style = open(style_path).read()
+
+extra_css = """
+/* ── Phase 3 additions ───────────────────────────────────────────── */
+
+.vcms-nav-group {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  padding: 1.25rem 1rem 0.25rem;
+}
+
+.vcms-badge--published  { background: #dcfce7; color: #166534; }
+.vcms-badge--draft      { background: #f1f5f9; color: #475569; }
+.vcms-badge--scheduled  { background: #fef9c3; color: #854d0e; }
+.vcms-badge--archived   { background: #fee2e2; color: #991b1b; }
+
+.vcms-badge             { font-size: 0.75rem; padding: 0.2em 0.6em; border-radius: 9999px; font-weight: 500; }
+
+.vcms-btn--secondary { background: #f1f5f9; color: #334155; }
+.vcms-btn--secondary:hover { background: #e2e8f0; }
+.vcms-btn--danger    { background: #fee2e2; color: #991b1b; }
+.vcms-btn--danger:hover { background: #fecaca; }
+.vcms-btn--sm        { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
+
+.vcms-actions        { display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }
+.vcms-actions form   { margin: 0; }
+
+.vcms-empty          { color: #64748b; padding: 1rem 0; }
+
+.vcms-table-wrap     { overflow-x: auto; }
+
+.vcms-form-row       { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.vcms-form-row .vcms-form-group { flex: 1; min-width: 180px; }
+.vcms-form-group--wide { flex: 2; }
+
+.vcms-slug-wrap      { display: flex; align-items: center; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.vcms-slug-prefix    { background: #f8fafc; padding: 0.55rem 0.75rem; color: #94a3b8; font-size: 0.875rem; white-space: nowrap; border-right: 1px solid #cbd5e1; }
+.vcms-slug-wrap input { border: none; border-radius: 0; flex: 1; }
+.vcms-slug-wrap input:focus { outline: none; box-shadow: none; }
+
+.vcms-editor-wrap    { border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.vcms-editor-toolbar { background: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 0.4rem 0.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.vcms-editor-toolbar button {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #334155;
+  line-height: 1.4;
+}
+.vcms-editor-toolbar button:hover { background: #e2e8f0; }
+.vcms-editor {
+  min-height: 280px;
+  padding: 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  outline: none;
+  overflow-y: auto;
+}
+.vcms-editor h2, .vcms-editor h3 { margin: 1rem 0 0.5rem; }
+.vcms-editor ul, .vcms-editor ol { padding-left: 1.5rem; }
+.vcms-editor blockquote { border-left: 3px solid #cbd5e1; margin: 0; padding-left: 1rem; color: #64748b; }
+.vcms-editor a { color: #2563eb; }
+
+.vcms-required { color: #ef4444; }
+.vcms-alert    { padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+.vcms-alert--error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+.vcms-meta-box { border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 1rem; }
+.vcms-meta-box summary { padding: 0.75rem 1rem; cursor: pointer; font-weight: 500; color: #475569; }
+.vcms-meta-box .vcms-form-group { padding: 0 1rem 1rem; }
+
+.vcms-form-actions { margin-top: 1.5rem; display: flex; gap: 0.75rem; align-items: center; }
+
+.vcms-checkbox-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.vcms-checkbox { display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+
+.vcms-upload-box { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; }
+
+.vcms-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.vcms-media-card { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+.vcms-media-thumb { height: 120px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.vcms-media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vcms-media-thumb--file span { font-size: 1.5rem; font-weight: 700; color: #94a3b8; }
+.vcms-media-info { padding: 0.5rem; }
+.vcms-media-name { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0 0 0.25rem; }
+.vcms-media-meta { font-size: 0.7rem; color: #94a3b8; margin: 0 0 0.5rem; }
+.vcms-media-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+"""
+
+if 'vcms-editor-wrap' not in style:
+    with open(style_path, 'a') as f:
+        f.write(extra_css)
+    print('OK  public/assets/admin/style.css (Phase 3 CSS added)')
+else:
+    print('OK  public/assets/admin/style.css (already has Phase 3 CSS, skipped)')
+
+print('\nPhase 3f done — routes, sidebar, index.php, CSS wired up.')

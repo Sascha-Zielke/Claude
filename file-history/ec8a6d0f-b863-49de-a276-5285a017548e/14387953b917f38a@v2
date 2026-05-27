@@ -1,0 +1,42 @@
+---
+tags: [life-os, übersicht, wissen]
+status: aktiv
+erstellt: 2026-05-26
+---
+
+# Life OS — Wissensbase
+
+Wissen, Dokumentation und Referenzmaterial für alle Bereiche des Life OS.
+
+## 🏢 Säulen
+
+### [[Privat/_index|💼 Privat]]
+Persönliche Lebensbereiche — Finanzen, Gesundheit, Charakter, Hobbys
+
+- [[Privat/Finanzen, Steuern/_index|💰 Finanzen & Steuern]]
+- [[Privat/Gesundheit/_index|❤️ Gesundheit]]
+- [[Privat/Charakter/_index|🎯 Charakter & Entwicklung]]
+- [[Privat/Hobbys/_index|🎮 Hobbys]]
+
+### [[Ausbildung/_index|📚 Ausbildung]]
+Wissen für die Ausbildung zum Binnenschifffahrtskapitän
+
+- [[Ausbildung/Wiki/_index|📖 Wiki]]
+- [[Ausbildung/Berichtsheft/_index|📋 Berichtsheft]]
+- [[Ausbildung/Lernplattform/_index|🎓 Lernplattform]]
+
+### [[veloSolutions/_index|🚀 veloSolutions]]
+Dokumentation und Best Practices der veloSolutions Agentur
+
+- [[veloSolutions/Dashboard/_index|📊 Dashboard-Plattform]]
+- [[veloSolutions/Dashboard/veloCMS/_index|🔧 veloCMS]]
+
+## 🔗 Relation zu Projekten
+
+Diese Struktur spiegelt die **Projektstruktur** in `02 Projekte/Life OS/`.
+- **Bereiche** = Wissen & Dokumentation
+- **Projekte** = Entwicklung & Roadmaps
+
+## 📝 Notizen
+
+Alle Bereiche sind jeweils in den Ordnern eigenständig dokumentiert.

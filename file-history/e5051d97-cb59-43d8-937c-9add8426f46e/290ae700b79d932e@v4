@@ -1,0 +1,57 @@
+# Vault Context
+
+Dieses Vault ist das zweite Gehirn von Sascha Zielke.
+
+## Über mich
+
+Sascha Zielke, Auszubildender Binnenschifffahrtskapitän und Gründer der AI-Web-Agentur veloSolutions. Sascha baut mit Claude Code eine KI-gestützte Webagentur auf und entwickelt gleichzeitig ein integriertes Life OS aus Geschäftsplattform, Lernplattform und persönlichem Dashboard. Ausführliches Profil in [[00 Kontext/Über mich]].
+
+## Vault-Struktur
+
+- **00 Kontext/**: Persönliches Profil (Über mich, Schreibstil, Zielgruppe, Fokus). Zentrale Referenz für alle inhaltlichen Aufgaben. Lies diese Dateien wenn du Content erstellst, Mails schreibst oder Entscheidungen triffst.
+- **01 Inbox/**: Schnelle Gedanken, unverarbeitete Notizen. Alles was noch keinen festen Platz hat landet hier.
+- **02 Projekte/**: Aktive Projekte mit konkretem Ziel und Enddatum. Starten als einzelne .md Datei. Unterordner nur wenn ein Projekt mehrere Dateien braucht.
+- **03 Bereiche/**: Laufende Verantwortungsbereiche ohne Enddatum. Jeder Bereich ist ein eigener Ordner.
+- **04 Ressourcen/**: Referenzmaterial, Wissen, gesammelte Informationen. Jedes Thema ist ein eigener Ordner.
+- **05 Daily Notes/**: Tägliches Logbuch. Format: YYYY-MM-DD.md
+- **06 Archiv/**: Abgeschlossene Projekte und inaktive Bereiche.
+- **07 Anhänge/**: Bilder, PDFs, Medien.
+
+## Vault-Regeln
+
+- [[Wikilinks]] für Verknüpfungen zwischen Notizen
+- Neue Notizen ohne klaren Platz kommen in 01 Inbox/
+- Eine Idee pro Notiz. Daily Notes fassen einen ganzen Tag zusammen.
+- YAML Frontmatter nutzen: tags, status (aktiv/abgeschlossen/pausiert), date
+- Dateinamen in normaler Schreibweise mit Leerzeichen: Beschreibender Name.md
+- Wenn Sascha sagt "merk dir das" → in die passende Kontext-Datei speichern
+- Dateien löschen oder überschreiben → erst nachfragen
+
+## Schreibstil
+
+Modernes Du, locker-professionell. Korrekte Fachbegriffe um Missverständnisse zu vermeiden. Klare, offene Kommunikation — im besten Fall mit NLP-Skills kombiniert. Passende Emojis und Gedankenstriche sind in Ordnung wenn sie sinnvoll zum Kontext passen.
+
+**Charakterzüge in der Schreibweise:**
+- Präzise & faktenbasiert (beschreibt Prozesse genau)
+- Pragmatisch — fokussiert auf das Wesentliche, findet Lösungen statt zu klagen
+- Reflektiv — benennt Herausforderungen offen, aber nicht dramatisch
+- Analytisch — zerlegt Probleme in ihre Komponenten (z.B. Sprachbarriere vs. fehlende Praxis)
+- Lösungsorientiert — nutzt die Ressourcen die da sind (Deutsch, Englisch, Google Gemini als Übersetzer)
+- Hat ein Ventil — wenn es anstrengend wird, lenkt er sich mit veloSolutions ab (nicht Flucht, sondern produktive Ablenkung)
+- Ehrlich über Gefühle — beschönigt nicht ("Ich ärgere mich, ich zweifle"), arbeitet aber an Resilienz
+- Nicht perfektionistisch, sondern realistisch — "work in progress"
+
+**Je nach Modus:**
+- **Lernmodus**: Ausführliche Sätze, einfache und leichtverständliche Erklärungen
+- **Aktionsmodus**: Kurze, genaue Schritt-für-Schritt-Auflistung — mit Kopier-Buttons wenn etwas eingefügt werden soll
+
+## Session-Routinen
+
+### Session-Start
+Prüfe 01 Inbox/ auf neue Notizen. Zeige was drin liegt und biete an die Einträge einzusortieren.
+
+### Kontext-Briefing
+Wenn Sascha fragt "Was war nochmal aktuell?" oder "Wo war ich stehen geblieben?": Lies die letzten 2–3 Daily Notes und die aktiven Projekt-Dateien für ein kurzes Briefing.
+
+### Session-Ende
+Biete an: Daily Note erstellen, neue Erkenntnisse speichern, Inbox aufräumen.

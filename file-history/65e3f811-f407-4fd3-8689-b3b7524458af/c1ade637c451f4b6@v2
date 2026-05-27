@@ -1,0 +1,596 @@
+#!/usr/bin/env python3
+"""Batch 3 — t() wrapping: booking admin views"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    full = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── booking/index ─────────────────────────────────────────────────────────────
+write('admin/views/booking/index.php', r"""<?php
+$flash  = $flash  ?? null;
+$counts = $counts ?? ['pending' => 0, 'confirmed' => 0, 'cancelled' => 0];
+$filters = $filters ?? [];
+?>
+<div class="vcms-section-header">
+    <h3><?= e(t('nav.booking', 'Buchungen')) ?></h3>
+    <a href="/admin/booking/create" class="vcms-btn">+ <?= e(t('booking.new', 'Neue Buchung')) ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div class="vcms-stat-row" style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap">
+    <?php foreach (['pending' => '#f59e0b', 'confirmed' => '#10b981', 'cancelled' => '#6b7280'] as $s => $col): ?>
+    <a href="?status=<?= $s ?>" style="flex:1;min-width:120px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;text-align:center;text-decoration:none;color:inherit">
+        <div style="font-size:1.75rem;font-weight:700;color:<?= $col ?>"><?= (int)($counts[$s] ?? 0) ?></div>
+        <div style="font-size:.8rem;color:#6b7280;text-transform:capitalize"><?= e(t('booking.status.'.$s, $s)) ?></div>
+    </a>
+    <?php endforeach ?>
+</div>
+
+<form method="get" class="vcms-filter-bar" style="display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.5rem;align-items:flex-end">
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block"><?= e(t('label.status', 'Status')) ?></label>
+        <select name="status">
+            <option value=""><?= e(t('booking.all', 'Alle')) ?></option>
+            <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>
+            <option value="<?= $s ?>" <?= ($filters['status'] ?? '') === $s ? 'selected' : '' ?>><?= e(t('booking.status.'.$s, ucfirst($s))) ?></option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block"><?= e(t('booking.resource', 'Ressource')) ?></label>
+        <select name="resource_id">
+            <option value=""><?= e(t('booking.all_resources', 'Alle Ressourcen')) ?></option>
+            <?php foreach ($resources as $r): ?>
+            <option value="<?= $r['id'] ?>" <?= ($filters['resource_id'] ?? '') == $r['id'] ? 'selected' : '' ?>><?= e($r['name']) ?></option>
+            <?php endforeach ?>
+        </select>
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block"><?= e(t('booking.from_date', 'Von')) ?></label>
+        <input type="date" name="date_from" value="<?= e($filters['date_from'] ?? '') ?>">
+    </div>
+    <div>
+        <label style="font-size:.8rem;color:#6b7280;display:block"><?= e(t('booking.to_date', 'Bis')) ?></label>
+        <input type="date" name="date_to" value="<?= e($filters['date_to'] ?? '') ?>">
+    </div>
+    <div>
+        <button type="submit" class="vcms-btn vcms-btn--secondary"><?= e(t('audit.filter', 'Filtern')) ?></button>
+        <a href="/admin/booking" class="vcms-btn vcms-btn--ghost"><?= e(t('audit.clear', 'Zurücksetzen')) ?></a>
+    </div>
+</form>
+
+<?php if (empty($bookings)): ?>
+    <p class="vcms-empty"><?= e(t('booking.empty', 'Keine Buchungen gefunden.')) ?></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th><?= e(t('booking.reference', 'Referenz')) ?></th>
+            <th><?= e(t('booking.resource', 'Ressource')) ?></th>
+            <th><?= e(t('booking.customer', 'Kunde')) ?></th>
+            <th><?= e(t('booking.date', 'Datum')) ?></th>
+            <th><?= e(t('booking.time', 'Uhrzeit')) ?></th>
+            <th><?= e(t('booking.total', 'Gesamt')) ?></th>
+            <th><?= e(t('label.status', 'Status')) ?></th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($bookings as $b): ?>
+        <tr>
+            <td><code><?= e($b['reference']) ?></code></td>
+            <td><?= e($b['resource_name'] ?? '—') ?></td>
+            <td>
+                <strong><?= e($b['customer_name']) ?></strong><br>
+                <small><?= e($b['customer_email']) ?></small>
+            </td>
+            <td><?= e($b['booking_date']) ?></td>
+            <td><?= e(substr($b['start_time'], 0, 5)) ?> – <?= e(substr($b['end_time'], 0, 5)) ?></td>
+            <td>€<?= number_format((float)$b['total_amount'], 2) ?></td>
+            <td>
+                <span class="vcms-badge vcms-badge--<?= e($b['booking_status']) ?>">
+                    <?= e(t('booking.status.'.$b['booking_status'], ucfirst($b['booking_status']))) ?>
+                </span>
+            </td>
+            <td class="vcms-actions">
+                <a href="/admin/booking/<?= (int)$b['id'] ?>" class="vcms-btn vcms-btn--sm"><?= e(t('btn.view', 'Ansehen')) ?></a>
+            </td>
+        </tr>
+    <?php endforeach ?>
+    </tbody>
+</table>
+</div>
+<?php endif ?>
+
+<div style="margin-top:2rem;display:flex;gap:1rem">
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary"><?= e(t('booking.manage_resources', 'Ressourcen verwalten')) ?></a>
+    <a href="/admin/booking/settings"  class="vcms-btn vcms-btn--secondary"><?= e(t('booking.settings', 'Buchungseinstellungen')) ?></a>
+</div>
+""")
+
+# ── booking/create ────────────────────────────────────────────────────────────
+write('admin/views/booking/create.php', r"""<?php $error = $error ?? null; ?>
+
+<div class="vcms-section-header">
+    <h3><?= e(t('booking.new', 'Neue Buchung')) ?></h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← <?= e(t('nav.booking', 'Buchungen')) ?></a>
+</div>
+
+<?php if ($error): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif ?>
+
+<div class="vcms-card">
+<form method="post" action="/admin/booking/create" class="vcms-form" id="manual-booking-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="b-resource"><?= e(t('booking.resource', 'Ressource')) ?> <span class="vcms-required">*</span></label>
+            <select id="b-resource" name="resource_id" required onchange="loadResourceOptions(this.value)">
+                <option value=""><?= e(t('booking.select_resource', '— Ressource wählen —')) ?></option>
+                <?php foreach ($resources as $r): ?>
+                <option value="<?= $r['id'] ?>"><?= e($r['name']) ?></option>
+                <?php endforeach ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-pricing"><?= e(t('booking.pricing_type', 'Preistyp')) ?> <span class="vcms-required">*</span></label>
+            <select id="b-pricing" name="pricing_type" onchange="togglePricingFields()">
+                <option value="hourly"><?= e(t('booking.hourly', 'Stündlich')) ?></option>
+                <option value="daily"><?= e(t('booking.daily', 'Täglich (Übernachtung / mehrtägig)')) ?></option>
+                <option value="package"><?= e(t('booking.package', 'Paket')) ?></option>
+                <option value="product"><?= e(t('booking.service', 'Leistung')) ?></option>
+            </select>
+        </div>
+    </div>
+
+    <div id="pkg-field" style="display:none" class="vcms-form-group">
+        <label><?= e(t('booking.package', 'Paket')) ?></label>
+        <select name="package_id" id="b-package">
+            <option value=""><?= e(t('booking.select_resource_first', '— zuerst Ressource wählen —')) ?></option>
+        </select>
+    </div>
+
+    <div id="prod-field" style="display:none" class="vcms-form-group">
+        <label><?= e(t('booking.service', 'Leistung')) ?></label>
+        <select name="product_id" id="b-product">
+            <option value=""><?= e(t('booking.select_resource_first', '— zuerst Ressource wählen —')) ?></option>
+        </select>
+    </div>
+
+    <div class="vcms-form-row" id="hourly-date-row">
+        <div class="vcms-form-group">
+            <label for="b-date"><?= e(t('booking.date', 'Datum')) ?> <span class="vcms-required">*</span></label>
+            <input type="date" id="b-date" name="booking_date" min="<?= date('Y-m-d') ?>">
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-start"><?= e(t('booking.start_time', 'Startzeit')) ?> <span class="vcms-required">*</span></label>
+            <select id="b-start" name="start_time">
+                <option value=""><?= e(t('booking.select_time', '— wählen —')) ?></option>
+                <?php for ($__h = 0; $__h < 24; $__h++): for ($__m = 0; $__m < 60; $__m += 15): $__t = sprintf('%02d:%02d', $__h, $__m); ?>
+                <option value="<?= $__t ?>"><?= $__t ?></option>
+                <?php endfor; endfor; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-end"><?= e(t('booking.end_time', 'Endzeit')) ?> <span class="vcms-required">*</span></label>
+            <select id="b-end" name="end_time">
+                <option value=""><?= e(t('booking.select_time', '— wählen —')) ?></option>
+                <?php for ($__h = 0; $__h < 24; $__h++): for ($__m = 0; $__m < 60; $__m += 15): $__t = sprintf('%02d:%02d', $__h, $__m); ?>
+                <option value="<?= $__t ?>"><?= $__t ?></option>
+                <?php endfor; endfor; ?>
+            </select>
+        </div>
+    </div>
+
+    <p id="b-time-err" style="display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0 .5rem">
+        <?= e(t('booking.end_after_start', 'Endzeit muss nach Startzeit liegen.')) ?>
+    </p>
+
+    <div id="daily-date-row" style="display:none">
+        <div class="vcms-form-row">
+            <div class="vcms-form-group">
+                <label for="b-checkin"><?= e(t('booking.checkin', 'Anreisedatum')) ?> <span class="vcms-required">*</span></label>
+                <input type="date" id="b-checkin" name="checkin_date" min="<?= date('Y-m-d') ?>">
+            </div>
+            <div class="vcms-form-group">
+                <label for="b-checkout"><?= e(t('booking.checkout', 'Abreisedatum')) ?> <span class="vcms-required">*</span></label>
+                <input type="date" id="b-checkout" name="checkout_date">
+            </div>
+            <div class="vcms-form-group">
+                <label><?= e(t('booking.duration', 'Dauer')) ?></label>
+                <p id="b-daily-summary" style="margin:.6rem 0;font-size:.9rem;color:#374151"><?= e(t('booking.select_dates', 'Daten auswählen')) ?></p>
+            </div>
+        </div>
+    </div>
+    <p id="b-date-err" style="display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0 .5rem">
+        <?= e(t('booking.checkout_after_checkin', 'Abreisedatum muss nach Anreisedatum liegen.')) ?>
+    </p>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="b-name"><?= e(t('booking.customer_name', 'Kundenname')) ?> <span class="vcms-required">*</span></label>
+            <input type="text" id="b-name" name="customer_name" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-email"><?= e(t('booking.customer_email', 'Kunden-E-Mail')) ?> <span class="vcms-required">*</span></label>
+            <input type="email" id="b-email" name="customer_email" required>
+        </div>
+        <div class="vcms-form-group">
+            <label for="b-phone"><?= e(t('booking.phone', 'Telefon')) ?></label>
+            <input type="tel" id="b-phone" name="customer_phone">
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label for="b-notes"><?= e(t('booking.notes', 'Anmerkungen')) ?></label>
+        <textarea id="b-notes" name="notes" rows="3"></textarea>
+    </div>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn"><?= e(t('booking.create', 'Buchung erstellen')) ?></button>
+        <a href="/admin/booking" class="vcms-btn vcms-btn--secondary"><?= e(t('btn.cancel', 'Abbrechen')) ?></a>
+    </div>
+</form>
+</div>
+
+<script>
+const resourceData = <?= json_encode(array_column($resources, null, 'id')) ?>;
+
+function togglePricingFields() {
+    const type = document.getElementById('b-pricing').value;
+    document.getElementById('pkg-field').style.display       = type === 'package' ? '' : 'none';
+    document.getElementById('prod-field').style.display      = type === 'product' ? '' : 'none';
+    document.getElementById('hourly-date-row').style.display  = type === 'daily'   ? 'none' : '';
+    document.getElementById('daily-date-row').style.display   = type === 'daily'   ? '' : 'none';
+    document.getElementById('b-time-err').style.display = 'none';
+    const de = document.getElementById('b-date-err');
+    if (de) de.style.display = 'none';
+    const btn = document.querySelector('#manual-booking-form button[type=submit]');
+    if (btn) btn.disabled = false;
+}
+
+function validateHourlyTime() {
+    const start = document.getElementById('b-start').value;
+    const end   = document.getElementById('b-end').value;
+    const err   = document.getElementById('b-time-err');
+    const btn   = document.querySelector('#manual-booking-form button[type=submit]');
+    const bad   = start && end && end <= start;
+    err.style.display = bad ? '' : 'none';
+    if (btn) btn.disabled = !!bad;
+}
+
+document.getElementById('b-start').addEventListener('change', validateHourlyTime);
+document.getElementById('b-end').addEventListener('change', validateHourlyTime);
+
+function updateDailySummary() {
+    const checkin  = document.getElementById('b-checkin').value;
+    const checkout = document.getElementById('b-checkout').value;
+    const summary  = document.getElementById('b-daily-summary');
+    if (!checkin || !checkout) { summary.textContent = <?= json_encode(t('booking.select_dates', 'Daten auswählen')) ?>; return; }
+    const nights = Math.round((new Date(checkout) - new Date(checkin)) / 86400000);
+    if (nights < 1) { summary.textContent = <?= json_encode(t('booking.checkout_after_checkin', 'Abreise muss nach Anreise liegen')) ?>; return; }
+    const res = resourceData[document.getElementById('b-resource').value];
+    const rate = res && res.daily_rate ? parseFloat(res.daily_rate) : 0;
+    const total = (rate * nights).toFixed(2);
+    summary.textContent = nights + ' ' + (nights !== 1 ? <?= json_encode(t('booking.nights','Nächte')) ?> : <?= json_encode(t('booking.night','Nacht')) ?>) + (rate ? ' — Total: €' + total : '');
+    document.getElementById('b-checkout').min = new Date(new Date(checkin).getTime() + 86400000).toISOString().slice(0,10);
+}
+
+function validateDailyDates() {
+    const checkin  = document.getElementById('b-checkin').value;
+    const checkout = document.getElementById('b-checkout').value;
+    const err = document.getElementById('b-date-err');
+    const btn = document.querySelector('#manual-booking-form button[type=submit]');
+    if (checkin) {
+        document.getElementById('b-checkout').min =
+            new Date(new Date(checkin).getTime() + 86400000).toISOString().slice(0,10);
+    }
+    const bad = checkin && checkout && checkout <= checkin;
+    if (err) err.style.display = bad ? '' : 'none';
+    if (btn) btn.disabled = !!bad;
+}
+
+document.getElementById('b-checkin').addEventListener('change', function() { validateDailyDates(); updateDailySummary(); });
+document.getElementById('b-checkout').addEventListener('change', function() { validateDailyDates(); updateDailySummary(); });
+
+function loadResourceOptions(resourceId) {
+    const pkgSel  = document.getElementById('b-package');
+    const prodSel = document.getElementById('b-product');
+    pkgSel.innerHTML  = '<option value=""><?= e(t('booking.none', '— keine —')) ?></option>';
+    prodSel.innerHTML = '<option value=""><?= e(t('booking.none', '— keine —')) ?></option>';
+    if (!resourceId) return;
+    fetch(`/booking-admin-data/resource/${resourceId}/options`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            if (!data) return;
+            (data.packages || []).forEach(p => {
+                pkgSel.innerHTML  += `<option value="${p.id}">${p.name} — €${p.price} (${p.duration_mins} min)</option>`;
+            });
+            (data.products || []).forEach(p => {
+                prodSel.innerHTML += `<option value="${p.id}">${p.name} — €${p.price}</option>`;
+            });
+        });
+}
+</script>
+""")
+
+# ── booking/detail ────────────────────────────────────────────────────────────
+write('admin/views/booking/detail.php', r"""<?php
+$flash   = $flash ?? null;
+$booking = $booking ?? [];
+$statusColors = ['pending' => '#f59e0b', 'confirmed' => '#10b981', 'cancelled' => '#6b7280'];
+?>
+<div class="vcms-section-header">
+    <h3><?= e(t('nav.booking', 'Buchung')) ?> <?= e($booking['reference'] ?? '') ?></h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">← <?= e(t('booking.all', 'Alle Buchungen')) ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<div style="display:grid;grid-template-columns:1fr 320px;gap:1.5rem;align-items:start" class="vcms-detail-grid">
+
+    <div>
+        <div class="vcms-card">
+            <h4 style="margin:0 0 1rem"><?= e(t('booking.details_heading', 'Buchungsdetails')) ?></h4>
+            <table class="vcms-table vcms-table--form">
+                <tr><th><?= e(t('booking.reference', 'Referenz')) ?></th><td><code><?= e($booking['reference'] ?? '') ?></code></td></tr>
+                <tr><th><?= e(t('booking.resource', 'Ressource')) ?></th><td><?= e($booking['resource_name'] ?? '—') ?></td></tr>
+                <tr>
+                    <th><?= ($booking['pricing_type'] ?? '') === 'daily' ? e(t('booking.dates', 'Zeitraum')) : e(t('booking.date', 'Datum')) ?></th>
+                    <td><?php if (($booking['pricing_type'] ?? '') === 'daily' && !empty($booking['end_date'])): ?>
+                        <?= date('d M Y', strtotime($booking['booking_date'])) ?> &rarr; <?= date('d M Y', strtotime($booking['end_date'])) ?>
+                    <?php else: ?><?= e($booking['booking_date'] ?? '') ?><?php endif ?></td>
+                </tr>
+                <?php if (($booking['pricing_type'] ?? '') !== 'daily'): ?>
+                <tr><th><?= e(t('booking.time', 'Uhrzeit')) ?></th><td><?= e(substr($booking['start_time'] ?? '', 0, 5)) ?> – <?= e(substr($booking['end_time'] ?? '', 0, 5)) ?></td></tr>
+                <?php endif ?>
+                <tr>
+                    <th><?= e(t('booking.duration', 'Dauer')) ?></th>
+                    <td><?php if (($booking['pricing_type'] ?? '') === 'daily' && !empty($booking['nights'])): ?>
+                        <?= (int)$booking['nights'] ?> <?= (int)$booking['nights'] === 1 ? e(t('booking.night','Nacht')) : e(t('booking.nights','Nächte')) ?>
+                    <?php else: ?><?= (int)($booking['duration_mins'] ?? 0) ?> <?= e(t('booking.minutes', 'Min.')) ?><?php endif ?></td>
+                </tr>
+                <tr><th><?= e(t('booking.pricing_type', 'Preistyp')) ?></th><td><?= ucfirst(e($booking['pricing_type'] ?? '')) ?></td></tr>
+                <?php if ($booking['package_name'] ?? null): ?>
+                <tr><th><?= e(t('booking.package', 'Paket')) ?></th><td><?= e($booking['package_name']) ?> (<?= (int)$booking['package_duration'] ?> min)</td></tr>
+                <?php endif ?>
+                <?php if ($booking['product_name'] ?? null): ?>
+                <tr><th><?= e(t('booking.service', 'Leistung')) ?></th><td><?= e($booking['product_name']) ?></td></tr>
+                <?php endif ?>
+                <tr><th><?= e(t('booking.subtotal', 'Zwischensumme')) ?></th><td>€<?= number_format((float)($booking['subtotal'] ?? 0), 2) ?></td></tr>
+                <?php if ((float)($booking['deposit_amount'] ?? 0) > 0): ?>
+                <tr><th><?= e(t('booking.deposit', 'Anzahlung')) ?></th><td>€<?= number_format((float)$booking['deposit_amount'], 2) ?></td></tr>
+                <?php endif ?>
+                <tr><th><?= e(t('booking.total', 'Gesamt')) ?></th><td><strong>€<?= number_format((float)($booking['total_amount'] ?? 0), 2) ?></strong></td></tr>
+                <tr><th><?= e(t('booking.payment', 'Zahlung')) ?></th><td><?= ucfirst(str_replace('_', ' ', e($booking['payment_status'] ?? 'none'))) ?></td></tr>
+                <tr><th><?= e(t('booking.booked_at', 'Gebucht am')) ?></th><td><?= e($booking['created_at'] ?? '') ?></td></tr>
+            </table>
+        </div>
+
+        <div class="vcms-card" style="margin-top:1rem">
+            <h4 style="margin:0 0 1rem"><?= e(t('booking.customer', 'Kunde')) ?></h4>
+            <table class="vcms-table vcms-table--form">
+                <tr><th><?= e(t('label.name', 'Name')) ?></th><td><?= e($booking['customer_name'] ?? '') ?></td></tr>
+                <tr><th><?= e(t('label.email', 'E-Mail')) ?></th><td><a href="mailto:<?= e($booking['customer_email'] ?? '') ?>"><?= e($booking['customer_email'] ?? '') ?></a></td></tr>
+                <tr><th><?= e(t('booking.phone', 'Telefon')) ?></th><td><?= e($booking['customer_phone'] ?? '—') ?></td></tr>
+                <?php if ($booking['notes'] ?? ''): ?>
+                <tr><th><?= e(t('booking.notes', 'Anmerkungen')) ?></th><td><?= e($booking['notes']) ?></td></tr>
+                <?php endif ?>
+            </table>
+        </div>
+    </div>
+
+    <div>
+        <div class="vcms-card" style="margin-bottom:1rem">
+            <h4 style="margin:0 0 1rem"><?= e(t('label.actions', 'Aktionen')) ?></h4>
+            <a href="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/edit"
+               class="vcms-btn" style="width:100%;display:block;text-align:center;box-sizing:border-box;margin-bottom:.5rem">
+                <?= e(t('booking.edit', 'Buchung bearbeiten')) ?>
+            </a>
+            <?php if (($booking['booking_status'] ?? '') !== 'cancelled'): ?>
+            <form method="post" action="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/cancel"
+                  onsubmit="return confirm('<?= e(t('booking.confirm_cancel', 'Buchung stornieren und Kunden per E-Mail benachrichtigen?')) ?>')">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                <button type="submit" class="vcms-btn vcms-btn--danger" style="width:100%">
+                    <?= e(t('booking.cancel', 'Buchung stornieren')) ?>
+                </button>
+            </form>
+            <?php else: ?>
+            <p style="text-align:center;color:#6b7280;font-size:.875rem;margin:0"><?= e(t('booking.already_cancelled', 'Buchung bereits storniert')) ?></p>
+            <?php endif ?>
+        </div>
+        <div class="vcms-card">
+            <h4 style="margin:0 0 1rem"><?= e(t('label.status', 'Status')) ?></h4>
+            <div style="text-align:center;padding:.5rem 0 1rem">
+                <span style="display:inline-block;padding:.4rem 1.2rem;border-radius:999px;background:<?= $statusColors[$booking['booking_status'] ?? 'pending'] ?? '#ccc' ?>;color:#fff;font-weight:600;font-size:.9rem">
+                    <?= e(t('booking.status.'.($booking['booking_status'] ?? 'pending'), ucfirst($booking['booking_status'] ?? 'pending'))) ?>
+                </span>
+            </div>
+
+            <form method="post" action="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/status">
+                <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+                <div class="vcms-form-group">
+                    <label><?= e(t('booking.change_status', 'Status ändern')) ?></label>
+                    <select name="booking_status">
+                        <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>
+                        <option value="<?= $s ?>" <?= ($booking['booking_status'] ?? '') === $s ? 'selected' : '' ?>><?= e(t('booking.status.'.$s, ucfirst($s))) ?></option>
+                        <?php endforeach ?>
+                    </select>
+                </div>
+
+                <div class="vcms-form-group">
+                    <label><?= e(t('booking.admin_notes', 'Admin-Notizen')) ?></label>
+                    <textarea name="admin_notes" rows="4" placeholder="<?= e(t('booking.internal_notes', 'Interne Notizen…')) ?>"><?= e($booking['admin_notes'] ?? '') ?></textarea>
+                </div>
+
+                <button type="submit" class="vcms-btn" style="width:100%"><?= e(t('booking.update_status', 'Status aktualisieren')) ?></button>
+            </form>
+        </div>
+
+        <?php if ($booking['ip_address'] ?? null): ?>
+        <div class="vcms-card" style="margin-top:1rem">
+            <small style="color:#6b7280">IP: <?= e($booking['ip_address']) ?></small>
+        </div>
+        <?php endif ?>
+    </div>
+
+</div>
+
+<style>
+@media (max-width:767px) {
+    .vcms-detail-grid { grid-template-columns: 1fr !important; }
+}
+</style>
+""")
+
+# ── booking/edit ──────────────────────────────────────────────────────────────
+write('admin/views/booking/edit.php', r"""<?php
+$booking   = $booking   ?? [];
+$resources = $resources ?? [];
+$error     = $error     ?? null;
+$isDaily   = ($booking['pricing_type'] ?? '') === 'daily';
+?>
+<div class="vcms-section-header">
+    <h3><?= e(t('booking.edit', 'Buchung bearbeiten')) ?> <?= e($booking['reference'] ?? '') ?></h3>
+    <a href="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>" class="vcms-btn vcms-btn--secondary">&larr; <?= e(t('btn.back', 'Zurück')) ?></a>
+</div>
+
+<?php if ($error): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif ?>
+
+<div class="vcms-card">
+<form method="post" action="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>/edit" class="vcms-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.resource', 'Ressource')) ?></label>
+            <select name="resource_id">
+                <?php foreach ($resources as $r): ?>
+                <option value="<?= (int)$r['id'] ?>"
+                        <?= (int)$r['id'] === (int)($booking['resource_id'] ?? 0) ? 'selected' : '' ?>>
+                    <?= e($r['name']) ?>
+                </option>
+                <?php endforeach ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label><?= e(t('label.status', 'Status')) ?></label>
+            <select name="booking_status">
+                <?php foreach (['pending', 'confirmed', 'cancelled'] as $s): ?>
+                <option value="<?= $s ?>" <?= ($booking['booking_status'] ?? '') === $s ? 'selected' : '' ?>><?= e(t('booking.status.'.$s, ucfirst($s))) ?></option>
+                <?php endforeach ?>
+            </select>
+        </div>
+    </div>
+
+    <?php if ($isDaily): ?>
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.checkin', 'Anreisedatum')) ?></label>
+            <input type="date" name="checkin_date" value="<?= e($booking['booking_date'] ?? '') ?>">
+        </div>
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.checkout', 'Abreisedatum')) ?></label>
+            <input type="date" id="edit-checkout" name="checkout_date" value="<?= e($booking['end_date'] ?? '') ?>">
+        </div>
+    </div>
+    <p id="edit-date-err" style="display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0">
+        <?= e(t('booking.checkout_after_checkin', 'Abreisedatum muss nach Anreisedatum liegen.')) ?>
+    </p>
+    <script>
+    (function(){
+        function validateEditDaily() {
+            var ci  = document.querySelector('[name=checkin_date]').value;
+            var co  = document.getElementById('edit-checkout').value;
+            var err = document.getElementById('edit-date-err');
+            var btn = document.querySelector('.vcms-form button[type=submit]');
+            var bad = ci && co && co <= ci;
+            if (err) err.style.display = bad ? '' : 'none';
+            if (btn) btn.disabled = !!bad;
+        }
+        document.querySelector('[name=checkin_date]').addEventListener('change', function() {
+            if (this.value) {
+                document.getElementById('edit-checkout').min =
+                    new Date(new Date(this.value).getTime() + 86400000).toISOString().slice(0,10);
+            }
+            validateEditDaily();
+        });
+        document.getElementById('edit-checkout').addEventListener('change', validateEditDaily);
+    }());
+    </script>
+    <?php else: ?>
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.date', 'Datum')) ?></label>
+            <input type="date" name="booking_date" value="<?= e($booking['booking_date'] ?? '') ?>">
+        </div>
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.start_time', 'Startzeit')) ?></label>
+            <select id="edit-start" name="start_time">
+                <option value=""><?= e(t('booking.select_time', '— wählen —')) ?></option>
+                <?php $__ssel = substr($booking['start_time'] ?? '', 0, 5); for ($__h = 0; $__h < 24; $__h++): for ($__m = 0; $__m < 60; $__m += 15): $__t = sprintf('%02d:%02d', $__h, $__m); ?>
+                <option value="<?= $__t ?>" <?= $__ssel === $__t ? 'selected' : '' ?>><?= $__t ?></option>
+                <?php endfor; endfor; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label><?= e(t('booking.end_time', 'Endzeit')) ?></label>
+            <select id="edit-end" name="end_time">
+                <option value=""><?= e(t('booking.select_time', '— wählen —')) ?></option>
+                <?php $__esel = substr($booking['end_time'] ?? '', 0, 5); for ($__h = 0; $__h < 24; $__h++): for ($__m = 0; $__m < 60; $__m += 15): $__t = sprintf('%02d:%02d', $__h, $__m); ?>
+                <option value="<?= $__t ?>" <?= $__esel === $__t ? 'selected' : '' ?>><?= $__t ?></option>
+                <?php endfor; endfor; ?>
+            </select>
+        </div>
+    </div>
+    <p id="edit-time-err" style="display:none;color:#dc2626;font-size:.875rem;margin:.25rem 0">
+        <?= e(t('booking.end_after_start', 'Endzeit muss nach Startzeit liegen.')) ?>
+    </p>
+    <script>
+    (function(){
+        var s = document.getElementById('edit-start');
+        var e = document.getElementById('edit-end');
+        var err = document.getElementById('edit-time-err');
+        var btn = document.querySelector('.vcms-form button[type=submit]');
+        function check() {
+            var bad = s.value && e.value && e.value <= s.value;
+            err.style.display = bad ? '' : 'none';
+            if (btn) btn.disabled = !!bad;
+        }
+        s.addEventListener('change', check);
+        e.addEventListener('change', check);
+    }());
+    </script>
+    <?php endif ?>
+
+    <div class="vcms-form-group">
+        <label><?= e(t('booking.admin_notes', 'Admin-Notizen')) ?></label>
+        <textarea name="admin_notes" rows="3"><?= e($booking['admin_notes'] ?? '') ?></textarea>
+    </div>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn"><?= e(t('btn.save', 'Speichern')) ?></button>
+        <a href="/admin/booking/<?= (int)($booking['id'] ?? 0) ?>" class="vcms-btn vcms-btn--secondary"><?= e(t('btn.cancel', 'Abbrechen')) ?></a>
+    </div>
+</form>
+</div>
+""")
+
+print('\nBatch 3 done — booking admin views written.')

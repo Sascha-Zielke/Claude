@@ -1,0 +1,28 @@
+path = '/var/www/velocms/admin/views/settings/index.php'
+content = open(path).read()
+
+old = (
+    '                        <label class="vcms-toggle">\n'
+    '                            <input type="hidden"   name="bktype_daily" value="0">\n'
+    '                            <input type="checkbox" name="bktype_daily" value="1"'
+)
+new = (
+    '                        <p style="font-size:.8rem;color:#b45309;background:#fef3c7;'
+    'border:1px solid #fcd34d;border-radius:.375rem;padding:.4rem .75rem;'
+    'margin:.25rem 0 .25rem 3.6rem">\n'
+    '                            Daily and Hourly booking cannot be active at the same time.\n'
+    '                        </p>\n'
+    '                        <label class="vcms-toggle">\n'
+    '                            <input type="hidden"   name="bktype_daily" value="0">\n'
+    '                            <input type="checkbox" name="bktype_daily" value="1"'
+)
+
+if 'cannot be active' not in content:
+    if old in content:
+        content = content.replace(old, new)
+        open(path, 'w').write(content)
+        print('OK  notice added')
+    else:
+        print('ERR pattern not found')
+else:
+    print('SKIP already present')

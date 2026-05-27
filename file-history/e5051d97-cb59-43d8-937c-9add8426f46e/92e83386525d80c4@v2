@@ -1,0 +1,382 @@
+---
+tags: [veloSolutions, velocms, architektur, coding-standards]
+status: aktiv
+---
+
+# veloCMS — Architecture Guard
+
+**Ziel:** Claude Code muss folgende bewährte Muster WIEDERHOLEN, nicht experimentieren.
+
+Dieses Dokument ist die **Wahrheit** für veloCMS-Entwicklung. Abweichungen führen zu Crashes.
+
+---
+
+## ✅ BEWÄHRTE PATTERN (Diese funktionieren)
+
+### Module-Struktur
+
+Jedes Modul folgt diesem Aufbau:
+
+```
+velocms/modules/[ModuleName]/
+├── [ModuleName]Module.php         (Modul-Bootstrapper)
+├── Controllers/
+│   ├── Admin[ModuleName]Controller.php
+│   └── [ModuleName]Controller.php   (Frontend, falls benötigt)
+├── Models/
+│   └── [ModuleName]Model.php
+├── migrations/
+│   ├── 001_create_[table]_table.php
+│   └── 002_...php
+└── views/
+    ├── admin/
+    │   ├── index.php
+    │   └── edit.php
+    └── frontend/
+        └── index.php
+```
+
+### Module-Klasse (Base Pattern)
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace VeloCMS\Modules\[ModuleName];
+
+use VeloCMS\Core\Module;
+
+class [ModuleName]Module extends Module
+{
+    public string $name    = '[ModuleName]';
+    public string $version = '1.0.0';
+
+    public function boot(): void
+    {
+        // Admin routes
+        $this->router->get('/admin/[slug]',              '[ModuleName]\Controllers\Admin[ModuleName]Controller@index');
+        $this->router->get('/admin/[slug]/new',          '[ModuleName]\Controllers\Admin[ModuleName]Controller@new');
+        $this->router->post('/admin/[slug]/save',        '[ModuleName]\Controllers\Admin[ModuleName]Controller@save');
+        $this->router->get('/admin/[slug]/edit/[i:id]',  '[ModuleName]\Controllers\Admin[ModuleName]Controller@edit');
+        $this->router->post('/admin/[slug]/update/[i:id]','[ModuleName]\Controllers\Admin[ModuleName]Controller@update');
+        $this->router->post('/admin/[slug]/delete/[i:id]','[ModuleName]\Controllers\Admin[ModuleName]Controller@delete');
+
+        // Frontend routes (wenn benötigt)
+        $this->router->get('/[slug]',          '[ModuleName]\Controllers\[ModuleName]Controller@index');
+        $this->router->get('/[slug]/[a:slug]', '[ModuleName]\Controllers\[ModuleName]Controller@show');
+
+        // Admin menu
+        $this->admin->addMenuItem([
+            'label'    => t('nav.[slug]'),
+            'url'      => '/admin/[slug]',
+            'icon'     => '[icon]',
+            'position' => 30,
+        ]);
+    }
+
+    public function install(): void
+    {
+        $this->runMigrations(__DIR__ . '/migrations');
+    }
+}
+```
+
+**REGEL:** Alle Module folgen diesem Pattern. Keine Abweichungen.
+
+### Controller-Klasse (Base Pattern)
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace VeloCMS\Modules\[ModuleName]\Controllers;
+
+use VeloCMS\Core\Auth;
+use VeloCMS\Core\Controller;
+use VeloCMS\Modules\[ModuleName]\Models\[ModuleName]Model;
+
+class Admin[ModuleName]Controller extends Controller
+{
+    private [ModuleName]Model $model;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->requireAuth();
+        $this->model = new [ModuleName]Model();
+    }
+
+    public function index(): void
+    {
+        $this->view->extend('admin');
+        $this->render('admin/index', ['items' => $this->model->getAll()]);
+    }
+
+    public function new(): void
+    {
+        $this->view->extend('admin');
+        $this->render('admin/edit', ['item' => null]);
+    }
+
+    public function save(): void
+    {
+        Auth::verifyCsrf();
+        
+        // Validation
+        if (empty($this->input('title', ''))) {
+            $this->redirectWithError('/admin/[slug]/new', t('error.title_required'));
+        }
+
+        $id = $this->model->insert($this->collectData());
+        $this->redirectWithSuccess('/admin/[slug]/edit/' . $id, t('success.saved'));
+    }
+
+    public function edit(string $id): void
+    {
+        $item = $this->model->getById((int) $id);
+        if (!$item) {
+            $this->notFound();
+        }
+        $this->view->extend('admin');
+        $this->render('admin/edit', ['item' => $item]);
+    }
+
+    public function update(string $id): void
+    {
+        Auth::verifyCsrf();
+        $this->model->update((int) $id, $this->collectData());
+        $this->redirectWithSuccess('/admin/[slug]/edit/' . $id, t('success.updated'));
+    }
+
+    public function delete(string $id): void
+    {
+        Auth::verifyCsrf();
+        $this->model->delete((int) $id);
+        $this->redirectWithSuccess('/admin/[slug]', t('success.deleted'));
+    }
+}
+```
+
+**REGEL:** CSRF-Verifikation für alle POST-Requests. Immer Auth-Check.
+
+### Model-Klasse (Base Pattern)
+
+```php
+<?php
+declare(strict_types=1);
+
+namespace VeloCMS\Modules\[ModuleName]\Models;
+
+use VeloCMS\Core\Model;
+
+class [ModuleName]Model extends Model
+{
+    protected string $table = 'velocms_[table_name]';
+
+    public function getAll(int $limit = 20, int $offset = 0): array
+    {
+        $stmt = $this->db->prepare(
+            "SELECT * FROM {$this->table} ORDER BY created_at DESC LIMIT :l OFFSET :o"
+        );
+        $stmt->bindValue(':l', $limit, \PDO::PARAM_INT);
+        $stmt->bindValue(':o', $offset, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function getById(int $id): ?array
+    {
+        $stmt = $this->db->prepare("SELECT * FROM {$this->table} WHERE id = :id LIMIT 1");
+        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetch(\PDO::FETCH_ASSOC) ?: null;
+    }
+
+    public function insert(array $data): int
+    {
+        $columns = implode(', ', array_keys($data));
+        $placeholders = ':' . implode(', :', array_keys($data));
+        
+        $stmt = $this->db->prepare(
+            "INSERT INTO {$this->table} ({$columns}) VALUES ({$placeholders})"
+        );
+        
+        foreach ($data as $key => $value) {
+            $stmt->bindValue(':' . $key, $value);
+        }
+        
+        $stmt->execute();
+        return (int) $this->db->lastInsertId();
+    }
+
+    public function update(int $id, array $data): void
+    {
+        $set = implode(', ', array_map(fn($k) => "{$k} = :{$k}", array_keys($data)));
+        $stmt = $this->db->prepare("UPDATE {$this->table} SET {$set} WHERE id = :id");
+        
+        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+        foreach ($data as $key => $value) {
+            $stmt->bindValue(':' . $key, $value);
+        }
+        
+        $stmt->execute();
+    }
+
+    public function delete(int $id): void
+    {
+        $stmt = $this->db->prepare("DELETE FROM {$this->table} WHERE id = :id");
+        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+        $stmt->execute();
+    }
+}
+```
+
+**REGEL:** Prepared statements IMMER. Keine direkten Queries.
+
+### Migrations (Base Pattern)
+
+```php
+<?php
+declare(strict_types=1);
+
+class CreateBlogPostsTable
+{
+    public function __construct(private \PDO $db) {}
+
+    public function up(): void
+    {
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS velocms_blog_posts (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                title VARCHAR(255) NOT NULL,
+                slug VARCHAR(255) UNIQUE NOT NULL,
+                content LONGTEXT,
+                status ENUM('draft', 'published') DEFAULT 'draft',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP NULL
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    }
+}
+```
+
+**REGEL:** Migrations sind idempotent (IF NOT EXISTS). Keine DROP TABLEs ohne Good Reason.
+
+---
+
+## ❌ ANTI-PATTERNS (Diese verursachen Crashes)
+
+### 1. **Direkter Datenbankzugriff außerhalb Models**
+**FALSCH:**
+```php
+$result = $this->db->query("SELECT * FROM table WHERE id = " . $_GET['id']);
+```
+**RICHTIG:**
+```php
+$item = $this->model->getById((int) $_GET['id']);
+```
+
+### 2. **Controller-Logik, die mehrere Module berührt**
+**FALSCH:** Translation-App modifiziert Pages-Tabelle direkt
+**RICHTIG:** Translation-App hat eigene Tabelle + Service-Klasse
+
+### 3. **Routes registrieren außerhalb Module::boot()**
+**FALSCH:** Routes in Controller oder Middleware
+**RICHTIG:** Routes nur in [ModuleName]Module.php
+
+### 4. **Service-Klassen, die echte Module sind**
+**FALSCH:** TranslationService als verstecktes Modul ohne boot/install
+**RICHTIG:** TranslationService ist nur Service (keine Routes, keine Tabellen)
+
+### 5. **Migrations, die vorhandene Daten ändern**
+**FALSCH:**
+```php
+ALTER TABLE velocms_pages ADD translation_id INT;
+```
+**RICHTIG:**
+```php
+CREATE TABLE velocms_translations (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    translatable_type VARCHAR(255),
+    translatable_id INT,
+    language VARCHAR(5),
+    content LONGTEXT
+);
+```
+
+---
+
+## 📋 CHECKLISTE FÜR NEUE MODULES
+
+Bevor Claude Code eine neue App baut, muss er diese Punkte erfüllen:
+
+- [ ] **Module-Klasse** existiert und erbt von `VeloCMS\Core\Module`
+- [ ] **boot()** registriert Routes UND Admin-Menu
+- [ ] **install()** ruft `$this->runMigrations()` auf
+- [ ] **Controllers** rufen `$this->requireAuth()` auf (Admin-Routes)
+- [ ] **Alle DB-Zugriffe** gehen über Models, nicht direkt über `$this->db`
+- [ ] **Migrations** verwenden `CREATE TABLE IF NOT EXISTS`
+- [ ] **Tablennamen** folgen dem Pattern: `velocms_[module_slug]_[table]`
+- [ ] **Views** sind organisiert in `admin/` und `frontend/`
+- [ ] **CSRF-Token** wird verifiziert für alle POST-Requests
+- [ ] **Keine direkten Abhängigkeiten** zwischen Module (außer über Services)
+
+---
+
+## 🔴 DIE TRANSLATION-APP REGEL
+
+**Translation ist ein Service, keine eigenständige App.**
+
+```php
+// TranslationService existiert bereits in core/Services/
+// Sie übersetzt Text mit DeepL oder Claude
+
+// Wenn Translation IN einem Modul verwendet werden soll:
+use VeloCMS\Core\Services\TranslationService;
+
+public function translatePage(int $pageId, string $targetLanguage): void
+{
+    $page = $this->pageModel->getById($pageId);
+    $translator = new TranslationService();
+    $translatedContent = $translator->translate($page['content'], 'DE', $targetLanguage);
+    // Speicher Translation in SEPARATER Tabelle
+}
+```
+
+**NICHT:** Tabellen-Struktur modifizieren um Translation zu unterstützen.
+**SONDERN:** Neue Tabelle `velocms_translations` mit:
+- `id`
+- `translatable_type` (Pages, BlogPosts, etc.)
+- `translatable_id` (ID des Objekts)
+- `language` (DE, EN, etc.)
+- `field` (title, content, etc.)
+- `translated_content`
+
+---
+
+## 🛡️ SAFEGUARDS FÜR CLAUDE CODE
+
+**Vor jeder Änderung muss Claude Code fragen:**
+
+1. "Modifiziere ich existierende Tabellen-Strukturen?" → JA = STOP, separate Tabelle stattdessen
+2. "Greifen mehrere Module auf dieselben Daten zu?" → JA = STOP, Service-Klasse stattdessen
+3. "Bin ich dabei, eine Route außerhalb des Moduls zu registrieren?" → JA = STOP, gehört in Module::boot()
+4. "Schreibe ich direktes SQL statt Model-Methods?" → JA = STOP, Model verwenden
+
+Wenn JA bei einer dieser Fragen: **STOPP und mit Sascha reden.**
+
+---
+
+## 📞 Wenn etwas bricht
+
+1. Schau in diese Datei
+2. Vergleich mit dem Pattern
+3. Wenn nicht matcht: Revert und neuschreiben nach Pattern
+4. Nicht experimentieren, wenn unter Zeitdruck
+
+---
+
+**Gültig ab:** 2026-05-26  
+**Last Review:** veloCMS v3 (gerade launched)  
+**Nächste Review:** Nach Translation-App fertig

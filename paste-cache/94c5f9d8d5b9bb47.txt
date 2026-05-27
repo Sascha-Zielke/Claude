@@ -1,0 +1,62 @@
+The translation system is fundamentally broken. 
+It only translates navigation menu items — nothing 
+else in frontend or backend. This needs a complete 
+fix.
+
+ROOT CAUSE ANALYSIS FIRST:
+Check why t() keys are registered but the language 
+toggle does not swap content. Look at:
+- How the JS toggle works (what does it actually do?)
+- Are data-i18n attributes present in rendered HTML?
+- Is the translation API endpoint returning correct 
+  values for all keys?
+- Are the "pending" keys in the DB actually being 
+  translated when DeepL is called?
+
+FIXES NEEDED:
+
+1. DEEPL AUTO-TRANSLATION:
+When DeepL API key is set and "Bulk Auto-Translate" 
+is clicked, ALL keys with status "pending" must be 
+translated — not just navigation. Verify the DeepL 
+API call is working and saving results to DB.
+
+2. FRONTEND TOGGLE:
+The DE/EN toggle must actually swap ALL text on the 
+page. Two approaches — implement whichever works 
+reliably:
+
+Option A (JS-based): Every text element has 
+data-i18n="key" attribute. JS toggle fetches all 
+translations for the new language from 
+/api/translations/{lang} and swaps all 
+data-i18n elements instantly.
+
+Option B (Server-based): Language stored in cookie. 
+Page reload on toggle — but reload is instant 
+because page is cached. Simpler and more reliable.
+
+Pick Option B if Option A is causing the current 
+issues. Reliability is more important than 
+avoiding page reload.
+
+3. ADMIN TOGGLE:
+Same fix — all admin panel text must switch when 
+DE/EN is toggled.
+
+4. MONITORING TABLE:
+Remove the translation monitoring table completely 
+from Admin → Translations. Replace with just:
+- Current translation provider (DeepL/Anthropic) 
+  and API key field
+- "Translate all pending" button
+- A simple counter: "X keys translated, Y pending"
+- No table, no list, no keys visible to the admin
+
+5. AUDIT NOTE:
+At next audit verify no trace of the old monitoring 
+table or manual add form remains in any view file.
+
+After fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

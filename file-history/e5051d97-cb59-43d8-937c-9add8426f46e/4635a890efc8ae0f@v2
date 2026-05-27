@@ -1,0 +1,308 @@
+---
+tags: [veloSolutions, velocms, css, styling, frontend]
+status: aktiv
+---
+
+# veloCMS — CSS-System & Prioritäten
+
+Wie CSS im veloCMS priorisiert wird: Default CSS vs. Custom Frontend CSS.
+
+---
+
+## 🎯 Kern-Konzept
+
+**veloCMS hat 2 CSS-Ebenen:**
+
+1. **veloCMS Default-CSS** ← Basis-Styling (Allgemein)
+2. **Customer Frontend-CSS** ← Custom-Styling (Überschreibt #1)
+
+**Wichtig:** Customer CSS hat IMMER Priorität. Wenn Customer Custom-Styling definiert, gewinnt das gegen veloCMS-Defaults.
+
+---
+
+## 📋 Wie es funktioniert
+
+### HTML-Head (vereinfacht)
+
+```html
+<head>
+    <!-- 1. veloCMS Default CSS (FIRST) -->
+    <link rel="stylesheet" href="/velocms/css/default.css">
+    
+    <!-- 2. Customer Frontend CSS (LAST — überschreibt #1) -->
+    <link rel="stylesheet" href="/customer/css/custom.css">
+</head>
+```
+
+**CSS-Reihenfolge = Priorität:**
+- veloCMS CSS lädt zuerst (Basis)
+- Customer CSS lädt zuletzt (Überschreibt Basis)
+- **Last-Loaded-Wins:** Standard CSS-Regel
+
+---
+
+## 🎨 Praktisches Beispiel
+
+### Szenario 1: Keine Custom-CSS
+
+```css
+/* veloCMS Default */
+h1 {
+    color: black;
+    font-size: 32px;
+}
+```
+
+**Resultat:** h1 ist schwarz, 32px (Default)
+
+---
+
+### Szenario 2: Customer überschreibt Farbe
+
+```css
+/* veloCMS Default */
+h1 {
+    color: black;
+    font-size: 32px;
+}
+
+/* Customer Custom CSS (lädt später) */
+h1 {
+    color: blue;  /* ← Überschreibt! */
+    /* font-size bleibt 32px von Default */
+}
+```
+
+**Resultat:** h1 ist blau (Custom), 32px (Default)
+
+---
+
+### Szenario 3: Customer überschreibt alles
+
+```css
+/* veloCMS Default */
+h1 {
+    color: black;
+    font-size: 32px;
+    font-family: Arial;
+}
+
+/* Customer Custom CSS */
+h1 {
+    color: red;
+    font-size: 24px;
+    font-family: Georgia;
+}
+```
+
+**Resultat:** h1 ist rot, 24px, Georgia (alles Custom)
+
+---
+
+## 🏗️ Technische Implementation
+
+### File-Struktur
+
+```
+velocms/
+├── public/
+│   └── css/
+│       ├── default.css          ← veloCMS Basis-CSS
+│       └── variables.css        ← CSS-Variablen (Optional)
+│
+customer-site/
+├── public/
+│   └── css/
+│       └── custom.css           ← Customer Frontend-CSS
+│       └── theme.css            ← Customer Tema-CSS
+```
+
+### HTML-Template (Frontend)
+
+```php
+<!-- veloCMS Template -->
+<!DOCTYPE html>
+<html>
+<head>
+    <!-- veloCMS Default CSS (immer laden) -->
+    <link rel="stylesheet" href="/velocms/css/default.css">
+    
+    <!-- Customer CSS (wenn vorhanden, lädt danach) -->
+    <?php if (file_exists('/customer/css/custom.css')): ?>
+        <link rel="stylesheet" href="/customer/css/custom.css">
+    <?php endif; ?>
+    
+    <!-- Customer Theme CSS (wenn vorhanden) -->
+    <?php if (file_exists('/customer/css/theme.css')): ?>
+        <link rel="stylesheet" href="/customer/css/theme.css">
+    <?php endif; ?>
+</head>
+<body>
+    <!-- Content -->
+</body>
+</html>
+```
+
+---
+
+## 📊 CSS-Hierarchie (Einfach erklärt)
+
+```
+┌─────────────────────────────────────┐
+│ Customer Frontend CSS (WINS) ⭐     │
+│ ← Höchste Priorität                 │
+├─────────────────────────────────────┤
+│ veloCMS Default CSS                 │
+│ ← Fallback/Basis-Styling            │
+└─────────────────────────────────────┘
+```
+
+**Wenn Customer CSS eine Regel definiert → veloCMS Rule wird ignoriert.**
+**Wenn Customer CSS eine Regel NICHT definiert → veloCMS Default wird verwendet.**
+
+---
+
+## 🎯 Für Claude Code: Was bedeutet das?
+
+### Beim Bauen von veloCMS:
+
+1. **Default CSS schreiben** (minimal, funktional)
+   - Basis-Styling für alle Elemente
+   - Neutral, nicht zu aggressiv
+   - Soll Fallback sein, nicht das finale Styling
+
+2. **CSS-Klassen verwenden** (keine Inline-Styles)
+   ```html
+   <!-- RICHTIG: Klasse verwenden -->
+   <h1 class="velocms-heading">Titel</h1>
+   
+   <!-- FALSCH: Inline-Style -->
+   <h1 style="color: black;">Titel</h1>
+   ```
+   Grund: CSS-Klassen können vom Customer überschrieben werden, Inline-Styles nicht.
+
+3. **CSS-Spezifität beachten**
+   ```css
+   /* Niedrig-Spezifität (besser für Default) */
+   h1 { color: black; }
+   
+   /* Hoch-Spezifität (schwerer zu überschreiben) */
+   html body main h1 { color: black; }
+   ```
+   Default CSS sollte niedrig-spezifisch sein, damit Customer einfach überschreiben kann.
+
+4. **Dokumentieren**
+   ```css
+   /* veloCMS Default — kann vom Customer überschrieben werden */
+   .button {
+       background-color: #007bff;
+       color: white;
+       padding: 10px 20px;
+   }
+   ```
+
+---
+
+## 🔧 Best Practices
+
+### ✅ DO: Flex & Override-freundlich
+
+```css
+/* veloCMS Default */
+.heading {
+    font-size: 32px;
+    color: #333;
+    margin: 20px 0;
+}
+```
+
+Customer kann einfach überschreiben:
+```css
+/* Customer Custom CSS */
+.heading {
+    color: #0066cc; /* ← Nur Farbe ändern */
+}
+```
+
+---
+
+### ❌ DON'T: !important & Inline-Styles
+
+```css
+/* FALSCH — kann nicht überschrieben werden */
+.heading {
+    color: black !important;
+}
+
+/* FALSCH — Inline-Styles haben höhere Priorität */
+<h1 style="color: black;">Titel</h1>
+```
+
+**Regel:** 
+- **Keine !important in veloCMS Default CSS** (außer für kritische Sicherheit)
+- **Keine Inline-Styles** (verwende Klassen stattdessen)
+- **Niedrige Spezifität** (ermöglicht leichtes Überschreiben)
+
+---
+
+## 📋 Visual Editor Mockup
+
+```
+┌─────────────────────────────────────────────────┐
+│ Visual Editor                                   │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│ [Text styling options]                          │
+│ Color: [#333] ← aus veloCMS Default            │
+│ Size: [32px] ← aus veloCMS Default             │
+│ Font: [Arial] ← aus veloCMS Default            │
+│                                                 │
+│ [Apply Custom CSS?]                             │
+│ ☐ Override with custom.css                      │
+│   (würde veloCMS Default ignorieren)            │
+│                                                 │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔗 Abhängigkeiten
+
+- **Visual Editor:** Muss CSS korrekt rendern (mit Prioritäten)
+- **Frontend:** Muss CSS in richtiger Reihenfolge laden
+- **Alle Apps:** Müssen CSS-Klassen verwenden (keine Inline-Styles)
+
+---
+
+## 📝 Standing Instructions für Claude Code
+
+**Bei CSS-Implementation in veloCMS Apps:**
+
+1. ✅ **Verwende CSS-Klassen** (nicht Inline-Styles)
+2. ✅ **Niedrige Spezifität** (ermöglicht Überschreiben)
+3. ✅ **Keine !important** (außer kritischen Fällen)
+4. ✅ **Default CSS ist Fallback** (Customer kann alles überschreiben)
+5. ✅ **Dokumentiere CSS-Klassen** (damit Customer weiß, was er überschreiben kann)
+
+**Beispiel:**
+```css
+/* veloCMS Default CSS */
+.velocms-button {
+    background-color: #007bff;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* Customer kann einfach überschreiben */
+.velocms-button {
+    background-color: #ff6600; /* ← Custom Farbe */
+}
+```
+
+---
+
+## 🔗 Übergeordnet
+
+← [[veloCMS-Architecture|veloCMS Architektur]] | [[Apps/App-Development-Guide|App-Development Guide]]

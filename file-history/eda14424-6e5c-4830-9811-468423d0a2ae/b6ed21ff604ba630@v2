@@ -1,0 +1,520 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/pages/module.json ─────────────────────────────────────────────────
+files['modules/pages/module.json'] = """{
+    "name": "pages",
+    "label": "Pages",
+    "version": "1.0.0",
+    "description": "Hierarchical static pages with versioning.",
+    "author": "VeloCMS",
+    "dependencies": []
+}
+"""
+
+# ── modules/pages/PagesModule.php ─────────────────────────────────────────────
+files['modules/pages/PagesModule.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Pages;
+
+use VeloCMS\Core\Module;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Pages\Controllers\PageController;
+
+class PagesModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/blog',                  static fn() => null); // reserved for blog module
+        $router->get('/{slug}',                [PageController::class, 'show']);
+        $router->get('/',                      [PageController::class, 'home']);
+    }
+}
+"""
+
+# ── modules/pages/models/Page.php ─────────────────────────────────────────────
+files['modules/pages/models/Page.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Pages\Models;
+
+class Page
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    public function all(): array
+    {
+        return $this->pdo->query(
+            'SELECT p.*, u.name AS author_name,
+                    par.title AS parent_title
+             FROM pages p
+             LEFT JOIN users u   ON u.id  = p.created_by
+             LEFT JOIN pages par ON par.id = p.parent_id
+             WHERE p.deleted_at IS NULL
+             ORDER BY p.parent_id, p.title'
+        )->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM pages WHERE id = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function findBySlug(string $slug): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT * FROM pages WHERE slug = ? AND status = 'published' AND deleted_at IS NULL LIMIT 1"
+        );
+        $stmt->execute([$slug]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data, int $userId): int
+    {
+        $slug = $this->uniqueSlug($data['slug'] ?: $this->slugify($data['title']));
+        $this->pdo->prepare(
+            'INSERT INTO pages (parent_id, title, slug, body, status, template, meta_title, meta_desc, published_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $data['parent_id'] ?: null,
+            $data['title'],
+            $slug,
+            $data['body'],
+            $data['status'],
+            $data['template'] ?: 'default',
+            $data['meta_title'],
+            $data['meta_desc'],
+            $data['status'] === 'published' ? date('Y-m-d H:i:s') : null,
+            $userId,
+        ]);
+        $id = (int) $this->pdo->lastInsertId();
+        $this->saveRevision($id, $data['body'], $userId);
+        return $id;
+    }
+
+    public function update(int $id, array $data, int $userId): void
+    {
+        $slug = $this->uniqueSlug($data['slug'] ?: $this->slugify($data['title']), $id);
+        $this->pdo->prepare(
+            'UPDATE pages SET parent_id=?, title=?, slug=?, body=?, status=?, template=?,
+             meta_title=?, meta_desc=?, published_at=?
+             WHERE id=?'
+        )->execute([
+            $data['parent_id'] ?: null,
+            $data['title'],
+            $slug,
+            $data['body'],
+            $data['status'],
+            $data['template'] ?: 'default',
+            $data['meta_title'],
+            $data['meta_desc'],
+            $data['status'] === 'published' ? date('Y-m-d H:i:s') : null,
+            $id,
+        ]);
+        $this->saveRevision($id, $data['body'], $userId);
+        $this->pruneRevisions($id);
+    }
+
+    public function softDelete(int $id): void
+    {
+        $this->pdo->prepare('UPDATE pages SET deleted_at = NOW() WHERE id = ?')->execute([$id]);
+    }
+
+    public function saveRevision(int $pageId, string $body, int $userId): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO page_revisions (page_id, body, saved_by) VALUES (?, ?, ?)'
+        )->execute([$pageId, $body, $userId]);
+    }
+
+    public function pruneRevisions(int $pageId, int $keep = 10): void
+    {
+        $ids = $this->pdo->prepare(
+            'SELECT id FROM page_revisions WHERE page_id = ? ORDER BY id DESC LIMIT 999 OFFSET ?'
+        );
+        $ids->execute([$pageId, $keep]);
+        foreach ($ids->fetchAll() as $row) {
+            $this->pdo->prepare('DELETE FROM page_revisions WHERE id = ?')->execute([$row['id']]);
+        }
+    }
+
+    private function slugify(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace('/[^a-z0-9\s-]/', '', $text) ?? $text;
+        $text = preg_replace('/[\s-]+/', '-', $text) ?? $text;
+        return trim($text, '-');
+    }
+
+    private function uniqueSlug(string $slug, int $excludeId = 0): string
+    {
+        $original = $slug;
+        $i = 1;
+        while (true) {
+            $stmt = $this->pdo->prepare(
+                'SELECT id FROM pages WHERE slug = ? AND id != ? AND deleted_at IS NULL LIMIT 1'
+            );
+            $stmt->execute([$slug, $excludeId]);
+            if (!$stmt->fetch()) break;
+            $slug = $original . '-' . $i++;
+        }
+        return $slug;
+    }
+}
+"""
+
+# ── modules/pages/controllers/PageController.php (frontend) ──────────────────
+files['modules/pages/controllers/PageController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Pages\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Core\View;
+use VeloCMS\Modules\Pages\Models\Page;
+
+class PageController
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function home(Request $request, array $params): Response
+    {
+        $db   = $this->app->make(Database::class);
+        $page = (new Page($db->core()))->findBySlug('home');
+        if ($page) {
+            return $this->renderPage($page);
+        }
+        return (new Response())->html($this->themeView('welcome.php', ['title' => 'Welcome to VeloCMS']));
+    }
+
+    public function show(Request $request, array $params): Response
+    {
+        $slug = $params['slug'] ?? '';
+        $db   = $this->app->make(Database::class);
+        $page = (new Page($db->core()))->findBySlug($slug);
+        if (!$page) {
+            return (new Response())->html($this->themeView('404.php', ['title' => 'Page Not Found']), 404);
+        }
+        return $this->renderPage($page);
+    }
+
+    private function renderPage(array $page): Response
+    {
+        $html = $this->themeView('page.php', [
+            'title'     => $page['title'],
+            'page'      => $page,
+            'metaTitle' => $page['meta_title'] ?: $page['title'],
+            'metaDesc'  => $page['meta_desc'],
+        ]);
+        return (new Response())->html($html);
+    }
+
+    private function themeView(string $template, array $data = []): string
+    {
+        $view = new View($this->app->basePath('themes/default/layouts'));
+        return $view->with($data)->render($template);
+    }
+}
+"""
+
+# ── modules/pages/admin/controllers/PageAdminController.php ──────────────────
+files['modules/pages/admin/controllers/PageAdminController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Pages\Admin;
+
+use VeloCMS\Admin\BaseController;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Modules\Pages\Models\Page;
+
+class PageAdminController extends BaseController
+{
+    private function pageModel(): Page
+    {
+        return new Page($this->app->make(Database::class)->core());
+    }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        return $this->layout('pages/index.php', [
+            'user'  => $this->auth()->user(),
+            'page'  => 'pages',
+            'pages' => $this->pageModel()->all(),
+        ]);
+    }
+
+    public function create(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        return $this->layout('pages/form.php', [
+            'user'   => $this->auth()->user(),
+            'page'   => 'pages',
+            'csrf'   => $this->auth()->csrfToken(),
+            'title'  => 'New Page',
+            'action' => '/admin/pages',
+            'record' => null,
+            'pages'  => $this->pageModel()->all(),
+            'error'  => null,
+        ]);
+    }
+
+    public function store(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect('/admin/pages');
+        }
+        $data = [
+            'title'      => trim($req->post('title', '')),
+            'slug'       => trim($req->post('slug', '')),
+            'body'       => $req->post('body', ''),
+            'status'     => $req->post('status', 'draft'),
+            'template'   => $req->post('template', 'default'),
+            'parent_id'  => (int) $req->post('parent_id', '0'),
+            'meta_title' => trim($req->post('meta_title', '')),
+            'meta_desc'  => trim($req->post('meta_desc', '')),
+        ];
+        if ($data['title'] === '') {
+            return $this->layout('pages/form.php', [
+                'user'   => $this->auth()->user(),
+                'page'   => 'pages',
+                'csrf'   => $this->auth()->csrfToken(),
+                'title'  => 'New Page',
+                'action' => '/admin/pages',
+                'record' => $data,
+                'pages'  => $this->pageModel()->all(),
+                'error'  => 'Title is required.',
+            ]);
+        }
+        $this->pageModel()->create($data, (int) $this->auth()->id());
+        return $this->redirect('/admin/pages');
+    }
+
+    public function edit(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        $record = $this->pageModel()->findById((int) $params['id']);
+        if (!$record) return $this->redirect('/admin/pages');
+        return $this->layout('pages/form.php', [
+            'user'   => $this->auth()->user(),
+            'page'   => 'pages',
+            'csrf'   => $this->auth()->csrfToken(),
+            'title'  => 'Edit Page',
+            'action' => '/admin/pages/' . $params['id'],
+            'record' => $record,
+            'pages'  => $this->pageModel()->all(),
+            'error'  => null,
+        ]);
+    }
+
+    public function update(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/pages');
+        $id   = (int) $params['id'];
+        $data = [
+            'title'      => trim($req->post('title', '')),
+            'slug'       => trim($req->post('slug', '')),
+            'body'       => $req->post('body', ''),
+            'status'     => $req->post('status', 'draft'),
+            'template'   => $req->post('template', 'default'),
+            'parent_id'  => (int) $req->post('parent_id', '0'),
+            'meta_title' => trim($req->post('meta_title', '')),
+            'meta_desc'  => trim($req->post('meta_desc', '')),
+        ];
+        if ($data['title'] === '') {
+            $record = $this->pageModel()->findById($id) ?? $data;
+            return $this->layout('pages/form.php', [
+                'user'   => $this->auth()->user(),
+                'page'   => 'pages',
+                'csrf'   => $this->auth()->csrfToken(),
+                'title'  => 'Edit Page',
+                'action' => '/admin/pages/' . $id,
+                'record' => array_merge($record, $data),
+                'pages'  => $this->pageModel()->all(),
+                'error'  => 'Title is required.',
+            ]);
+        }
+        $this->pageModel()->update($id, $data, (int) $this->auth()->id());
+        return $this->redirect('/admin/pages');
+    }
+
+    public function delete(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole('superadmin', 'site-admin', 'editor');
+        if (!$this->auth()->verifyCsrf()) return $this->redirect('/admin/pages');
+        $this->pageModel()->softDelete((int) $params['id']);
+        return $this->redirect('/admin/pages');
+    }
+}
+"""
+
+# ── admin/views/pages/index.php ───────────────────────────────────────────────
+files['admin/views/pages/index.php'] = r"""<div class="vcms-section-header">
+    <h3>Pages</h3>
+    <a href="/admin/pages/create" class="vcms-btn">+ New Page</a>
+</div>
+
+<?php if (empty($pages)): ?>
+    <p class="vcms-empty">No pages yet. <a href="/admin/pages/create">Create your first page.</a></p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Slug</th>
+            <th>Status</th>
+            <th>Parent</th>
+            <th>Updated</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($pages as $p): ?>
+        <tr>
+            <td><strong><?= e($p['title']) ?></strong></td>
+            <td><code>/<?= e($p['slug']) ?></code></td>
+            <td><span class="vcms-badge vcms-badge--<?= e($p['status']) ?>"><?= e($p['status']) ?></span></td>
+            <td><?= e($p['parent_title'] ?? '—') ?></td>
+            <td><?= e(substr($p['updated_at'], 0, 16)) ?></td>
+            <td class="vcms-actions">
+                <a href="/<?= e($p['slug']) ?>" target="_blank" class="vcms-btn vcms-btn--sm">View</a>
+                <a href="/admin/pages/<?= $p['id'] ?>/edit" class="vcms-btn vcms-btn--sm">Edit</a>
+                <form method="post" action="/admin/pages/<?= $p['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm('Delete this page?')">Delete</button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+</div>
+<?php endif; ?>
+"""
+
+# ── admin/views/pages/form.php ────────────────────────────────────────────────
+files['admin/views/pages/form.php'] = r"""<div class="vcms-section-header">
+    <h3><?= e($title ?? 'Page') ?></h3>
+    <a href="/admin/pages" class="vcms-btn vcms-btn--secondary">← Back</a>
+</div>
+
+<?php if (!empty($error)): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif; ?>
+
+<form method="post" action="<?= e($action) ?>" class="vcms-form" id="page-form">
+    <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group vcms-form-group--wide">
+            <label for="f-title">Title <span class="vcms-required">*</span></label>
+            <input type="text" id="f-title" name="title"
+                   value="<?= e($record['title'] ?? '') ?>"
+                   placeholder="Page title" required autofocus>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-slug">Slug</label>
+            <div class="vcms-slug-wrap">
+                <span class="vcms-slug-prefix">/</span>
+                <input type="text" id="f-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>"
+                       placeholder="auto-generated">
+            </div>
+        </div>
+    </div>
+
+    <div class="vcms-form-group">
+        <label>Body</label>
+        <div class="vcms-editor-wrap">
+            <div class="vcms-editor-toolbar" id="editor-toolbar">
+                <button type="button" data-cmd="bold"         title="Bold">B</button>
+                <button type="button" data-cmd="italic"       title="Italic"><em>I</em></button>
+                <button type="button" data-cmd="h2"           title="Heading 2">H2</button>
+                <button type="button" data-cmd="h3"           title="Heading 3">H3</button>
+                <button type="button" data-cmd="ul"           title="Bullet list">&#8226; List</button>
+                <button type="button" data-cmd="ol"           title="Numbered list">1. List</button>
+                <button type="button" data-cmd="link"         title="Insert link">&#128279; Link</button>
+                <button type="button" data-cmd="blockquote"   title="Blockquote">&#10077;</button>
+                <button type="button" data-cmd="removeFormat" title="Clear formatting">&#10060;</button>
+            </div>
+            <div id="vcms-editor" class="vcms-editor"
+                 contenteditable="true"><?= $record['body'] ?? '' ?></div>
+            <textarea name="body" id="vcms-body" hidden><?= e($record['body'] ?? '') ?></textarea>
+        </div>
+    </div>
+
+    <div class="vcms-form-row">
+        <div class="vcms-form-group">
+            <label for="f-status">Status</label>
+            <select id="f-status" name="status">
+                <?php foreach (['draft','published','scheduled','archived'] as $s): ?>
+                <option value="<?= $s ?>" <?= ($record['status'] ?? 'draft') === $s ? 'selected' : '' ?>>
+                    <?= ucfirst($s) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-parent">Parent Page</label>
+            <select id="f-parent" name="parent_id">
+                <option value="0">— None (top level) —</option>
+                <?php foreach ($pages as $p):
+                    if (($record['id'] ?? 0) === $p['id']) continue; ?>
+                <option value="<?= $p['id'] ?>"
+                    <?= ((int)($record['parent_id'] ?? 0)) === $p['id'] ? 'selected' : '' ?>>
+                    <?= e($p['title']) ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-template">Template</label>
+            <select id="f-template" name="template">
+                <option value="default" <?= ($record['template'] ?? '') === 'default' ? 'selected' : '' ?>>Default</option>
+                <option value="full-width" <?= ($record['template'] ?? '') === 'full-width' ? 'selected' : '' ?>>Full Width</option>
+                <option value="landing" <?= ($record['template'] ?? '') === 'landing' ? 'selected' : '' ?>>Landing</option>
+            </select>
+        </div>
+    </div>
+
+    <details class="vcms-meta-box">
+        <summary>SEO / Meta</summary>
+        <div class="vcms-form-group">
+            <label for="f-meta-title">Meta Title</label>
+            <input type="text" id="f-meta-title" name="meta_title"
+                   value="<?= e($record['meta_title'] ?? '') ?>"
+                   placeholder="Defaults to page title">
+        </div>
+        <div class="vcms-form-group">
+            <label for="f-meta-desc">Meta Description</label>
+            <textarea id="f-meta-desc" name="meta_desc" rows="2"
+                      placeholder="155 characters max"><?= e($record['meta_desc'] ?? '') ?></textarea>
+        </div>
+    </details>
+
+    <div class="vcms-form-actions">
+        <button type="submit" class="vcms-btn">Save Page</button>
+        <a href="/admin/pages" class="vcms-btn vcms-btn--secondary">Cancel</a>
+    </div>
+</form>
+
+<script src="/assets/admin/editor.js" defer></script>
+<script src="/assets/admin/slug.js" defer></script>
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 3b done — pages module written.')

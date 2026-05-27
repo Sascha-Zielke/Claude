@@ -1,0 +1,901 @@
+import os, re
+
+base = '/var/www/velocms'
+fixed = []
+
+def write(rel, content):
+    path = base + '/' + rel
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, 'w').write(content.lstrip('\n'))
+    fixed.append(rel)
+    print(f'  OK  {rel}')
+
+def patch(rel, old, new, label=None):
+    path = base + '/' + rel
+    c = open(path).read()
+    if old not in c:
+        print(f'  SKIP {rel}: pattern not found ({label or old[:40]})')
+        return False
+    open(path, 'w').write(c.replace(old, new, 1))
+    fixed.append(f'{rel} ({label})')
+    print(f'  OK  {rel}: {label}')
+    return True
+
+def wrap_table(rel, label=None):
+    """Wrap bare <table class="vcms-table"> in <div class="vcms-table-wrap">"""
+    path = base + '/' + rel
+    c = open(path).read()
+    # Match table tags that are NOT already inside a vcms-table-wrap
+    changed = False
+    lines = c.splitlines(keepends=True)
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Find lines with <table class="vcms-table" that don't already have a wrapper before them
+        if '<table class="vcms-table"' in line:
+            # Check if the previous non-empty line is already a table-wrap div
+            prev = ''.join(out).rstrip()
+            if 'vcms-table-wrap' not in prev.split('\n')[-1]:
+                indent = len(line) - len(line.lstrip())
+                out.append(' ' * indent + '<div class="vcms-table-wrap">\n')
+                # Find the closing </table> and append </div> after it
+                depth = 0
+                buf = [line]
+                j = i + 1
+                while j < len(lines):
+                    buf.append(lines[j])
+                    if '<table' in lines[j]:
+                        depth += 1
+                    if '</table>' in lines[j]:
+                        if depth == 0:
+                            out.extend(buf)
+                            out.append(' ' * indent + '</div>\n')
+                            i = j + 1
+                            changed = True
+                            break
+                        depth -= 1
+                    j += 1
+                else:
+                    out.extend(buf)
+                    i = j
+                continue
+        out.append(line)
+        i += 1
+    if changed:
+        open(path, 'w').write(''.join(out))
+        fixed.append(f'{rel} (table wrapped)')
+        print(f'  OK  {rel}: tables wrapped in vcms-table-wrap')
+    else:
+        print(f'  SKIP {rel}: already wrapped or pattern not found')
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('STEP 1 — Responsive admin CSS')
+# ═══════════════════════════════════════════════════════════════════════════════
+
+write('public/assets/admin/style.css', r"""
+/* ── Variables ─────────────────────────────────────────────────────────────── */
+:root {
+    --sidebar-w:      240px;
+    --sidebar-bg:     #1a1f2e;
+    --sidebar-text:   #8892a4;
+    --sidebar-hover:  rgba(255,255,255,0.06);
+    --accent:         #4f6ef7;
+    --accent-dark:    #3d5ce6;
+    --content-bg:     #f4f6fb;
+    --card-bg:        #ffffff;
+    --text-primary:   #1a1f2e;
+    --text-secondary: #6b7280;
+    --border:         #e5e7eb;
+    --danger:         #ef4444;
+    --danger-light:   #fef2f2;
+    --danger-border:  #fecaca;
+    --success:        #16a34a;
+    --success-light:  #f0fdf4;
+    --success-border: #bbf7d0;
+    --topbar-h:       56px;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 15px;
+    color: var(--text-primary);
+    background: var(--content-bg);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+body.vcms-nav-open { overflow: hidden; }
+
+/* ── App layout ────────────────────────────────────────────────────────────── */
+.vcms-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* ── Sidebar overlay (mobile backdrop) ─────────────────────────────────────── */
+.vcms-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 99;
+    backdrop-filter: blur(1px);
+}
+.vcms-overlay.active { display: block; }
+
+/* ── Sidebar ───────────────────────────────────────────────────────────────── */
+.vcms-sidebar {
+    width: var(--sidebar-w);
+    background: var(--sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    z-index: 100;
+    transition: transform 0.25s ease;
+}
+
+.vcms-logo {
+    padding: 18px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    min-height: var(--topbar-h);
+    display: flex;
+    align-items: center;
+}
+.vcms-logo h1 {
+    font-size: 19px;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: -0.02em;
+}
+.vcms-logo span { color: var(--accent); }
+
+.vcms-nav { padding: 12px 0; flex: 1; }
+.vcms-nav a {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    color: var(--sidebar-text);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    border-left: 3px solid transparent;
+    transition: color 0.15s, background 0.15s;
+    min-height: 44px;
+}
+.vcms-nav a:hover { color: #fff; background: var(--sidebar-hover); }
+.vcms-nav a.active {
+    color: #fff;
+    background: var(--sidebar-hover);
+    border-left-color: var(--accent);
+}
+.vcms-nav-group {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    padding: 1.25rem 1rem 0.25rem;
+}
+
+.vcms-sidebar-footer {
+    padding: 14px 20px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.25);
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Main area ─────────────────────────────────────────────────────────────── */
+.vcms-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+/* ── Topbar ────────────────────────────────────────────────────────────────── */
+.vcms-topbar {
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    height: var(--topbar-h);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    gap: 12px;
+}
+.vcms-topbar h2 {
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.vcms-topbar-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+.vcms-topbar-user a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.vcms-topbar-user a:hover { text-decoration: underline; }
+.vcms-topbar-user a.signout { color: var(--danger); }
+
+/* Hamburger button — hidden on desktop */
+.vcms-hamburger {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    margin-right: 4px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    color: var(--text-primary);
+}
+.vcms-hamburger:hover { background: var(--content-bg); }
+.vcms-hamburger svg { display: block; }
+
+.vcms-role-badge {
+    background: var(--content-bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* ── Page header ───────────────────────────────────────────────────────────── */
+.vcms-page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.vcms-page-header h2 { font-size: 18px; font-weight: 700; }
+.vcms-page-header a,
+.vcms-page-header button { margin-left: auto; }
+
+/* ── Content area ──────────────────────────────────────────────────────────── */
+.vcms-content { padding: 24px; flex: 1; }
+
+/* ── Cards ─────────────────────────────────────────────────────────────────── */
+.vcms-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px;
+}
+.vcms-card h3 {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 10px;
+}
+.vcms-card .value { font-size: 34px; font-weight: 800; line-height: 1; }
+.vcms-card .value--sm { font-size: 22px; }
+
+.vcms-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────────── */
+.vcms-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.vcms-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 480px;
+}
+.vcms-table th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+    background: var(--card-bg);
+}
+.vcms-table td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+.vcms-table tr:last-child td { border-bottom: none; }
+.vcms-table tr:hover td { background: #fafafa; }
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.vcms-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 9px 16px;
+    border-radius: 7px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+    transition: background 0.15s, opacity 0.15s;
+    white-space: nowrap;
+    min-height: 38px;
+}
+.vcms-btn--primary  { background: var(--accent); color: #fff; }
+.vcms-btn--primary:hover { background: var(--accent-dark); }
+.vcms-btn--secondary { background: #f1f5f9; color: #334155; }
+.vcms-btn--secondary:hover { background: #e2e8f0; }
+.vcms-btn--danger   { background: var(--danger-light); color: #991b1b; border: 1px solid var(--danger-border); }
+.vcms-btn--danger:hover { background: #fecaca; }
+.vcms-btn--ghost    { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.vcms-btn--ghost:hover { background: var(--content-bg); }
+.vcms-btn--sm       { padding: 5px 10px; font-size: 12px; min-height: 30px; }
+
+/* Legacy btn classes */
+.btn { display: inline-flex; align-items: center; justify-content: center;
+       padding: 10px 20px; border-radius: 7px; font-size: 14px; font-weight: 600;
+       cursor: pointer; border: none; text-decoration: none; }
+.btn-primary { background: var(--accent); color: #fff; width: 100%; text-align: center;
+               padding: 12px; font-size: 15px; }
+.btn-primary:hover { background: var(--accent-dark); }
+
+/* ── Badges ────────────────────────────────────────────────────────────────── */
+.vcms-badge { font-size: 0.75rem; padding: 0.2em 0.6em; border-radius: 9999px; font-weight: 500; }
+.vcms-badge--published { background: #dcfce7; color: #166534; }
+.vcms-badge--draft     { background: #f1f5f9; color: #475569; }
+.vcms-badge--scheduled { background: #fef9c3; color: #854d0e; }
+.vcms-badge--archived  { background: #fee2e2; color: #991b1b; }
+
+/* ── Alerts ────────────────────────────────────────────────────────────────── */
+.vcms-alert, .alert {
+    padding: 12px 16px;
+    border-radius: 7px;
+    font-size: 14px;
+    margin-bottom: 20px;
+    font-weight: 500;
+}
+.vcms-alert--success, .alert-success { background: var(--success-light); border: 1px solid var(--success-border); color: var(--success); }
+.vcms-alert--error,   .alert-danger  { background: var(--danger-light);  border: 1px solid var(--danger-border);  color: #b91c1c; }
+.vcms-alert--info                    { background: #dbeafe; border: 1px solid #bfdbfe; color: #1e40af; }
+.vcms-alert-error  { background: var(--danger-light);  border: 1px solid var(--danger-border);  color: #b91c1c; }
+.vcms-alert-success { background: var(--success-light); border: 1px solid var(--success-border); color: var(--success); }
+
+/* ── Actions cell ──────────────────────────────────────────────────────────── */
+.vcms-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.vcms-actions form { margin: 0; }
+.vcms-empty { color: #64748b; padding: 1rem 0; }
+
+/* ── Login page ────────────────────────────────────────────────────────────── */
+.vcms-login-wrap {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--content-bg);
+    padding: 20px;
+}
+.vcms-login-box { width: 100%; max-width: 380px; }
+.vcms-login-logo { text-align: center; margin-bottom: 28px; }
+.vcms-login-logo h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+.vcms-login-logo span { color: var(--accent); }
+.vcms-login-logo p { font-size: 14px; color: var(--text-secondary); margin-top: 6px; }
+
+/* ── Forms ─────────────────────────────────────────────────────────────────── */
+.vcms-form {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+}
+.vcms-form .field, .vcms-form-group { margin-bottom: 18px; }
+.vcms-form label, .vcms-form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+.vcms-form input[type="email"],
+.vcms-form input[type="password"],
+.vcms-form input[type="text"],
+.vcms-form input[type="number"],
+.vcms-form input[type="url"],
+.vcms-form select,
+.vcms-form textarea,
+.vcms-table--form input,
+.vcms-table--form select,
+.vcms-table--form textarea {
+    width: 100%;
+    max-width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: #fff;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    -webkit-appearance: none;
+}
+.vcms-form input:focus,
+.vcms-form select:focus,
+.vcms-form textarea:focus,
+.vcms-table--form input:focus,
+.vcms-table--form select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,110,247,0.12);
+}
+
+/* form-row: side-by-side on tablet+, stacked on mobile */
+.vcms-form-row { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+.vcms-form-row .vcms-form-group { flex: 1; min-width: 200px; }
+.vcms-form-group--wide { flex: 2; }
+
+/* form-table (settings page): label above input on mobile */
+.vcms-table--form { width: 100%; border-collapse: collapse; }
+.vcms-table--form th {
+    width: 200px;
+    padding: 0.75rem 1rem 0.75rem 0;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: left;
+    vertical-align: top;
+    padding-top: 0.9rem;
+    white-space: nowrap;
+}
+.vcms-table--form td { padding: 0.5rem 0; }
+
+.vcms-form-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* ── Filter bar ────────────────────────────────────────────────────────────── */
+.vcms-filter-bar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+.vcms-filter-bar input {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 14px;
+    min-width: 0;
+    flex: 1 1 180px;
+    max-width: 280px;
+}
+
+/* ── Slug / editor / meta ──────────────────────────────────────────────────── */
+.vcms-slug-wrap { display: flex; align-items: stretch; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.vcms-slug-prefix { background: #f8fafc; padding: 0.55rem 0.75rem; color: #94a3b8; font-size: 0.8rem; white-space: nowrap; border-right: 1px solid #cbd5e1; display: flex; align-items: center; }
+.vcms-slug-wrap input { border: none; border-radius: 0; flex: 1; min-width: 0; }
+.vcms-slug-wrap input:focus { outline: none; box-shadow: none; }
+
+.vcms-editor-wrap { border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+.vcms-editor-toolbar { background: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 0.4rem 0.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.vcms-editor-toolbar button {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 4px;
+    padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.85rem;
+    color: #334155; line-height: 1.4; min-height: 30px;
+}
+.vcms-editor-toolbar button:hover { background: #e2e8f0; }
+.vcms-editor {
+    min-height: 240px;
+    padding: 1rem;
+    font-size: 0.9375rem;
+    line-height: 1.7;
+    outline: none;
+    overflow-y: auto;
+}
+.vcms-editor h2, .vcms-editor h3 { margin: 1rem 0 0.5rem; }
+.vcms-editor ul, .vcms-editor ol { padding-left: 1.5rem; }
+.vcms-editor blockquote { border-left: 3px solid #cbd5e1; margin: 0; padding-left: 1rem; color: #64748b; }
+.vcms-editor a { color: #2563eb; }
+
+.vcms-required { color: #ef4444; }
+.vcms-meta-box { border: 1px solid #e2e8f0; border-radius: 6px; margin-top: 1rem; }
+.vcms-meta-box summary { padding: 0.75rem 1rem; cursor: pointer; font-weight: 500; color: #475569; }
+.vcms-meta-box .vcms-form-group { padding: 0 1rem 1rem; }
+
+.vcms-checkbox-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.vcms-checkbox { display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+
+/* ── Media ─────────────────────────────────────────────────────────────────── */
+.vcms-upload-box { background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1.25rem; margin-bottom: 1.5rem; }
+.vcms-media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.vcms-media-card { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+.vcms-media-thumb { height: 110px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.vcms-media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vcms-media-thumb--file span { font-size: 1.5rem; font-weight: 700; color: #94a3b8; }
+.vcms-media-info { padding: 0.5rem; }
+.vcms-media-name { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0 0 0.25rem; }
+.vcms-media-meta { font-size: 0.7rem; color: #94a3b8; margin: 0 0 0.5rem; }
+.vcms-media-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+
+/* ── Tabs ──────────────────────────────────────────────────────────────────── */
+.vcms-tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid #e2e8f0; overflow-x: auto; }
+.vcms-tab { padding: 0.5rem 1rem; text-decoration: none; color: #64748b; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 0.875rem; white-space: nowrap; }
+.vcms-tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+.vcms-tab:hover { color: #1e293b; }
+
+/* ── Welcome / checklist ───────────────────────────────────────────────────── */
+.vcms-welcome { margin-bottom: 24px; }
+.vcms-welcome h2 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.vcms-welcome p { color: var(--text-secondary); font-size: 14px; }
+.vcms-checklist { list-style: none; display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.vcms-checklist li { font-size: 14px; color: var(--text-secondary); padding-left: 18px; position: relative; }
+.vcms-checklist li::before { content: '›'; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+.vcms-checklist code { background: var(--content-bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-family: 'SF Mono','Fira Code',monospace; font-size: 12px; color: var(--accent); }
+
+/* ── Profile page ──────────────────────────────────────────────────────────── */
+.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; }
+.card-body { padding: 22px; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.form-control {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    font-size: 14px;
+    outline: none;
+}
+.form-control:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,110,247,0.12); }
+.btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tablet (768px – 1023px) ────────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+    .vcms-content { padding: 20px; }
+    .vcms-cards-grid { grid-template-columns: repeat(2, 1fr); }
+    .vcms-topbar { padding: 0 16px; }
+    .vcms-table--form th { width: 160px; }
+}
+
+/* ── Mobile (≤ 767px) ──────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+
+    /* Sidebar: slide-out drawer */
+    .vcms-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        transform: translateX(-100%);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.25);
+    }
+    .vcms-sidebar.open { transform: translateX(0); }
+
+    /* Hamburger visible */
+    .vcms-hamburger { display: flex; align-items: center; justify-content: center; }
+
+    /* Topbar: tighter */
+    .vcms-topbar { padding: 0 12px; gap: 8px; }
+    .vcms-topbar h2 { font-size: 14px; }
+
+    /* Hide name + role badge on mobile to save space */
+    .vcms-topbar-user > span:first-of-type,
+    .vcms-role-badge { display: none; }
+
+    /* Content */
+    .vcms-content { padding: 14px; }
+
+    /* Cards: 2-column on mobile, 1-column on very small */
+    .vcms-cards-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .vcms-card { padding: 14px; }
+    .vcms-card .value { font-size: 26px; }
+
+    /* form-row: stack vertically */
+    .vcms-form-row { flex-direction: column; gap: 0; }
+    .vcms-form-row .vcms-form-group { min-width: 0; }
+
+    /* form-table: convert to label-above-input layout */
+    .vcms-table--form,
+    .vcms-table--form tbody,
+    .vcms-table--form tr { display: block; }
+    .vcms-table--form th {
+        display: block;
+        width: 100%;
+        padding: 0.75rem 0 0.25rem;
+        border-bottom: none;
+    }
+    .vcms-table--form td {
+        display: block;
+        padding: 0 0 0.75rem;
+    }
+
+    /* Page header: allow wrapping */
+    .vcms-page-header { gap: 8px; }
+    .vcms-page-header a,
+    .vcms-page-header button { margin-left: 0; }
+
+    /* Filter bar: full width input */
+    .vcms-filter-bar input { max-width: 100%; }
+
+    /* Slug prefix: hide long URLs, show just "/" */
+    .vcms-slug-prefix { display: none; }
+
+    /* Editor: smaller min-height */
+    .vcms-editor { min-height: 180px; }
+
+    /* Form actions: stack on very small */
+    .vcms-form-actions { flex-direction: column; align-items: stretch; }
+    .vcms-form-actions .vcms-btn,
+    .vcms-form-actions a { text-align: center; }
+
+    /* Tabs: scrollable */
+    .vcms-tabs { gap: 0; }
+
+    /* Cards grid: 1 column on very small phones */
+    @media (max-width: 400px) {
+        .vcms-cards-grid { grid-template-columns: 1fr; }
+    }
+}
+""")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 2 — Admin JS (hamburger toggle)')
+# ═══════════════════════════════════════════════════════════════════════════════
+
+write('public/assets/admin/app.js', r"""
+'use strict';
+
+(function () {
+    const sidebar  = document.querySelector('.vcms-sidebar');
+    const overlay  = document.querySelector('.vcms-overlay');
+    const hamburger = document.querySelector('.vcms-hamburger');
+
+    if (!sidebar || !hamburger) return;
+
+    function openNav() {
+        sidebar.classList.add('open');
+        overlay.classList.add('active');
+        document.body.classList.add('vcms-nav-open');
+        hamburger.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeNav() {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('active');
+        document.body.classList.remove('vcms-nav-open');
+        hamburger.setAttribute('aria-expanded', 'false');
+    }
+
+    hamburger.addEventListener('click', function () {
+        sidebar.classList.contains('open') ? closeNav() : openNav();
+    });
+
+    overlay.addEventListener('click', closeNav);
+
+    // Close sidebar when a nav link is clicked on mobile
+    sidebar.querySelectorAll('.vcms-nav a').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (window.innerWidth < 768) closeNav();
+        });
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeNav();
+    });
+
+    // Reset on resize to desktop
+    window.addEventListener('resize', function () {
+        if (window.innerWidth >= 768) closeNav();
+    });
+}());
+""")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 3 — Update admin layout.php')
+# ═══════════════════════════════════════════════════════════════════════════════
+
+write('admin/views/layout.php', r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VeloCMS Admin</title>
+    <link rel="stylesheet" href="/assets/admin/style.css">
+</head>
+<body>
+
+<!-- Mobile overlay (closes sidebar when tapped) -->
+<div class="vcms-overlay" aria-hidden="true"></div>
+
+<div class="vcms-layout">
+
+    <!-- Sidebar -->
+    <aside class="vcms-sidebar" id="vcms-sidebar">
+        <div class="vcms-logo">
+            <h1>Velo<span>CMS</span></h1>
+        </div>
+        <nav class="vcms-nav">
+            <a href="/admin/dashboard" class="<?= ($page ?? '') === 'dashboard' ? 'active' : '' ?>">Dashboard</a>
+            <div class="vcms-nav-group">Content</div>
+            <a href="/admin/pages"      class="<?= ($page ?? '') === 'pages'      ? 'active' : '' ?>">Pages</a>
+            <a href="/admin/blog"       class="<?= ($page ?? '') === 'blog'       ? 'active' : '' ?>">Blog</a>
+            <a href="/admin/media"      class="<?= ($page ?? '') === 'media'      ? 'active' : '' ?>">Media</a>
+            <a href="/admin/navigation" class="<?= ($page ?? '') === 'navigation' ? 'active' : '' ?>">Navigation</a>
+            <a href="/admin/seo"        class="<?= ($page ?? '') === 'seo'        ? 'active' : '' ?>">SEO</a>
+            <a href="/admin/forms"      class="<?= ($page ?? '') === 'forms'      ? 'active' : '' ?>">Forms</a>
+            <div class="vcms-nav-group">System</div>
+            <a href="/admin/sites"    class="<?= ($page ?? '') === 'sites'    ? 'active' : '' ?>">Sites</a>
+            <a href="/admin/users"    class="<?= ($page ?? '') === 'users'    ? 'active' : '' ?>">Users</a>
+            <a href="/admin/api"      class="<?= ($page ?? '') === 'api'      ? 'active' : '' ?>">API Keys</a>
+            <a href="/admin/audit"    class="<?= ($page ?? '') === 'audit'    ? 'active' : '' ?>">Audit Log</a>
+            <a href="/admin/cron"     class="<?= ($page ?? '') === 'cron'     ? 'active' : '' ?>">Cron Jobs</a>
+            <a href="/admin/settings" class="<?= ($page ?? '') === 'settings' ? 'active' : '' ?>">Settings</a>
+        </nav>
+        <div class="vcms-sidebar-footer">VeloCMS v0.1.0</div>
+    </aside>
+
+    <!-- Main area -->
+    <div class="vcms-main">
+        <div class="vcms-topbar">
+            <!-- Hamburger (mobile only) -->
+            <button class="vcms-hamburger" aria-label="Toggle navigation" aria-expanded="false" aria-controls="vcms-sidebar">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <line x1="3" y1="6"  x2="21" y2="6"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                    <line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+
+            <h2><?= e(ucfirst($page ?? 'Admin')) ?></h2>
+
+            <div class="vcms-topbar-user">
+                <span><?= e($user['name'] ?? '') ?></span>
+                <span class="vcms-role-badge"><?= e($user['role'] ?? '') ?></span>
+                <a href="/admin/profile">Profile</a>
+                <a href="/admin/logout" class="signout">Sign out</a>
+            </div>
+        </div>
+
+        <div class="vcms-content">
+            <?= $content ?? '' ?>
+        </div>
+    </div>
+
+</div>
+
+<script src="/assets/admin/app.js" defer></script>
+</body>
+</html>
+""")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 4 — Wrap bare tables in vcms-table-wrap')
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tables_to_wrap = [
+    'admin/views/forms/index.php',
+    'admin/views/forms/submissions.php',
+    'admin/views/seo/index.php',
+    'admin/views/blog/categories.php',
+    'admin/views/api/index.php',
+    'admin/views/navigation/index.php',
+    'admin/views/navigation/edit.php',
+    'admin/views/audit/index.php',
+    'admin/views/cron/index.php',
+]
+
+for rel in tables_to_wrap:
+    path = base + '/' + rel
+    c = open(path).read()
+    # Only wrap if not already wrapped
+    if 'vcms-table-wrap' in c:
+        print(f'  SKIP {rel}: already has vcms-table-wrap')
+        continue
+    # Wrap every <table class="vcms-table"> that isn't already inside a wrapper
+    new_c = re.sub(
+        r'(<table class="vcms-table")',
+        r'<div class="vcms-table-wrap">\n\1',
+        c
+    )
+    new_c = re.sub(
+        r'(</table>)(?!\s*</div)',
+        r'\1\n</div>',
+        new_c
+    )
+    if new_c != c:
+        open(path, 'w').write(new_c)
+        fixed.append(f'{rel} (table wrapped)')
+        print(f'  OK  {rel}: table wrapped')
+    else:
+        print(f'  SKIP {rel}: regex did not match')
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 5 — Fix SEO table (inside vcms-card, no wrapper yet)')
+# ═══════════════════════════════════════════════════════════════════════════════
+# SEO index has a form AND a table — make sure table is wrapped
+seo_path = base + '/admin/views/seo/index.php'
+seo = open(seo_path).read()
+# Check if the redirects table is wrapped (it may now be after step 4)
+if 'vcms-table-wrap' in seo:
+    print('  OK  seo/index.php: already wrapped')
+else:
+    print('  SKIP seo/index.php: check manually')
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 6 — Make settings form-table responsive')
+# ═══════════════════════════════════════════════════════════════════════════════
+# The settings table uses vcms-table--form which we handle in CSS already.
+# Wrap it in a div.vcms-table-wrap so it can scroll on very small screens too.
+patch(
+    'admin/views/settings/index.php',
+    '        <table class="vcms-table vcms-table--form">',
+    '        <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">',
+    'wrap settings form-table'
+)
+patch(
+    'admin/views/settings/index.php',
+    '        </table>\n        <div class="vcms-form-actions">',
+    '        </table></div>\n        <div class="vcms-form-actions">',
+    'close settings form-table wrapper'
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 7 — Profile page: make max-width 100% on mobile')
+# ═══════════════════════════════════════════════════════════════════════════════
+patch(
+    'admin/views/profile.php',
+    '<div class="card" style="max-width:520px">',
+    '<div class="card" style="max-width:min(520px,100%)">',
+    'profile card max-width responsive'
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print('\nSTEP 8 — Add vcms-page-header class to views that use ad-hoc h2+link combos')
+# ═══════════════════════════════════════════════════════════════════════════════
+# Forms index
+patch(
+    'admin/views/forms/index.php',
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">',
+    '<div class="vcms-page-header">',
+    'forms index page-header class'
+)
+# API index
+patch(
+    'admin/views/api/index.php',
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem">',
+    '<div class="vcms-page-header">',
+    'api index page-header class'
+)
+
+print(f'\n=== Done — {len(fixed)} changes applied ===')
+for f in fixed:
+    print(f'  ✓ {f}')

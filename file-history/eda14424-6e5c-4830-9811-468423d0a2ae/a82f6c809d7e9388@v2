@@ -1,0 +1,194 @@
+import os
+import subprocess
+
+base = '/var/www/velocms'
+
+# ── 1. PHP OPcache configuration ─────────────────────────────────────────────
+opcache_conf = """\
+; VeloCMS OPcache settings
+; /etc/php/8.5/fpm/conf.d/10-opcache-velocms.ini
+
+opcache.enable=1
+opcache.enable_cli=0
+opcache.memory_consumption=256
+opcache.interned_strings_buffer=16
+opcache.max_accelerated_files=20000
+opcache.revalidate_freq=60
+opcache.validate_timestamps=0
+opcache.save_comments=1
+opcache.fast_shutdown=1
+opcache.jit=tracing
+opcache.jit_buffer_size=64M
+"""
+
+opcache_path = '/etc/php/8.5/fpm/conf.d/10-opcache-velocms.ini'
+with open(opcache_path, 'w') as f:
+    f.write(opcache_conf)
+print('OK  ' + opcache_path)
+
+# ── 2. Nginx fastcgi_cache configuration ─────────────────────────────────────
+# Create cache directory
+os.makedirs('/var/cache/nginx/velocms', exist_ok=True)
+subprocess.run(['chown', 'www-data:www-data', '/var/cache/nginx/velocms'], check=True)
+subprocess.run(['chmod', '750', '/var/cache/nginx/velocms'], check=True)
+print('OK  /var/cache/nginx/velocms (cache dir created)')
+
+nginx_conf = r"""# ── HTTP → HTTPS (both www and non-www) ──────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    server_name webzite-newmedia.com www.webzite-newmedia.com;
+    return 301 https://webzite-newmedia.com$request_uri;
+}
+
+# ── www HTTPS → non-www redirect ─────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name www.webzite-newmedia.com;
+
+    ssl_certificate     /etc/letsencrypt/live/webzite-newmedia.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webzite-newmedia.com/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+    return 301 https://webzite-newmedia.com$request_uri;
+}
+
+# ── FastCGI cache zone (defined in http context via conf.d snippet) ───────────
+# Declared in /etc/nginx/conf.d/velocms_cache_zone.conf
+
+# ── Main HTTPS site ───────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl ipv6only=on;
+    server_name webzite-newmedia.com;
+
+    root  /var/www/velocms/public;
+    index index.php;
+
+    ssl_certificate     /etc/letsencrypt/live/webzite-newmedia.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/webzite-newmedia.com/privkey.pem;
+    include             /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Cache-Status $upstream_cache_status always;
+
+    # Static assets — long TTL, immutable
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location /storage/uploads/ {
+        expires 7d;
+        add_header Cache-Control "public";
+    }
+
+    # Block direct access to storage root (logs, cache, backups)
+    location /storage/ {
+        deny all;
+        return 403;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass  unix:/run/php/php8.5-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param HTTP_HOST $host;
+        include       fastcgi_params;
+
+        # FastCGI cache
+        fastcgi_cache           velocms_cache;
+        fastcgi_cache_valid      200 301 302 10m;
+        fastcgi_cache_valid      404 1m;
+        fastcgi_cache_use_stale  error timeout updating http_500 http_503;
+        fastcgi_cache_lock       on;
+        fastcgi_cache_min_uses   1;
+
+        # Bypass cache for logged-in users and POST requests
+        fastcgi_cache_bypass $no_cache;
+        fastcgi_no_cache     $no_cache;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+"""
+
+cache_zone_conf = """\
+# FastCGI cache zone for VeloCMS
+# Place in /etc/nginx/conf.d/velocms_cache_zone.conf
+
+fastcgi_cache_path /var/cache/nginx/velocms
+    levels=1:2
+    keys_zone=velocms_cache:10m
+    max_size=256m
+    inactive=30m
+    use_temp_path=off;
+
+fastcgi_cache_key "$scheme$request_method$host$request_uri";
+
+# Variables used to skip cache
+map $request_method $no_cache_method {
+    default 0;
+    POST    1;
+}
+
+map $http_cookie $no_cache_cookie {
+    default                 0;
+    "~*velocms_session"     1;
+    "~*velocms_admin"       1;
+}
+
+map "$no_cache_method$no_cache_cookie" $no_cache {
+    "~1" 1;
+    default 0;
+}
+"""
+
+# Write cache zone config
+cache_zone_path = '/etc/nginx/conf.d/velocms_cache_zone.conf'
+with open(cache_zone_path, 'w') as f:
+    f.write(cache_zone_conf)
+print('OK  ' + cache_zone_path)
+
+# Write main nginx site config
+nginx_path = '/etc/nginx/sites-available/velocms'
+with open(nginx_path, 'w') as f:
+    f.write(nginx_conf)
+print('OK  ' + nginx_path)
+
+# ── 3. Test and reload Nginx ─────────────────────────────────────────────────
+test = subprocess.run(['nginx', '-t'], capture_output=True, text=True)
+if test.returncode == 0:
+    subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+    print('OK  nginx reloaded')
+else:
+    print('ERR nginx config test failed:')
+    print(test.stderr)
+    exit(1)
+
+# ── 4. Reload PHP-FPM (picks up OPcache ini) ─────────────────────────────────
+fpm = subprocess.run(['systemctl', 'reload', 'php8.5-fpm'], capture_output=True, text=True)
+if fpm.returncode == 0:
+    print('OK  php8.5-fpm reloaded (OPcache active)')
+else:
+    print('WARN fpm reload:', fpm.stderr[:200])
+
+# ── 5. Verify OPcache is active ──────────────────────────────────────────────
+check = subprocess.run(
+    ['php', '-r', 'var_dump(opcache_get_status(false)["opcache_enabled"] ?? false);'],
+    capture_output=True, text=True
+)
+print('OPcache enabled:', check.stdout.strip())
+
+print('\nPhase 6c done — OPcache + Nginx FastCGI cache active.')

@@ -1,0 +1,556 @@
+#!/usr/bin/env python3
+"""Batch 4a: t() wrap booking/settings.php and booking/resources/*.php"""
+import os
+
+BASE = '/var/www/velocms'
+
+def write(rel, content):
+    path = os.path.join(BASE, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f'  wrote  {rel}')
+
+# ── 1. admin/views/booking/settings.php ──────────────────────────────────────
+write('admin/views/booking/settings.php', r'''<?php
+$flash   = $flash   ?? null;
+$current = $current ?? [];
+
+$boolField = function(string $key, string $label) use ($current): void {
+    $checked = !empty($current[$key]) && $current[$key] !== '0' ? 'checked' : '';
+    echo "<tr><th><label for=\"{$key}\">" . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . "</label></th><td>"
+        . "<input type=\"hidden\" name=\"{$key}\" value=\"0\">"
+        . "<input type=\"checkbox\" id=\"{$key}\" name=\"{$key}\" value=\"1\" {$checked}>"
+        . "</td></tr>\n";
+};
+?>
+<div class="vcms-section-header">
+    <h3><?= t('booking.settings.title', 'Buchungseinstellungen') ?></h3>
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">&#8592; <?= t('nav.bookings', 'Buchungen') ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<form method="post" action="/admin/booking/settings">
+<input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.settings.general', 'Allgemein') ?></h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <?php $boolField('enabled',              t('booking.settings.enable_module',      'Buchungsmodul aktivieren')) ?>
+        <?php $boolField('guest_booking',        t('booking.settings.guest_booking',      'Gastbuchungen erlauben (kein Konto erforderlich)')) ?>
+        <?php $boolField('require_confirmation', t('booking.settings.require_confirmation','Manuelle Bestätigung vor Buchungsfreigabe')) ?>
+        <tr>
+            <th><label><?= t('booking.settings.booking_types', 'Verfügbare Buchungstypen') ?></label></th>
+            <td>
+                <?php
+                $types = json_decode($current['booking_types'] ?? '["hourly","package","product"]', true) ?: [];
+                foreach ([
+                    'hourly'  => t('booking.type.hourly',  'Stündlich'),
+                    'package' => t('booking.type.package', 'Pakete'),
+                    'product' => t('booking.type.product', 'Produkte / Dienstleistungen'),
+                ] as $v => $l): ?>
+                <label class="vcms-checkbox" style="display:block;margin-bottom:.3rem">
+                    <input type="checkbox" name="booking_types[]" value="<?= $v ?>"
+                        <?= in_array($v, $types) ? 'checked' : '' ?>>
+                    <?= $l ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="slot_duration_mins"><?= t('booking.settings.slot_duration', 'Slotdauer (min)') ?></label></th>
+            <td><input type="number" id="slot_duration_mins" name="slot_duration_mins" min="15" step="15"
+                       value="<?= (int)($current['slot_duration_mins'] ?? 60) ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="timezone"><?= t('booking.settings.timezone', 'Zeitzone') ?></label></th>
+            <td><input type="text" id="timezone" name="timezone"
+                       value="<?= e($current['timezone'] ?? 'Europe/Berlin') ?>"
+                       placeholder="Europe/Berlin"></td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.settings.business_hours', 'Geschäftszeiten') ?></h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="business_hours_start"><?= t('booking.settings.opening_time', 'Öffnungszeit') ?></label></th>
+            <td><input type="time" id="business_hours_start" name="business_hours_start"
+                       value="<?= e($current['business_hours_start'] ?? '09:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="business_hours_end"><?= t('booking.settings.closing_time', 'Schließzeit') ?></label></th>
+            <td><input type="time" id="business_hours_end" name="business_hours_end"
+                       value="<?= e($current['business_hours_end'] ?? '21:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label><?= t('booking.settings.open_days', 'Öffnungstage') ?></label></th>
+            <td>
+                <?php
+                $days = json_decode($current['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1,2,3,4,5,6];
+                $dayNames = [
+                    1 => t('day.mon','Mo'), 2 => t('day.tue','Di'),
+                    3 => t('day.wed','Mi'), 4 => t('day.thu','Do'),
+                    5 => t('day.fri','Fr'), 6 => t('day.sat','Sa'),
+                    7 => t('day.sun','So'),
+                ];
+                foreach ($dayNames as $num => $name): ?>
+                <label class="vcms-checkbox" style="display:inline-flex;margin-right:.75rem">
+                    <input type="checkbox" name="business_days[]" value="<?= $num ?>"
+                        <?= in_array($num, $days) ? 'checked' : '' ?>>
+                    <?= $name ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.settings.payment', 'Zahlung') ?></h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="payment_mode"><?= t('booking.settings.payment_mode', 'Zahlungsmodus') ?></label></th>
+            <td>
+                <select id="payment_mode" name="payment_mode" onchange="togglePaymentFields()">
+                    <option value="none"    <?= ($current['payment_mode'] ?? 'none') === 'none'    ? 'selected' : '' ?>><?= t('booking.payment.none',    'Keine Zahlung (nur Anfrage)') ?></option>
+                    <option value="deposit" <?= ($current['payment_mode'] ?? '') === 'deposit' ? 'selected' : '' ?>><?= t('booking.payment.deposit', 'Anzahlung erforderlich') ?></option>
+                    <option value="full"    <?= ($current['payment_mode'] ?? '') === 'full'    ? 'selected' : '' ?>><?= t('booking.payment.full',    'Vollzahlung über Stripe') ?></option>
+                </select>
+            </td>
+        </tr>
+        <tr id="deposit-row" style="display:none">
+            <th><label for="deposit_percent"><?= t('booking.settings.deposit_percent', 'Anzahlung %') ?></label></th>
+            <td><input type="number" id="deposit_percent" name="deposit_percent" min="1" max="100"
+                       value="<?= (int)($current['deposit_percent'] ?? 30) ?>"></td>
+        </tr>
+        <tr id="stripe-row" style="display:none">
+            <th>Stripe</th>
+            <td>
+                <?php $boolField('stripe_enabled', t('booking.settings.stripe_enabled', 'Stripe aktivieren')) ?>
+                <div style="margin-top:.5rem">
+                    <input type="text" name="stripe_pk" placeholder="Publishable key (pk_…)"
+                           value="<?= e($current['stripe_pk'] ?? '') ?>" style="margin-bottom:.5rem">
+                    <input type="password" name="stripe_sk"
+                           placeholder="<?= t('booking.settings.stripe_sk_hint', 'Secret key — leer lassen zum Beibehalten') ?>">
+                </div>
+                <small style="color:#6b7280"><?= t('booking.settings.stripe_note', 'Stripe-Integration ist vorbereitet, aber noch nicht aktiv.') ?></small>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.settings.email_notifications', 'E-Mail-Benachrichtigungen') ?></h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="notification_email"><?= t('booking.settings.notify_owner', 'Inhaber benachrichtigen an') ?></label></th>
+            <td><input type="email" id="notification_email" name="notification_email"
+                       value="<?= e($current['notification_email'] ?? '') ?>"
+                       placeholder="studio@example.com"></td>
+        </tr>
+        <tr>
+            <th><label for="customer_email_subject"><?= t('booking.settings.customer_email_subject', 'Betreff Kundenmail') ?></label></th>
+            <td><input type="text" id="customer_email_subject" name="customer_email_subject"
+                       value="<?= e($current['customer_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="customer_email_body"><?= t('booking.settings.customer_email_body', 'Text Kundenmail') ?></label></th>
+            <td>
+                <textarea id="customer_email_body" name="customer_email_body" rows="6"><?= e($current['customer_email_body'] ?? '') ?></textarea>
+                <small style="color:#6b7280"><?= t('booking.settings.placeholders', 'Platzhalter:') ?> {reference} {customer_name} {customer_email} {resource} {date} {start_time} {end_time} {status} {total}</small>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="owner_email_subject"><?= t('booking.settings.owner_email_subject', 'Betreff Inhabermail') ?></label></th>
+            <td><input type="text" id="owner_email_subject" name="owner_email_subject"
+                       value="<?= e($current['owner_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="owner_email_body"><?= t('booking.settings.owner_email_body', 'Text Inhabermail') ?></label></th>
+            <td>
+                <textarea id="owner_email_body" name="owner_email_body" rows="5"><?= e($current['owner_email_body'] ?? '') ?></textarea>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.settings.integrations', 'Integrationen') ?></h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <?php $boolField('calendar_sync', t('booking.settings.calendar_sync', 'Google Kalender-Synchronisation (OAuth in Website-Einstellungen konfigurieren)')) ?>
+    </table></div>
+</div>
+
+<div class="vcms-form-actions">
+    <button type="submit" class="vcms-btn"><?= t('booking.settings.save', 'Buchungseinstellungen speichern') ?></button>
+</div>
+</form>
+
+<script>
+function togglePaymentFields() {
+    const mode = document.getElementById('payment_mode').value;
+    document.getElementById('deposit-row').style.display = mode === 'deposit' ? '' : 'none';
+    document.getElementById('stripe-row').style.display  = (mode === 'deposit' || mode === 'full') ? '' : 'none';
+}
+togglePaymentFields();
+</script>
+''')
+
+# ── 2. admin/views/booking/resources/index.php ───────────────────────────────
+write('admin/views/booking/resources/index.php', r'''<?php
+$flash = $flash ?? null;
+?>
+<div class="vcms-section-header">
+    <h3><?= t('booking.resources.title', 'Buchungsressourcen') ?></h3>
+    <a href="/admin/booking/resources/create" class="vcms-btn">+ <?= t('booking.resources.new', 'Neue Ressource') ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+
+<p style="color:#6b7280;margin-bottom:1.5rem">
+    <?= t('booking.resources.description', 'Ressourcen sind Räume, Studios oder Bereiche, die gebucht werden können.') ?>
+    <a href="/admin/booking/settings"><?= t('booking.resources.configure_link', 'Buchungseinstellungen konfigurieren') ?> &#8594;</a>
+</p>
+
+<?php if (empty($resources)): ?>
+    <p class="vcms-empty"><?= t('booking.resources.empty', 'Noch keine Ressourcen.') ?>
+        <a href="/admin/booking/resources/create"><?= t('booking.resources.add_first', 'Erste Ressource hinzufügen.') ?></a>
+    </p>
+<?php else: ?>
+<div class="vcms-table-wrap">
+<table class="vcms-table">
+    <thead>
+        <tr>
+            <th><?= t('col.name', 'Name') ?></th>
+            <th><?= t('booking.resources.col.pricing', 'Preisgestaltung') ?></th>
+            <th><?= t('booking.resources.col.hourly', 'Stündlich') ?></th>
+            <th><?= t('booking.resources.col.daily', 'Täglich') ?></th>
+            <th><?= t('col.status', 'Status') ?></th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($resources as $r): ?>
+        <tr>
+            <td><strong><?= e($r['name']) ?></strong><br><small>/booking/<?= e($r['slug']) ?></small></td>
+            <td><?= ucfirst(e($r['pricing_mode'])) ?></td>
+            <td><?= $r['hourly_rate'] !== null ? '&#8364;'.number_format((float)$r['hourly_rate'],2).'/h' : '&#8212;' ?></td>
+            <td><?= isset($r['daily_rate']) && $r['daily_rate'] !== null ? '&#8364;'.number_format((float)$r['daily_rate'],2).'/'.t('booking.resources.day','Tag') : '&#8212;' ?></td>
+            <td>
+                <span class="vcms-badge <?= $r['active'] ? 'vcms-badge--published' : 'vcms-badge--draft' ?>">
+                    <?= $r['active'] ? t('status.active','Aktiv') : t('status.inactive','Inaktiv') ?>
+                </span>
+            </td>
+            <td class="vcms-actions">
+                <a href="/admin/booking/resources/<?= (int)$r['id'] ?>/edit" class="vcms-btn vcms-btn--sm"><?= t('btn.edit','Bearbeiten') ?></a>
+                <form method="post" action="/admin/booking/resources/<?= (int)$r['id'] ?>/delete" style="display:inline">
+                    <input type="hidden" name="_csrf" value="<?= e($csrf ?? '') ?>">
+                    <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                            onclick="return confirm(<?= json_encode(t('booking.resources.confirm_delete','Diese Ressource und alle zugehörigen Pakete/Produkte löschen?')) ?>)"><?= t('btn.delete','Löschen') ?></button>
+                </form>
+            </td>
+        </tr>
+    <?php endforeach ?>
+    </tbody>
+</table>
+</div>
+<?php endif ?>
+<div style="margin-top:1.5rem">
+    <a href="/admin/booking" class="vcms-btn vcms-btn--secondary">&#8592; <?= t('nav.bookings','Buchungen') ?></a>
+</div>
+''')
+
+# ── 3. admin/views/booking/resources/form.php ────────────────────────────────
+write('admin/views/booking/resources/form.php', r'''<?php
+$flash  = $flash  ?? null;
+$error  = $error  ?? null;
+$record = $record ?? null;
+$isEdit = $record && !empty($record['id']);
+?>
+<div class="vcms-section-header">
+    <h3><?= e($formTitle ?? t('booking.resource.title','Ressource')) ?></h3>
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary">&#8592; <?= t('booking.resources.nav','Ressourcen') ?></a>
+</div>
+
+<?php if ($flash): ?>
+    <div class="vcms-alert vcms-alert--success"><?= e($flash) ?></div>
+<?php endif ?>
+<?php if ($error): ?>
+    <div class="vcms-alert vcms-alert--error"><?= e($error) ?></div>
+<?php endif ?>
+
+<div class="vcms-card">
+    <h4 style="margin:0 0 1.25rem"><?= t('booking.resource.details','Ressourcendetails') ?></h4>
+    <form method="post" action="<?= e($action) ?>" class="vcms-form">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+        <div class="vcms-form-row">
+            <div class="vcms-form-group vcms-form-group--wide">
+                <label for="r-name"><?= t('col.name','Name') ?> <span class="vcms-required">*</span></label>
+                <input type="text" id="r-name" name="name"
+                       value="<?= e($record['name'] ?? '') ?>" required autofocus>
+            </div>
+            <div class="vcms-form-group">
+                <label for="r-slug"><?= t('booking.resource.slug','Slug') ?></label>
+                <input type="text" id="r-slug" name="slug"
+                       value="<?= e($record['slug'] ?? '') ?>"
+                       placeholder="<?= t('booking.resource.slug_auto','auto-generiert') ?>"
+                       data-manual="<?= !empty($record['slug']) ? '1' : '0' ?>">
+                <small style="color:#6b7280;display:block;margin-top:.25rem">
+                    <?= t('booking.resource.slug_hint','URL-freundlicher Bezeichner — wird automatisch aus dem Namen generiert. Buchungs-URL:') ?> <code>/booking/{slug}</code>
+                </small>
+            </div>
+        </div>
+
+        <div class="vcms-form-group">
+            <label for="r-desc"><?= t('booking.resource.description','Beschreibung') ?></label>
+            <textarea id="r-desc" name="description" rows="3"><?= e($record['description'] ?? '') ?></textarea>
+        </div>
+
+        <div class="vcms-form-group">
+            <label for="r-image"><?= t('booking.resource.image','Bild-URL') ?></label>
+            <input type="url" id="r-image" name="image" value="<?= e($record['image'] ?? '') ?>" placeholder="https://…">
+        </div>
+
+        <div class="vcms-form-row">
+            <div class="vcms-form-group">
+                <label for="r-pricing"><?= t('booking.resource.pricing_mode','Preismodus') ?></label>
+                <select id="r-pricing" name="pricing_mode" onchange="toggleHourlyRate()">
+                    <?php foreach ([
+                        'hourly'   => t('booking.resource.pricing.hourly',   'Stündlich'),
+                        'daily'    => t('booking.resource.pricing.daily',    'Täglich (pro Tag)'),
+                        'package'  => t('booking.resource.pricing.package',  'Nur Pakete'),
+                        'product'  => t('booking.resource.pricing.product',  'Nur Produkte'),
+                        'combined' => t('booking.resource.pricing.combined', 'Kombiniert (alle Typen)'),
+                    ] as $v => $l): ?>
+                    <option value="<?= $v ?>" <?= ($record['pricing_mode'] ?? 'hourly') === $v ? 'selected' : '' ?>><?= $l ?></option>
+                    <?php endforeach ?>
+                </select>
+            </div>
+            <div class="vcms-form-group" id="hourly-rate-group">
+                <label for="r-rate"><?= t('booking.resource.hourly_rate','Stundensatz (€)') ?></label>
+                <input type="number" id="r-rate" name="hourly_rate" step="0.01" min="0"
+                       value="<?= e($record['hourly_rate'] ?? '') ?>" placeholder="0.00">
+            </div>
+            <div class="vcms-form-group" id="daily-rate-group">
+                <label for="r-daily-rate"><?= t('booking.resource.daily_rate','Tagessatz (€/Tag)') ?></label>
+                <input type="number" id="r-daily-rate" name="daily_rate" step="0.01" min="0"
+                       value="<?= e($record['daily_rate'] ?? '') ?>" placeholder="0.00">
+            </div>
+        </div>
+
+        <div class="vcms-form-group">
+            <label class="vcms-checkbox">
+                <input type="checkbox" name="active" value="1"
+                    <?= ($record['active'] ?? 1) ? 'checked' : '' ?>>
+                <?= t('booking.resource.active','Aktiv (für Kunden sichtbar)') ?>
+            </label>
+        </div>
+
+        <div class="vcms-form-actions">
+            <button type="submit" class="vcms-btn">
+                <?= $isEdit ? t('btn.save_changes','Änderungen speichern') : t('booking.resource.create','Ressource erstellen') ?>
+            </button>
+        </div>
+    </form>
+</div>
+
+<?php if ($isEdit): ?>
+
+<div class="vcms-card" style="margin-top:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.packages.title','Pakete') ?></h4>
+    <p style="color:#6b7280;font-size:.88rem;margin-bottom:1rem">
+        <?= t('booking.packages.description','Festpreisige Zeitblöcke (z. B. „Halber Tag – 4 h – 200 €“).') ?>
+    </p>
+
+    <?php if (!empty($packages)): ?>
+    <div class="vcms-table-wrap" style="margin-bottom:1rem">
+    <table class="vcms-table">
+        <thead><tr>
+            <th><?= t('col.name','Name') ?></th>
+            <th><?= t('booking.packages.col.duration','Dauer') ?></th>
+            <th><?= t('col.price','Preis') ?></th>
+            <th><?= t('col.active','Aktiv') ?></th>
+            <th></th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($packages as $pkg): ?>
+            <tr>
+                <td><strong><?= e($pkg['name']) ?></strong>
+                    <?php if ($pkg['description']): ?><br><small><?= e(mb_substr($pkg['description'],0,60)) ?></small><?php endif ?>
+                </td>
+                <td><?= (int)$pkg['duration_mins'] ?> min</td>
+                <td>&#8364;<?= number_format((float)$pkg['price'],2) ?></td>
+                <td><?= $pkg['active'] ? '&#10003;' : '&#8212;' ?></td>
+                <td class="vcms-actions">
+                    <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/packages/<?= (int)$pkg['id'] ?>/delete" style="display:inline">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                                onclick="return confirm(<?= json_encode(t('booking.packages.confirm_remove','Dieses Paket entfernen?')) ?>)"><?= t('btn.remove','Entfernen') ?></button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif ?>
+
+    <details>
+        <summary class="vcms-btn vcms-btn--secondary vcms-btn--sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:.4rem">
+            + <?= t('booking.packages.add','Paket hinzufügen') ?>
+        </summary>
+        <div style="margin-top:1rem;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem">
+        <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/packages" class="vcms-form">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="vcms-form-row">
+                <div class="vcms-form-group vcms-form-group--wide">
+                    <label><?= t('booking.packages.form.name','Paketname') ?> <span class="vcms-required">*</span></label>
+                    <input type="text" name="pkg_name" placeholder="<?= t('booking.packages.form.name_ph','Halbtages-Session') ?>" required>
+                </div>
+                <div class="vcms-form-group">
+                    <label><?= t('booking.packages.col.duration','Dauer (min)') ?></label>
+                    <input type="number" name="pkg_duration_mins" min="15" step="15" value="240">
+                </div>
+                <div class="vcms-form-group">
+                    <label><?= t('col.price','Preis (€)') ?></label>
+                    <input type="number" name="pkg_price" step="0.01" min="0" value="0" inputmode="decimal">
+                </div>
+            </div>
+            <div class="vcms-form-group">
+                <label><?= t('col.description','Beschreibung') ?></label>
+                <input type="text" name="pkg_description" placeholder="<?= t('booking.packages.form.desc_ph','Was ist enthalten?') ?>">
+            </div>
+            <div class="vcms-form-row">
+                <div class="vcms-form-group">
+                    <label class="vcms-checkbox">
+                        <input type="checkbox" name="pkg_active" value="1" checked> <?= t('status.active','Aktiv') ?>
+                    </label>
+                </div>
+                <div class="vcms-form-group">
+                    <label><?= t('col.sort_order','Reihenfolge') ?></label>
+                    <input type="number" name="pkg_sort_order" value="0" min="0" style="width:80px">
+                </div>
+            </div>
+            <button type="submit" class="vcms-btn"><?= t('booking.packages.add','Paket hinzufügen') ?></button>
+        </form>
+        </div>
+    </details>
+</div>
+
+<div class="vcms-card" style="margin-top:1.5rem">
+    <h4 style="margin:0 0 1rem"><?= t('booking.products.title','Produkte / Dienstleistungen') ?></h4>
+    <p style="color:#6b7280;font-size:.88rem;margin-bottom:1rem">
+        <?= t('booking.products.description','Zusätzliche Leistungen mit Festpreis (z. B. „Mixing – 150 €“, „Mastering – 80 €“).') ?>
+    </p>
+
+    <?php if (!empty($products)): ?>
+    <div class="vcms-table-wrap" style="margin-bottom:1rem">
+    <table class="vcms-table">
+        <thead><tr>
+            <th><?= t('col.name','Name') ?></th>
+            <th><?= t('col.price','Preis') ?></th>
+            <th><?= t('col.active','Aktiv') ?></th>
+            <th></th>
+        </tr></thead>
+        <tbody>
+        <?php foreach ($products as $prod): ?>
+            <tr>
+                <td><strong><?= e($prod['name']) ?></strong>
+                    <?php if ($prod['description']): ?><br><small><?= e(mb_substr($prod['description'],0,60)) ?></small><?php endif ?>
+                </td>
+                <td>&#8364;<?= number_format((float)$prod['price'],2) ?></td>
+                <td><?= $prod['active'] ? '&#10003;' : '&#8212;' ?></td>
+                <td class="vcms-actions">
+                    <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/products/<?= (int)$prod['id'] ?>/delete" style="display:inline">
+                        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+                        <button type="submit" class="vcms-btn vcms-btn--sm vcms-btn--danger"
+                                onclick="return confirm(<?= json_encode(t('booking.products.confirm_remove','Dieses Produkt entfernen?')) ?>)"><?= t('btn.remove','Entfernen') ?></button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach ?>
+        </tbody>
+    </table>
+    </div>
+    <?php endif ?>
+
+    <details>
+        <summary class="vcms-btn vcms-btn--secondary vcms-btn--sm" style="cursor:pointer;display:inline-flex;align-items:center;gap:.4rem">
+            + <?= t('booking.products.add','Produkt hinzufügen') ?>
+        </summary>
+        <div style="margin-top:1rem;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:1.25rem">
+        <form method="post" action="/admin/booking/resources/<?= (int)$record['id'] ?>/products" class="vcms-form">
+            <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+            <div class="vcms-form-row">
+                <div class="vcms-form-group vcms-form-group--wide">
+                    <label><?= t('booking.products.form.name','Dienstleistungsname') ?> <span class="vcms-required">*</span></label>
+                    <input type="text" name="prod_name" placeholder="<?= t('booking.products.form.name_ph','Mixing-Session') ?>" required>
+                </div>
+                <div class="vcms-form-group">
+                    <label><?= t('col.price','Preis (€)') ?></label>
+                    <input type="number" name="prod_price" step="0.01" min="0" value="0" inputmode="decimal">
+                </div>
+            </div>
+            <div class="vcms-form-group">
+                <label><?= t('col.description','Beschreibung') ?></label>
+                <input type="text" name="prod_description" placeholder="<?= t('booking.products.form.desc_ph','Was ist enthalten?') ?>">
+            </div>
+            <div class="vcms-form-row">
+                <div class="vcms-form-group">
+                    <label class="vcms-checkbox">
+                        <input type="checkbox" name="prod_active" value="1" checked> <?= t('status.active','Aktiv') ?>
+                    </label>
+                </div>
+                <div class="vcms-form-group">
+                    <label><?= t('col.sort_order','Reihenfolge') ?></label>
+                    <input type="number" name="prod_sort_order" value="0" min="0" style="width:80px">
+                </div>
+            </div>
+            <button type="submit" class="vcms-btn"><?= t('booking.products.add','Produkt hinzufügen') ?></button>
+        </form>
+        </div>
+    </details>
+</div>
+
+<?php endif ?>
+
+<script>
+function toggleHourlyRate() {
+    const mode  = document.getElementById('r-pricing').value;
+    document.getElementById('hourly-rate-group').style.display = (mode === 'hourly' || mode === 'combined') ? '' : 'none';
+    document.getElementById('daily-rate-group').style.display  = (mode === 'daily'  || mode === 'combined') ? '' : 'none';
+}
+toggleHourlyRate();
+
+var slugInput  = document.getElementById('r-slug');
+var nameInput  = document.getElementById('r-name');
+var slugManual = slugInput ? (slugInput.dataset.manual === '1') : false;
+
+if (slugInput && nameInput) {
+    slugInput.addEventListener('input', function () {
+        slugManual = true;
+        slugInput.dataset.manual = '1';
+    });
+    nameInput.addEventListener('input', function () {
+        if (slugManual) return;
+        var slug = nameInput.value
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .trim()
+            .replace(/[\s]+/g, '-')
+            .replace(/-+/g, '-');
+        slugInput.value = slug;
+    });
+}
+</script>
+''')
+
+print('\nBatch 4a done — booking/settings.php and booking/resources/*.php written.')

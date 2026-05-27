@@ -1,0 +1,136 @@
+import os, re
+
+base = '/var/www/velocms'
+files = {}
+
+# ── cli/commands/UserCreateCommand.php ───────────────────────────────────────
+files['cli/commands/UserCreateCommand.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Cli;
+
+class UserCreateCommand
+{
+    public function __construct(private readonly \VeloCMS\Core\Application $app) {}
+
+    public function run(array $args): void
+    {
+        $db = $this->app->make(\VeloCMS\Core\Database::class);
+
+        // Interactive prompts
+        $email    = $this->prompt('Email: ');
+        $name     = $this->prompt('Name: ');
+        $password = $this->prompt('Password: ');
+        $role     = $this->promptChoice(
+            'Role [superadmin/site-admin/editor/author/viewer] (default: superadmin): ',
+            ['superadmin', 'site-admin', 'editor', 'author', 'viewer'],
+            'superadmin'
+        );
+
+        // Validate
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            echo "Error: invalid email address.\n";
+            exit(1);
+        }
+        if (strlen($password) < 8) {
+            echo "Error: password must be at least 8 characters.\n";
+            exit(1);
+        }
+
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+
+        try {
+            $db->core()->prepare(
+                'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)'
+            )->execute([strtolower(trim($email)), $hash, trim($name), $role]);
+
+            echo "User created successfully.\n";
+            echo "  Email : {$email}\n";
+            echo "  Name  : {$name}\n";
+            echo "  Role  : {$role}\n";
+        } catch (\PDOException $e) {
+            if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                echo "Error: a user with that email already exists.\n";
+            } else {
+                echo "Database error: " . $e->getMessage() . "\n";
+            }
+            exit(1);
+        }
+    }
+
+    private function prompt(string $question): string
+    {
+        echo $question;
+        return trim(fgets(STDIN) ?: '');
+    }
+
+    private function promptChoice(string $question, array $choices, string $default): string
+    {
+        $value = $this->prompt($question);
+        if ($value === '') {
+            return $default;
+        }
+        if (!in_array($value, $choices, true)) {
+            echo "Invalid choice. Using default: {$default}\n";
+            return $default;
+        }
+        return $value;
+    }
+}
+"""
+
+# Write new files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# ── Patch public/index.php — add admin routes require ────────────────────────
+index_path = base + '/public/index.php'
+index = open(index_path).read()
+
+admin_routes_line = "\nrequire $app->basePath('admin/routes.php');\n"
+
+if 'admin/routes.php' not in index:
+    # Insert after the router singleton is made / before $app->run
+    index = index.replace(
+        '$app->run(new Request())',
+        admin_routes_line.lstrip('\n') + '$app->run(new Request())'
+    )
+    open(index_path, 'w').write(index)
+    print('OK  public/index.php (admin routes added)')
+else:
+    print('OK  public/index.php (admin routes already present, skipped)')
+
+# ── Patch cli/velocms — add user:create command ───────────────────────────────
+cli_path = base + '/cli/velocms'
+cli = open(cli_path).read()
+
+user_create_entry = "    'user:create'      => VeloCMS\\Cli\\UserCreateCommand::class,\n"
+
+if 'UserCreateCommand' not in cli:
+    cli = cli.replace(
+        "    'cache:clear'",
+        user_create_entry + "    'cache:clear'"
+    )
+    open(cli_path, 'w').write(cli)
+    print('OK  cli/velocms (user:create command added)')
+else:
+    print('OK  cli/velocms (user:create already present, skipped)')
+
+# ── Patch composer.json — ensure VeloCMS\\Admin\\ mapping ────────────────────
+composer_path = base + '/composer.json'
+composer = open(composer_path).read()
+
+if 'VeloCMS\\\\Admin\\\\' not in composer and 'VeloCMS\\Admin\\' not in composer:
+    # Add Admin mapping if missing
+    composer = composer.replace(
+        '"VeloCMS\\\\Cli\\\\": "cli/commands/"',
+        '"VeloCMS\\\\Cli\\\\": "cli/commands/",\n            "VeloCMS\\\\Admin\\\\": "admin/controllers/"'
+    )
+    open(composer_path, 'w').write(composer)
+    print('OK  composer.json (VeloCMS\\Admin\\ mapping added)')
+else:
+    print('OK  composer.json (VeloCMS\\Admin\\ already mapped, skipped)')
+
+print('\nBatch 3 done.')

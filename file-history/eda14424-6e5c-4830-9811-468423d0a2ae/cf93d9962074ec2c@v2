@@ -1,0 +1,190 @@
+"""vcms_s11b_daily_type.py
+1. Add 'Daily' toggle to Booking Types in settings view
+2. Update SettingsAdminController to handle bktype_daily + daily_checkin/checkout times
+3. Update autosave.js to handle bk-type-daily → bk-daily-row toggle
+"""
+BASE = '/var/www/velocms'
+import subprocess
+
+def php_lint(path, label):
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label}')
+    if r.returncode != 0:
+        print(r.stderr)
+
+# ── 1. Update autosave.js — add 'daily' to type toggle handler ───────────────
+js_path = BASE + '/public/assets/admin/autosave.js'
+js = open(js_path).read()
+
+old_type_loop = (
+    "    ['package', 'product'].forEach(function (t) {\n"
+    "      var cb  = document.getElementById('bk-type-' + t);\n"
+    "      var sec = document.getElementById('bk-inline-' + t + 's');\n"
+    "      if (cb && sec) {\n"
+    "        cb.addEventListener('change', function () {\n"
+    "          sec.style.display = cb.checked ? '' : 'none';\n"
+    "        });\n"
+    "      }\n"
+    "    });"
+)
+new_type_loop = (
+    "    ['package', 'product'].forEach(function (t) {\n"
+    "      var cb  = document.getElementById('bk-type-' + t);\n"
+    "      var sec = document.getElementById('bk-inline-' + t + 's');\n"
+    "      if (cb && sec) {\n"
+    "        cb.addEventListener('change', function () {\n"
+    "          sec.style.display = cb.checked ? '' : 'none';\n"
+    "        });\n"
+    "      }\n"
+    "    });\n"
+    "    // Daily type → daily settings row\n"
+    "    var dailyCb  = document.getElementById('bk-type-daily');\n"
+    "    var dailyRow = document.getElementById('bk-daily-row');\n"
+    "    if (dailyCb && dailyRow) {\n"
+    "      dailyCb.addEventListener('change', function () {\n"
+    "        dailyRow.style.display = dailyCb.checked ? '' : 'none';\n"
+    "      });\n"
+    "    }"
+)
+
+if 'bk-type-daily' not in js:
+    if old_type_loop in js:
+        js = js.replace(old_type_loop, new_type_loop)
+        with open(js_path, 'w') as f:
+            f.write(js)
+        print('OK  autosave.js — daily type toggle added')
+    else:
+        print('ERR autosave.js — type loop pattern not found')
+else:
+    print('SKIP autosave.js — daily type already added')
+
+# ── 2. Update settings/index.php — add Daily toggle + daily UI ──────────────
+view_path = BASE + '/admin/views/settings/index.php'
+view = open(view_path).read()
+
+# a) Add $hasDaily variable after $hasProduct in PHP header
+old_has = (
+    "    $hasHourly  = in_array('hourly',  $bkTypes);\n"
+    "    $hasPackage = in_array('package', $bkTypes);\n"
+    "    $hasProduct = in_array('product', $bkTypes);"
+)
+new_has = (
+    "    $hasHourly  = in_array('hourly',  $bkTypes);\n"
+    "    $hasPackage = in_array('package', $bkTypes);\n"
+    "    $hasProduct = in_array('product', $bkTypes);\n"
+    "    $hasDaily   = in_array('daily',   $bkTypes);"
+)
+
+# b) Add Daily toggle after Products toggle in the booking types section
+old_product_toggle = (
+    "                        <label class=\"vcms-toggle\">\n"
+    "                            <input type=\"hidden\"   name=\"bktype_product\" value=\"0\">\n"
+    "                            <input type=\"checkbox\" name=\"bktype_product\" value=\"1\"\n"
+    "                                   <?= $hasProduct ? 'checked' : '' ?> id=\"bk-type-product\">\n"
+    "                            <span class=\"vcms-toggle__track\"></span>\n"
+    "                            <span class=\"vcms-toggle__label\">Products / Services</span>\n"
+    "                        </label>"
+)
+new_product_and_daily = (
+    "                        <label class=\"vcms-toggle\">\n"
+    "                            <input type=\"hidden\"   name=\"bktype_product\" value=\"0\">\n"
+    "                            <input type=\"checkbox\" name=\"bktype_product\" value=\"1\"\n"
+    "                                   <?= $hasProduct ? 'checked' : '' ?> id=\"bk-type-product\">\n"
+    "                            <span class=\"vcms-toggle__track\"></span>\n"
+    "                            <span class=\"vcms-toggle__label\">Products / Services</span>\n"
+    "                        </label>\n"
+    "                        <label class=\"vcms-toggle\">\n"
+    "                            <input type=\"hidden\"   name=\"bktype_daily\" value=\"0\">\n"
+    "                            <input type=\"checkbox\" name=\"bktype_daily\" value=\"1\"\n"
+    "                                   <?= $hasDaily ? 'checked' : '' ?> id=\"bk-type-daily\">\n"
+    "                            <span class=\"vcms-toggle__track\"></span>\n"
+    "                            <span class=\"vcms-toggle__label\">Daily (overnight / multi-day)</span>\n"
+    "                        </label>\n"
+    "                        <!-- Daily check-in / check-out times -->\n"
+    "                        <div id=\"bk-daily-row\" style=\"<?= $hasDaily ? '' : 'display:none' ?>;padding-left:3.6rem;display:<?= $hasDaily ? 'flex' : 'none' ?>;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.875rem\">\n"
+    "                            <label style=\"color:#6b7280\">Check-in:\n"
+    "                                <input type=\"time\" name=\"daily_checkin_time\"\n"
+    "                                       value=\"<?= e($bk['daily_checkin_time'] ?? '15:00') ?>\"\n"
+    "                                       style=\"margin-left:.4rem;width:108px\">\n"
+    "                            </label>\n"
+    "                            <label style=\"color:#6b7280\">Check-out:\n"
+    "                                <input type=\"time\" name=\"daily_checkout_time\"\n"
+    "                                       value=\"<?= e($bk['daily_checkout_time'] ?? '11:00') ?>\"\n"
+    "                                       style=\"margin-left:.4rem;width:108px\">\n"
+    "                            </label>\n"
+    "                            <small style=\"color:#9ca3af\">Times used for daily bookings check-in &amp; check-out.</small>\n"
+    "                        </div>"
+)
+
+changed = 0
+for old, new, label in [
+    (old_has,             new_has,             '$hasDaily variable'),
+    (old_product_toggle,  new_product_and_daily, 'Daily toggle + UI'),
+]:
+    if old in view:
+        view = view.replace(old, new)
+        changed += 1
+        print(f'OK  settings/index.php — {label}')
+    elif label == 'Daily toggle + UI' and 'bk-type-daily' in view:
+        print(f'SKIP settings/index.php — {label} already present')
+    else:
+        print(f'ERR settings/index.php — pattern not found for {label}')
+
+with open(view_path, 'w') as f:
+    f.write(view)
+
+# ── 3. Update SettingsAdminController — add bktype_daily + daily times ───────
+ctrl_path = BASE + '/modules/settings/admin/controllers/SettingsAdminController.php'
+ctrl = open(ctrl_path).read()
+
+old_types_block = (
+    "            // Booking types from individual toggles\n"
+    "            $types = [];\n"
+    "            if ($request->post('bktype_hourly',  '0') === '1') $types[] = 'hourly';\n"
+    "            if ($request->post('bktype_package', '0') === '1') $types[] = 'package';\n"
+    "            if ($request->post('bktype_product', '0') === '1') $types[] = 'product';\n"
+    "            $model->set('booking', 'booking_types', json_encode($types));"
+)
+new_types_block = (
+    "            // Booking types from individual toggles\n"
+    "            $types = [];\n"
+    "            if ($request->post('bktype_hourly',  '0') === '1') $types[] = 'hourly';\n"
+    "            if ($request->post('bktype_package', '0') === '1') $types[] = 'package';\n"
+    "            if ($request->post('bktype_product', '0') === '1') $types[] = 'product';\n"
+    "            if ($request->post('bktype_daily',   '0') === '1') $types[] = 'daily';\n"
+    "            $model->set('booking', 'booking_types', json_encode($types));"
+)
+
+old_scalar = (
+    "                'section_general_open', 'section_hours_open',\n"
+    "                'section_payment_open', 'section_email_open', 'section_integrations_open',"
+)
+new_scalar = (
+    "                'section_general_open', 'section_hours_open',\n"
+    "                'section_payment_open', 'section_email_open', 'section_integrations_open',\n"
+    "                'daily_checkin_time', 'daily_checkout_time',"
+)
+
+for old, new, label in [
+    (old_types_block, new_types_block, 'bktype_daily'),
+    (old_scalar,      new_scalar,      'daily time scalar keys'),
+]:
+    if old in ctrl:
+        ctrl = ctrl.replace(old, new)
+        print(f'OK  SettingsAdminController — {label}')
+    elif 'bktype_daily' in ctrl and label == 'bktype_daily':
+        print(f'SKIP SettingsAdminController — {label} already present')
+    else:
+        print(f'ERR SettingsAdminController — pattern not found for {label}')
+
+with open(ctrl_path, 'w') as f:
+    f.write(ctrl)
+
+# ── 4. PHP syntax checks ─────────────────────────────────────────────────────
+for path, label in [
+    (ctrl_path, 'SettingsAdminController.php'),
+    (view_path, 'settings/index.php'),
+]:
+    php_lint(path, label)
+
+print('\nDone.')

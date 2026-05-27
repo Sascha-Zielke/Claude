@@ -1,0 +1,278 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── modules/search/module.json ────────────────────────────────────────────────
+files['modules/search/module.json'] = """{
+    "name": "search",
+    "label": "Search",
+    "version": "1.0.0",
+    "description": "Full-text search across pages and posts.",
+    "author": "VeloCMS",
+    "dependencies": ["pages", "blog"]
+}
+"""
+
+# ── modules/search/SearchModule.php ──────────────────────────────────────────
+files['modules/search/SearchModule.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Search;
+
+use VeloCMS\Core\Module;
+use VeloCMS\Core\Router;
+use VeloCMS\Modules\Search\Controllers\SearchController;
+
+class SearchModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/search', [SearchController::class, 'index']);
+    }
+}
+"""
+
+# ── modules/search/models/SearchIndex.php ────────────────────────────────────
+files['modules/search/models/SearchIndex.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Search\Models;
+
+class SearchIndex
+{
+    public function __construct(private readonly \PDO $pdo) {}
+
+    /**
+     * Full-text boolean search. Title matches weighted 3x over body.
+     * @return array<int, array<string,mixed>>
+     */
+    public function search(string $query, int $limit = 20): array
+    {
+        if (trim($query) === '') return [];
+
+        $q = $this->booleanQuery($query);
+
+        $stmt = $this->pdo->prepare(
+            'SELECT *,
+                    (MATCH(title) AGAINST (? IN BOOLEAN MODE) * 3
+                     + MATCH(body)  AGAINST (? IN BOOLEAN MODE)) AS score
+             FROM search_index
+             WHERE MATCH(title, body) AGAINST (? IN BOOLEAN MODE)
+             ORDER BY score DESC
+             LIMIT ?'
+        );
+        $stmt->execute([$q, $q, $q, $limit]);
+        return $stmt->fetchAll();
+    }
+
+    /** Quick autocomplete: title-only match, returns 8 suggestions. */
+    public function autocomplete(string $query): array
+    {
+        if (strlen(trim($query)) < 2) return [];
+        $stmt = $this->pdo->prepare(
+            'SELECT title, url FROM search_index
+             WHERE title LIKE ?
+             ORDER BY title
+             LIMIT 8'
+        );
+        $stmt->execute(['%' . $query . '%']);
+        return $stmt->fetchAll();
+    }
+
+    public function upsert(string $type, int $id, string $title, string $body, string $url): void
+    {
+        $this->pdo->prepare(
+            'INSERT INTO search_index (entity_type, entity_id, title, body, url)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE title=VALUES(title), body=VALUES(body), url=VALUES(url),
+             updated_at=NOW()'
+        )->execute([$type, $id, $title, strip_tags($body), $url]);
+    }
+
+    public function remove(string $type, int $id): void
+    {
+        $this->pdo->prepare(
+            'DELETE FROM search_index WHERE entity_type = ? AND entity_id = ?'
+        )->execute([$type, $id]);
+    }
+
+    public function rebuildAll(\PDO $pdo): int
+    {
+        $pdo->exec('TRUNCATE TABLE search_index');
+        $count = 0;
+
+        $pages = $pdo->query(
+            "SELECT id, title, body, slug FROM pages WHERE status='published' AND deleted_at IS NULL"
+        )->fetchAll();
+        foreach ($pages as $p) {
+            $this->upsert('page', (int)$p['id'], $p['title'], $p['body'], '/' . $p['slug']);
+            $count++;
+        }
+
+        $posts = $pdo->query(
+            "SELECT id, title, body, slug FROM posts WHERE status='published' AND deleted_at IS NULL"
+        )->fetchAll();
+        foreach ($posts as $p) {
+            $this->upsert('post', (int)$p['id'], $p['title'], $p['body'], '/blog/' . $p['slug']);
+            $count++;
+        }
+
+        return $count;
+    }
+
+    private function booleanQuery(string $raw): string
+    {
+        $words = preg_split('/\s+/', trim($raw)) ?: [];
+        $parts = [];
+        foreach ($words as $word) {
+            $clean = preg_replace('/[^\w\x80-\xff]/', '', $word);
+            if ($clean !== '' && strlen($clean) >= 3) {
+                $parts[] = '+' . $clean . '*';
+            }
+        }
+        return $parts ? implode(' ', $parts) : '+' . trim($raw) . '*';
+    }
+}
+"""
+
+# ── modules/search/controllers/SearchController.php ──────────────────────────
+files['modules/search/controllers/SearchController.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Modules\Search\Controllers;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Core\Request;
+use VeloCMS\Core\Response;
+use VeloCMS\Core\View;
+use VeloCMS\Modules\Search\Models\SearchIndex;
+
+class SearchController
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function index(Request $request, array $params): Response
+    {
+        $q       = trim($request->query('q', ''));
+        $db      = $this->app->make(Database::class)->core();
+        $index   = new SearchIndex($db);
+
+        // JSON autocomplete endpoint
+        if ($request->header('Accept', '') === 'application/json' || $request->query('format') === 'json') {
+            $suggestions = $index->autocomplete($q);
+            return (new Response())->json(['data' => $suggestions]);
+        }
+
+        $results = $q !== '' ? $index->search($q) : [];
+
+        $view = new View($this->app->basePath('themes/default/layouts'));
+        $html = $view->with([
+            'title'   => $q !== '' ? 'Search: ' . $q : 'Search',
+            'query'   => $q,
+            'results' => $results,
+        ])->render('search.php');
+
+        return (new Response())->html($html);
+    }
+}
+"""
+
+# ── themes/default/layouts/search.php ────────────────────────────────────────
+files['themes/default/layouts/search.php'] = r"""<?php
+ob_start(); ?>
+<div class="search-page">
+    <h1>Search</h1>
+    <form class="search-form" action="/search" method="get">
+        <input type="search" name="q" value="<?= e($query ?? '') ?>"
+               placeholder="Search pages and posts..." autocomplete="off"
+               id="search-input">
+        <button type="submit">Search</button>
+    </form>
+
+    <?php if (!empty($query) && empty($results)): ?>
+        <p class="search-empty">No results found for <strong><?= e($query) ?></strong>.</p>
+    <?php elseif (!empty($results)): ?>
+        <p class="search-count"><?= count($results) ?> result<?= count($results) !== 1 ? 's' : '' ?>
+           for <strong><?= e($query) ?></strong></p>
+        <ul class="search-results">
+        <?php foreach ($results as $r): ?>
+            <li class="search-result">
+                <a href="<?= e($r['url']) ?>"><?= e($r['title']) ?></a>
+                <span class="search-type"><?= e($r['entity_type']) ?></span>
+            </li>
+        <?php endforeach; ?>
+        </ul>
+    <?php endif; ?>
+</div>
+<?php
+$bodyContent = ob_get_clean();
+$metaTitle   = 'Search';
+require __DIR__ . '/main.php';
+"""
+
+# ── cli/commands/SearchReindexCommand.php ─────────────────────────────────────
+files['cli/commands/SearchReindexCommand.php'] = r"""<?php declare(strict_types=1);
+namespace VeloCMS\Cli;
+
+use VeloCMS\Core\Application;
+use VeloCMS\Core\Database;
+use VeloCMS\Modules\Search\Models\SearchIndex;
+
+class SearchReindexCommand
+{
+    public function __construct(private readonly Application $app) {}
+
+    public function run(array $args): void
+    {
+        $db    = $this->app->make(Database::class)->core();
+        $index = new SearchIndex($db);
+        echo "Rebuilding search index...\n";
+        $count = $index->rebuildAll($db);
+        echo "Done. Indexed {$count} documents.\n";
+    }
+}
+"""
+
+# Add search result CSS to frontend theme
+search_css = """
+/* Search */
+.search-form         { display:flex; gap:.5rem; margin:1.5rem 0; }
+.search-form input   { flex:1; padding:.6rem 1rem; border:1px solid #cbd5e1; border-radius:6px; font-size:1rem; }
+.search-form button  { padding:.6rem 1.2rem; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer; }
+.search-form button:hover { background:#1d4ed8; }
+.search-count        { color:#64748b; margin-bottom:1rem; }
+.search-empty        { color:#64748b; margin-top:1rem; }
+.search-results      { list-style:none; padding:0; }
+.search-result       { border-bottom:1px solid #e2e8f0; padding:.75rem 0; display:flex; align-items:baseline; justify-content:space-between; }
+.search-result a     { font-size:1.05rem; font-weight:500; text-decoration:none; color:#1e293b; }
+.search-result a:hover { color:#2563eb; }
+.search-type         { font-size:.75rem; background:#f1f5f9; color:#64748b; padding:.15em .5em; border-radius:9999px; }
+"""
+
+theme_style_path = base + '/themes/default/assets/style.css'
+style = open(theme_style_path).read()
+if '.search-form' not in style:
+    with open(theme_style_path, 'a') as f:
+        f.write(search_css)
+    print('OK  themes/default/assets/style.css (search CSS added)')
+else:
+    print('OK  themes/default/assets/style.css (search CSS already present)')
+
+# Write all files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+# Patch cli/velocms to add search:reindex command
+cli_path = base + '/cli/velocms'
+cli = open(cli_path).read()
+if 'SearchReindexCommand' not in cli:
+    cli = cli.replace(
+        "    'cache:clear'",
+        "    'search:reindex'   => VeloCMS\\Cli\\SearchReindexCommand::class,\n    'cache:clear'"
+    )
+    open(cli_path, 'w').write(cli)
+    print('OK  cli/velocms (search:reindex added)')
+else:
+    print('OK  cli/velocms (search:reindex already present)')
+
+print('\nPhase 4c done — search module written.')

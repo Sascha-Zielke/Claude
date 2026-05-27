@@ -1,0 +1,34 @@
+---
+name: project-velocms
+description: VeloCMS - modular PHP CMS being built from scratch with Claude Code as lead developer
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: eda14424-6e5c-4830-9811-468423d0a2ae
+---
+
+VeloCMS is a modular, multi-tenant PHP CMS being built from scratch on a dedicated server.
+
+**Why:** Sascha wants a custom CMS with maximum AI-agent autonomy built in from day one.
+
+**How to apply:** Always read VELOCMS_MASTERPLAN.md on the server before any coding task. That file is the single source of truth.
+
+## Key facts
+- Server: Ubuntu 26.04 LTS, IP 95.217.185.113, SSH as root (no key file needed — host cached)
+- GitHub: Sascha-Zielke/velocms (private repo)
+- Codebase root on server: /var/www/velocms/
+- Stack: PHP 8.2+, MySQL 8.0+, Nginx, Vanilla JS — NO frameworks
+- Multi-tenancy: one site = one MySQL database (DB-level tenant isolation)
+- Namespace: VeloCMS\ (PSR-4)
+
+## Current phase
+Phase 1 - Foundation. VELOCMS_MASTERPLAN.md created (696 lines). 
+Server stack (Nginx, PHP, MySQL) NOT yet installed.
+Nothing committed to GitHub yet.
+
+## Masterplan location
+/var/www/velocms/VELOCMS_MASTERPLAN.md — covers: architecture, full feature list, DB conventions, security rules, coding standards, Git conventions, module guide, AI agent operating instructions, 6 development phases.
+
+## Links
+- [[user-sascha]] — user profile
+- [[feedback-velocms]] — project-specific feedback

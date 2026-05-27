@@ -1,0 +1,7 @@
+# 🧪 CSS Test
+
+<div class="test-box">
+WENN DU DAS SIEHST (rote Box mit blauem Rand) — funktioniert CSS! ✅
+</div>
+
+Falls NICHTS da ist → CSS ist nicht aktiviert ❌

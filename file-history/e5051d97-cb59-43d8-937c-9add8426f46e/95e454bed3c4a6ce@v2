@@ -1,0 +1,195 @@
+---
+tags: [veloSolutions, velocms, apps, übersicht]
+status: aktiv
+---
+
+# veloCMS — Apps Übersicht
+
+Alle Apps, die veloCMS ausmachen. Jede App ist ein eigenständiges System.
+
+---
+
+## 📦 Core Apps (müssen für jedes veloCMS existieren)
+
+| App | Beschreibung | Status |
+|-----|-------------|--------|
+| **Dashboard** | Übersicht + Schnellzugriff | [[Dashboard-App/_index\|Info]] |
+| **Visual Editor** | Frontend-Editor mit Live-Preview | [[Visual-Editor-App/_index\|Info]] |
+| **Navigation** | Seiten-Management + Menu-Sortierung | [[Navigation-App/_index\|Info]] |
+| **Blog** | Blog-Beiträge mit Formatierung | [[Blog-App/_index\|Info]] |
+| **Benutzer** | User Management + Rollen | [[Benutzer-App/_index\|Info]] |
+| **Übersetzungen** | API-Integration + Glossar | [[Translation-App/Translation-App\|Info]] |
+| **Buchungen** | Booking-Tool Creator + Placement | [[Booking-App/_index\|Info]] |
+
+---
+
+## 🎯 App-Struktur
+
+Jede App folgt diesem Muster:
+
+```
+Apps/[AppName]/
+├── _index.md oder [AppName].md    (Anforderungen)
+├── Advanced-Ideas.md              (Phase 2-3 Ideen)
+├── Masterplan_[app-name].md       (Claude Code schreibt)
+└── Resume_[app-name].md           (Claude Code schreibt)
+```
+
+---
+
+## 📝 Detaillierte App-Beschreibungen
+
+### 1. Dashboard
+**Zweck:** Zentrale Übersicht + Schnellzugriff
+
+**Features:**
+- Willkommen-Screen mit Site-Status
+- Schnelllinks zu wichtigen Apps (Visual Editor, Blog, Navigation)
+- Benachrichtigungen (ausstehende Übersetzungen, Booking-Anfragen)
+- Recent Activity Log
+
+**Link:** [[Dashboard-App/_index]]
+
+---
+
+### 2. Visual Editor ⭐ (CRITICAL)
+**Zweck:** Frontend-Inhalte direkt bearbeiten mit Live-Preview
+
+**Besonderheit:** Das gesamte Frontend wird im Editor gespiegelt
+
+**Features:**
+- Seitenliste (alle Seiten aus Navigation)
+- Split-View: Editor links, Frontend-Preview rechts
+- **Live-Update:** Änderungen erscheinen sofort im Preview (kein Reload)
+- Text-Editing: Texte klickbar, inline editierbar
+- Element-Verschieben: Drag-and-Drop auf der Preview-Seite
+- Booking-Tools positionieren: Aus Booking-App wählen, an Position ziehen
+- Undo/Redo
+- Auto-Save: Änderungen werden während Typing gespeichert
+
+**Beispiel-Workflow:**
+1. User wählt "About Us" Seite
+2. Frontend wird rechts angezeigt
+3. User klickt auf Text "Über uns..." im Preview
+4. Text wird links editierbar (Cursor im Editor)
+5. User tippt neue Überschrift
+6. Preview updated SOFORT (kein F5 nötig)
+7. User zieht Booking-Tool auf die Seite
+8. Booking-Tool wird positioniert
+9. Speichern (automatisch)
+
+**Link:** [[Visual-Editor-App/_index]]
+
+---
+
+### 3. Navigation
+**Zweck:** Seiten-Verwaltung + Menu-Struktur
+
+**Features:**
+- Neue Seite erstellen: Name + Slug
+- Seiten löschen
+- Menu-Reihenfolge (Drag-and-Drop)
+- Parent-Child Struktur (Untermenü)
+- Sichtbarkeit Toggle (Seite im Menu anzeigen/verstecken)
+- Wenn neue Seite erstellt: Erscheint leer im Visual Editor (zum Befüllen)
+
+**Workflow:**
+1. "Neue Seite" + "Services"
+2. Seite wird erstellt
+3. Im Visual Editor leer (zum Befüllen)
+4. Im Navigation-Menu automatisch hinzugefügt
+
+**Link:** [[Navigation-App/_index]]
+
+---
+
+### 4. Blog
+**Zweck:** Blog-Beiträge erstellen und verwalten
+
+**Features:**
+- Beitrag-Editor: Titel + Slug + Content
+- Rich Text Editor mit Formatierungsoptionen:
+  - Bold, Italic, Underline
+  - Überschriften (H1-H6)
+  - Listen (ungeordnet, geordnet)
+  - Links
+  - Zitate
+  - Code-Blöcke
+  - Bilder einfügen (aus Media)
+- Meta-Beschreibung (für SEO)
+- Autor
+- Veröffentlichungsdatum
+- Status: Draft / Published
+- Beiträge-Liste mit Filterung
+
+**Link:** [[Blog-App/_index]]
+
+---
+
+### 5. Benutzer
+**Zweck:** Benutzerverwaltung für das CMS
+
+**Features:**
+- Benutzer erstellen/editieren/löschen
+- Benutzername + Passwort
+- Email
+- Rollen zuweisen:
+  - **Admin:** Vollzugriff
+  - **Editor:** Visual Editor, Blog, Navigation
+  - **Author:** Nur Blog schreiben
+  - **Viewer:** Nur lesen
+- Permissions pro Rolle definieren
+- Last Login Tracking
+
+**Link:** [[Benutzer-App/_index]]
+
+---
+
+### 6. Übersetzungen
+**Zweck:** API-Integration + Glossar-Verwaltung
+
+**Features:**
+- DeepL API Key hinterlegen
+- Anthropic API Key hinterlegen
+- Glossar bearbeiten:
+  - Begriff + Übersetzung (pro Sprachenpaar)
+  - Sperrwörter definieren (nicht übersetzen)
+  - Glossar-Import/Export (CSV)
+- Translation Status pro App
+- Fehlerlog (fehlgeschlagene Übersetzungen)
+
+**Anmerkung:** Die eigentliche Translation der Inhalte passiert in der Translation-App. Hier nur die Verwaltung von APIs + Glossar.
+
+**Link:** [[Translation-App/Translation-App]]
+
+---
+
+### 7. Buchungen
+**Zweck:** Booking-Tools erstellen und positionieren
+
+**Features:**
+- Booking-Tool-Creator:
+  - Typ wählen (z.B. "Termin buchen", "Produkt wählen")
+  - Felder definieren (Name, Email, Datum, etc.)
+  - Styling (Farben, Text)
+  - Nachricht nach Buchung (Bestätigung)
+- Tool-Liste mit Vorschau
+- Auf welcher Seite soll es angezeigt werden? (Select)
+- Im Visual Editor: Tool verschieben + positionieren
+
+**Workflow:**
+1. Neue Booking-App: "Termin buchen"
+2. Felder: Name, Email, Datum, Zeit
+3. Seite wählen: "Services"
+4. Im Visual Editor: Tool auf die Seite ziehen, positionieren
+5. Speichern
+
+**Link:** [[Booking-App/_index]]
+
+---
+
+## 🔗 Weitere Ressourcen
+
+- [[veloCMS-Architecture|veloCMS Core-Architektur]]
+- [[App-Development-Guide|App-Development Guide]]
+- [[../veloCMS-Architecture|veloCMS Architektur]]

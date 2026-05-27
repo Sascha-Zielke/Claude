@@ -1,0 +1,483 @@
+"""vcms_s10c_controllers.py
+- SettingsAdminController::update() — AJAX JSON response + per-day hours + section state + booking types
+- ResourceAdminController storePackage/deletePackage/storeProduct/deleteProduct — AJAX JSON responses
+- Booking::generateAvailableSlots() — per-day config + half/full day support
+"""
+BASE = '/var/www/velocms'
+
+# ── 1. SettingsAdminController::update() ────────────────────────────────────
+ctrl_path = BASE + '/modules/settings/admin/controllers/SettingsAdminController.php'
+ctrl = open(ctrl_path).read()
+
+old_update_head = (
+    "    public function update(Request $request, array $params): Response\n"
+    "    {\n"
+    "        $auth = $this->auth();\n"
+    "        $auth->requireLogin();\n"
+    "        $auth->verifyCsrf();\n"
+    "\n"
+    "        $module = $params['module'] ?? '';\n"
+    "\n"
+    "        $pdo   = $this->app->make(Database::class)->core();\n"
+    "        $model = new Setting($pdo);\n"
+    "\n"
+    "        if ($module === 'booking') {\n"
+    "            // Scalar fields\n"
+    "            $scalarKeys = [\n"
+    "                'enabled', 'guest_booking', 'require_confirmation',\n"
+    "                'payment_mode', 'deposit_percent',\n"
+    "                'stripe_enabled', 'stripe_pk', 'stripe_sk',\n"
+    "                'notification_email',\n"
+    "                'customer_email_subject', 'customer_email_body',\n"
+    "                'owner_email_subject',    'owner_email_body',\n"
+    "                'business_hours_start',   'business_hours_end',\n"
+    "                'slot_duration_mins', 'timezone', 'calendar_sync',\n"
+    "            ];\n"
+    "            foreach ($scalarKeys as $key) {\n"
+    "                $model->set('booking', $key, (string) $request->post($key, ''));\n"
+    "            }\n"
+    "            // Array fields\n"
+    "            $days  = array_map('intval', (array) $request->post('business_days', []));\n"
+    "            $model->set('booking', 'business_days', json_encode($days));\n"
+    "            $types = (array) $request->post('booking_types', []);\n"
+    "            $model->set('booking', 'booking_types', json_encode($types));\n"
+    "\n"
+    "            $_SESSION['_flash'] = 'Booking settings saved.';\n"
+    "            return $this->redirect('/admin/settings?tab=booking');\n"
+    "        }\n"
+    "\n"
+    "        if (!isset(self::DEFINITIONS[$module])) {\n"
+    "            return $this->redirect('/admin/settings');\n"
+    "        }\n"
+    "\n"
+    "        foreach (self::DEFINITIONS[$module] as $field) {\n"
+    "            $value = $request->post($field['key'], $field['default']);\n"
+    "            $model->set($module, $field['key'], (string) $value);\n"
+    "        }\n"
+    "\n"
+    "        $_SESSION['_flash'] = ucfirst($module) . ' settings saved.';\n"
+    "        return $this->redirect('/admin/settings');\n"
+    "    }"
+)
+
+new_update = (
+    "    public function update(Request $request, array $params): Response\n"
+    "    {\n"
+    "        $auth   = $this->auth();\n"
+    "        $auth->requireLogin();\n"
+    "        $isAjax = $request->header('X-Requested-With') === 'XMLHttpRequest';\n"
+    "\n"
+    "        if (!$auth->verifyCsrf()) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);\n"
+    "            return $this->redirect('/admin/settings');\n"
+    "        }\n"
+    "\n"
+    "        $module = $params['module'] ?? '';\n"
+    "        $pdo    = $this->app->make(Database::class)->core();\n"
+    "        $model  = new Setting($pdo);\n"
+    "\n"
+    "        if ($module === 'booking') {\n"
+    "            // Scalar settings\n"
+    "            $scalarKeys = [\n"
+    "                'enabled', 'guest_booking', 'require_confirmation',\n"
+    "                'payment_mode', 'deposit_percent',\n"
+    "                'stripe_enabled', 'stripe_pk', 'stripe_sk',\n"
+    "                'notification_email',\n"
+    "                'customer_email_subject', 'customer_email_body',\n"
+    "                'owner_email_subject', 'owner_email_body',\n"
+    "                'slot_duration_mins', 'timezone', 'calendar_sync',\n"
+    "                'section_general_open', 'section_hours_open',\n"
+    "                'section_payment_open', 'section_email_open', 'section_integrations_open',\n"
+    "            ];\n"
+    "            foreach ($scalarKeys as $key) {\n"
+    "                $model->set('booking', $key, (string) $request->post($key, ''));\n"
+    "            }\n"
+    "\n"
+    "            // Booking types from individual toggles\n"
+    "            $types = [];\n"
+    "            if ($request->post('bktype_hourly',  '0') === '1') $types[] = 'hourly';\n"
+    "            if ($request->post('bktype_package', '0') === '1') $types[] = 'package';\n"
+    "            if ($request->post('bktype_product', '0') === '1') $types[] = 'product';\n"
+    "            $model->set('booking', 'booking_types', json_encode($types));\n"
+    "\n"
+    "            // Per-day business hours\n"
+    "            $bhConfig = [];\n"
+    "            $legacyDays = [];\n"
+    "            for ($d = 1; $d <= 7; $d++) {\n"
+    "                $enabled = $request->post('bh_' . $d . '_enabled', '0') === '1';\n"
+    "                $start   = $request->post('bh_' . $d . '_start', '09:00');\n"
+    "                $end     = $request->post('bh_' . $d . '_end',   '21:00');\n"
+    "                $bhConfig[$d] = ['enabled' => $enabled, 'start' => $start, 'end' => $end];\n"
+    "                if ($enabled) $legacyDays[] = $d;\n"
+    "            }\n"
+    "            $model->set('booking', 'business_days_config', json_encode($bhConfig));\n"
+    "            $model->set('booking', 'business_days', json_encode($legacyDays));\n"
+    "            // Derive global start/end from first enabled day for legacy slot generator\n"
+    "            $firstDay = null;\n"
+    "            for ($d = 1; $d <= 7; $d++) {\n"
+    "                if ($bhConfig[$d]['enabled']) { $firstDay = $bhConfig[$d]; break; }\n"
+    "            }\n"
+    "            if ($firstDay) {\n"
+    "                $model->set('booking', 'business_hours_start', $firstDay['start']);\n"
+    "                $model->set('booking', 'business_hours_end',   $firstDay['end']);\n"
+    "            }\n"
+    "\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => true]);\n"
+    "            $_SESSION['_flash'] = 'Booking settings saved.';\n"
+    "            return $this->redirect('/admin/settings?tab=booking');\n"
+    "        }\n"
+    "\n"
+    "        if (!isset(self::DEFINITIONS[$module])) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'module']);\n"
+    "            return $this->redirect('/admin/settings');\n"
+    "        }\n"
+    "\n"
+    "        foreach (self::DEFINITIONS[$module] as $field) {\n"
+    "            $value = $request->post($field['key'], $field['default']);\n"
+    "            $model->set($module, $field['key'], (string) $value);\n"
+    "        }\n"
+    "\n"
+    "        if ($isAjax) return (new Response())->json(['ok' => true]);\n"
+    "        $_SESSION['_flash'] = ucfirst($module) . ' settings saved.';\n"
+    "        return $this->redirect('/admin/settings');\n"
+    "    }"
+)
+
+if 'isAjax' not in ctrl:
+    if old_update_head in ctrl:
+        ctrl = ctrl.replace(old_update_head, new_update)
+        print('OK  SettingsAdminController — update() replaced')
+    else:
+        print('ERR SettingsAdminController — old update() pattern not found')
+        # Try to find partial match for debugging
+        import difflib
+        # Just report
+        print('  Current update() starts:', ctrl[ctrl.find('public function update'):ctrl.find('public function update')+100])
+else:
+    print('SKIP SettingsAdminController — already patched')
+
+with open(ctrl_path, 'w') as f:
+    f.write(ctrl)
+
+# ── 2. ResourceAdminController — AJAX responses for package/product ──────────
+res_ctrl_path = BASE + '/modules/booking/admin/controllers/ResourceAdminController.php'
+res_ctrl = open(res_ctrl_path).read()
+
+# Add Response import if not present
+old_use_response = 'use VeloCMS\Core\Response;'
+# It's already there from the class definition
+
+# Patch storePackage
+old_store_pkg = (
+    "    public function storePackage(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $resourceId = (int) $params['id'];\n"
+    "        $name       = trim($req->post('pkg_name', ''));\n"
+    "        if ($name !== '') {\n"
+    "            $this->package()->create([\n"
+    "                'resource_id'  => $resourceId,\n"
+    "                'name'         => $name,\n"
+    "                'description'  => trim($req->post('pkg_description', '')),\n"
+    "                'duration_mins'=> (int) $req->post('pkg_duration_mins', 60),\n"
+    "                'price'        => $req->post('pkg_price', 0),\n"
+    "                'active'       => $req->post('pkg_active', '0') === '1' ? 1 : 0,\n"
+    "                'sort_order'   => $req->post('pkg_sort_order', 0),\n"
+    "            ]);\n"
+    "        }\n"
+    "        $_SESSION['_flash'] = 'Package added.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $resourceId . '/edit');\n"
+    "    }"
+)
+new_store_pkg = (
+    "    public function storePackage(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        $isAjax = $req->header('X-Requested-With') === 'XMLHttpRequest';\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $resourceId = (int) ($req->post('resource_id') ?: $params['id']);\n"
+    "        $name       = trim($req->post('pkg_name', ''));\n"
+    "        $newPkg     = null;\n"
+    "        if ($name !== '') {\n"
+    "            $this->package()->create([\n"
+    "                'resource_id'  => $resourceId,\n"
+    "                'name'         => $name,\n"
+    "                'description'  => trim($req->post('pkg_description', '')),\n"
+    "                'duration_mins'=> (int) $req->post('pkg_duration_mins', 60),\n"
+    "                'price'        => $req->post('pkg_price', 0),\n"
+    "                'active'       => 1,\n"
+    "                'sort_order'   => 0,\n"
+    "            ]);\n"
+    "            if ($isAjax) {\n"
+    "                // Return the newly added package row as HTML\n"
+    "                $pkgs = $this->package()->allForResource($resourceId);\n"
+    "                $res  = $this->resource()->find($resourceId);\n"
+    "                $p    = end($pkgs);\n"
+    "                if ($p) {\n"
+    "                    $resName = $res['name'] ?? '';\n"
+    "                    $html = '<tr id=\"bkpkg-' . $p['id'] . '\">';\n"
+    "                    $html .= '<td>' . htmlspecialchars($resName) . '</td>';\n"
+    "                    $html .= '<td>' . htmlspecialchars($p['name']) . '</td>';\n"
+    "                    $html .= '<td>' . (int)$p['duration_mins'] . ' min</td>';\n"
+    "                    $html .= '<td>€' . number_format((float)$p['price'], 2) . '</td>';\n"
+    "                    $delUrl = '/admin/booking/resources/' . $resourceId . '/packages/' . $p['id'] . '/delete';\n"
+    "                    $html .= '<td><button type=\"button\" class=\"vcms-btn vcms-btn--danger vcms-btn--sm\" ';\n"
+    "                    $html .= 'onclick=\"vcmsDelete(\\'' . $delUrl . '\\',\\'' . $this->auth()->csrfToken() . '\\',\\'bkpkg-' . $p['id'] . '\\')\">Delete</button></td>';\n"
+    "                    $html .= '</tr>';\n"
+    "                    return (new Response())->json(['ok' => true, 'html' => $html]);\n"
+    "                }\n"
+    "                return (new Response())->json(['ok' => true, 'html' => '']);\n"
+    "            }\n"
+    "        } elseif ($isAjax) {\n"
+    "            return (new Response())->json(['ok' => false, 'error' => 'name required']);\n"
+    "        }\n"
+    "        $_SESSION['_flash'] = 'Package added.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $resourceId . '/edit');\n"
+    "    }"
+)
+
+# Patch deletePackage
+old_del_pkg = (
+    "    public function deletePackage(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $this->package()->softDelete((int) $params['pkg_id']);\n"
+    "        $_SESSION['_flash'] = 'Package removed.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $params['id'] . '/edit');\n"
+    "    }"
+)
+new_del_pkg = (
+    "    public function deletePackage(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        $isAjax = $req->header('X-Requested-With') === 'XMLHttpRequest';\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $this->package()->softDelete((int) $params['pkg_id']);\n"
+    "        if ($isAjax) return (new Response())->json(['ok' => true]);\n"
+    "        $_SESSION['_flash'] = 'Package removed.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $params['id'] . '/edit');\n"
+    "    }"
+)
+
+# Patch storeProduct
+old_store_prod = (
+    "    public function storeProduct(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $resourceId = (int) $params['id'];\n"
+    "        $name       = trim($req->post('prod_name', ''));\n"
+    "        if ($name !== '') {\n"
+    "            $this->product()->create([\n"
+    "                'resource_id' => $resourceId,\n"
+    "                'name'        => $name,\n"
+    "                'description' => trim($req->post('prod_description', '')),\n"
+    "                'price'       => $req->post('prod_price', 0),\n"
+    "                'active'      => $req->post('prod_active', '0') === '1' ? 1 : 0,\n"
+    "                'sort_order'  => $req->post('prod_sort_order', 0),\n"
+    "            ]);\n"
+    "        }\n"
+    "        $_SESSION['_flash'] = 'Product added.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $resourceId . '/edit');\n"
+    "    }"
+)
+new_store_prod = (
+    "    public function storeProduct(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        $isAjax = $req->header('X-Requested-With') === 'XMLHttpRequest';\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $resourceId = (int) ($req->post('resource_id') ?: $params['id']);\n"
+    "        $name       = trim($req->post('prod_name', ''));\n"
+    "        if ($name !== '') {\n"
+    "            $this->product()->create([\n"
+    "                'resource_id' => $resourceId,\n"
+    "                'name'        => $name,\n"
+    "                'description' => trim($req->post('prod_description', '')),\n"
+    "                'price'       => $req->post('prod_price', 0),\n"
+    "                'active'      => 1,\n"
+    "                'sort_order'  => 0,\n"
+    "            ]);\n"
+    "            if ($isAjax) {\n"
+    "                $prods = $this->product()->allForResource($resourceId);\n"
+    "                $res   = $this->resource()->find($resourceId);\n"
+    "                $p     = end($prods);\n"
+    "                if ($p) {\n"
+    "                    $resName = $res['name'] ?? '';\n"
+    "                    $html = '<tr id=\"bkprod-' . $p['id'] . '\">';\n"
+    "                    $html .= '<td>' . htmlspecialchars($resName) . '</td>';\n"
+    "                    $html .= '<td>' . htmlspecialchars($p['name']) . '</td>';\n"
+    "                    $html .= '<td>€' . number_format((float)$p['price'], 2) . '</td>';\n"
+    "                    $delUrl = '/admin/booking/resources/' . $resourceId . '/products/' . $p['id'] . '/delete';\n"
+    "                    $html .= '<td><button type=\"button\" class=\"vcms-btn vcms-btn--danger vcms-btn--sm\" ';\n"
+    "                    $html .= 'onclick=\"vcmsDelete(\\'' . $delUrl . '\\',\\'' . $this->auth()->csrfToken() . '\\',\\'bkprod-' . $p['id'] . '\\')\">Delete</button></td>';\n"
+    "                    $html .= '</tr>';\n"
+    "                    return (new Response())->json(['ok' => true, 'html' => $html]);\n"
+    "                }\n"
+    "                return (new Response())->json(['ok' => true, 'html' => '']);\n"
+    "            }\n"
+    "        } elseif ($isAjax) {\n"
+    "            return (new Response())->json(['ok' => false, 'error' => 'name required']);\n"
+    "        }\n"
+    "        $_SESSION['_flash'] = 'Product added.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $resourceId . '/edit');\n"
+    "    }"
+)
+
+# Patch deleteProduct
+old_del_prod = (
+    "    public function deleteProduct(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $this->product()->softDelete((int) $params['prod_id']);\n"
+    "        $_SESSION['_flash'] = 'Product removed.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $params['id'] . '/edit');\n"
+    "    }"
+)
+new_del_prod = (
+    "    public function deleteProduct(Request $req, array $params): Response\n"
+    "    {\n"
+    "        $this->auth()->requireRole('superadmin', 'site-admin');\n"
+    "        $isAjax = $req->header('X-Requested-With') === 'XMLHttpRequest';\n"
+    "        if (!$this->auth()->verifyCsrf()) {\n"
+    "            if ($isAjax) return (new Response())->json(['ok' => false, 'error' => 'csrf']);\n"
+    "            return $this->redirect('/admin/booking/resources');\n"
+    "        }\n"
+    "        $this->product()->softDelete((int) $params['prod_id']);\n"
+    "        if ($isAjax) return (new Response())->json(['ok' => true]);\n"
+    "        $_SESSION['_flash'] = 'Product removed.';\n"
+    "        return $this->redirect('/admin/booking/resources/' . $params['id'] . '/edit');\n"
+    "    }"
+)
+
+# Apply all patches
+if 'isAjax' not in res_ctrl:
+    changed = 0
+    for old, new, name in [
+        (old_store_pkg,  new_store_pkg,  'storePackage'),
+        (old_del_pkg,    new_del_pkg,    'deletePackage'),
+        (old_store_prod, new_store_prod, 'storeProduct'),
+        (old_del_prod,   new_del_prod,   'deleteProduct'),
+    ]:
+        if old in res_ctrl:
+            res_ctrl = res_ctrl.replace(old, new)
+            changed += 1
+        else:
+            print(f'  WARN: pattern not found for {name}')
+    with open(res_ctrl_path, 'w') as f:
+        f.write(res_ctrl)
+    print(f'OK  ResourceAdminController — {changed}/4 methods patched')
+else:
+    print('SKIP ResourceAdminController — already patched')
+
+# We also need a `find()` method on BookingResource. Let's check if it exists.
+bkres_model_path = BASE + '/modules/booking/models/BookingResource.php'
+bkres_model = open(bkres_model_path).read()
+
+if 'function find(' not in bkres_model:
+    # Add find() method — insert before the closing brace of the class
+    old_last = bkres_model.rstrip()
+    # Find the last } in the file
+    insert_pos = old_last.rfind('\n}')
+    find_method = (
+        "\n\n"
+        "    public function find(int $id): ?array\n"
+        "    {\n"
+        "        $stmt = $this->pdo->prepare('SELECT * FROM booking_resources WHERE id = ? AND deleted_at IS NULL');\n"
+        "        $stmt->execute([$id]);\n"
+        "        return $stmt->fetch() ?: null;\n"
+        "    }"
+    )
+    new_model = old_last[:insert_pos] + find_method + old_last[insert_pos:]
+    with open(bkres_model_path, 'w') as f:
+        f.write(new_model)
+    print('OK  BookingResource — find() method added')
+else:
+    print('SKIP BookingResource — find() already exists')
+
+# ── 3. Booking::generateAvailableSlots() — per-day config + half/full day ────
+booking_model_path = BASE + '/modules/booking/models/Booking.php'
+booking_model = open(booking_model_path).read()
+
+old_slot_gen_start = (
+    "    public function generateAvailableSlots(int $resourceId, string $date, array $settings, int $slotMins = 60, int $advanceHours = 24): array\n"
+    "    {\n"
+    "        $businessStart = $settings['business_hours_start'] ?? '09:00';\n"
+    "        $businessEnd   = $settings['business_hours_end']   ?? '21:00';\n"
+    "        $businessDays  = json_decode($settings['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1, 2, 3, 4, 5, 6];\n"
+    "        $dayOfWeek = (int) date('N', strtotime($date)); // 1=Mon 7=Sun\n"
+    "        if (!in_array($dayOfWeek, $businessDays, true)) return [];"
+)
+
+new_slot_gen_start = (
+    "    public function generateAvailableSlots(int $resourceId, string $date, array $settings, int $slotMins = 60, int $advanceHours = 24): array\n"
+    "    {\n"
+    "        $dayOfWeek = (int) date('N', strtotime($date)); // 1=Mon 7=Sun\n"
+    "\n"
+    "        // Resolve per-day config if present\n"
+    "        $bhConfigRaw = json_decode($settings['business_days_config'] ?? '{}', true) ?: [];\n"
+    "        if (!empty($bhConfigRaw) && isset($bhConfigRaw[$dayOfWeek])) {\n"
+    "            $dayCfg = $bhConfigRaw[$dayOfWeek];\n"
+    "            if (empty($dayCfg['enabled'])) return [];\n"
+    "            $businessStart = $dayCfg['start'] ?? '09:00';\n"
+    "            $businessEnd   = $dayCfg['end']   ?? '21:00';\n"
+    "        } else {\n"
+    "            $businessStart = $settings['business_hours_start'] ?? '09:00';\n"
+    "            $businessEnd   = $settings['business_hours_end']   ?? '21:00';\n"
+    "            $businessDays  = json_decode($settings['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1, 2, 3, 4, 5, 6];\n"
+    "            if (!in_array($dayOfWeek, $businessDays, true)) return [];\n"
+    "        }\n"
+    "\n"
+    "        // Resolve slot duration (supports 'half_day' / 'full_day' string values)\n"
+    "        $slotDurationSetting = $settings['slot_duration_mins'] ?? null;\n"
+    "        if ($slotDurationSetting === 'half_day') $slotMins = 240;\n"
+    "        elseif ($slotDurationSetting === 'full_day') $slotMins = 480;\n"
+    "        elseif ($slotDurationSetting !== null && is_numeric($slotDurationSetting)) $slotMins = (int) $slotDurationSetting;"
+)
+
+if 'business_days_config' not in booking_model:
+    if old_slot_gen_start in booking_model:
+        booking_model = booking_model.replace(old_slot_gen_start, new_slot_gen_start)
+        with open(booking_model_path, 'w') as f:
+            f.write(booking_model)
+        print('OK  Booking model — generateAvailableSlots() updated')
+    else:
+        print('ERR Booking model — old pattern not found')
+else:
+    print('SKIP Booking model — already patched')
+
+# ── 4. PHP syntax checks ─────────────────────────────────────────────────────
+import subprocess
+files = [
+    (ctrl_path,          'SettingsAdminController.php'),
+    (res_ctrl_path,      'ResourceAdminController.php'),
+    (bkres_model_path,   'BookingResource.php'),
+    (booking_model_path, 'Booking.php'),
+]
+for path, label in files:
+    r = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    print(('OK ' if r.returncode == 0 else 'ERR') + f'  php -l {label}')
+    if r.returncode != 0:
+        print(r.stderr)
+
+print('\nDone.')

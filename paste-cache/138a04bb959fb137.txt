@@ -1,0 +1,56 @@
+The translation system is still fundamentally broken. 
+Multiple critical issues:
+
+ISSUE 1 — "Translate all pending" does nothing:
+37 keys show as pending but clicking the button 
+changes nothing. Debug this:
+- Check the AJAX call in browser DevTools Network tab
+- Check what the /admin/translations/translate-pending 
+  endpoint actually does
+- Check if DeepL/Anthropic API calls are being made
+- Check server error logs for any API errors
+- Fix so clicking the button actually translates 
+  all 37 pending keys and updates the counter
+
+ISSUE 2 — Only nav menu translates, nothing else:
+The root cause fix from last session (cookie + 
+location.reload()) should make ALL t() calls 
+return the right language. But it's still not 
+working. Debug:
+- Add error_log() calls to t() function to verify 
+  it's reading the cookie correctly
+- Check if translations exist in DB for non-nav keys
+- Check if t() is falling back to DE even when 
+  EN is selected
+- Fix t() so it correctly returns EN translations 
+  when vcms_lang cookie is set to 'en'
+
+ISSUE 3 — Frontend toggle does nothing:
+The toggle button sets cookie and calls 
+location.reload() — but translations are not 
+showing. Either:
+a) The cookie is not being set correctly
+b) t() is not reading the cookie
+c) EN translations don't exist in DB yet
+Debug and fix all three possibilities.
+
+ISSUE 4 — Both providers show as "active":
+Only the selected provider (Claude OR DeepL) 
+should show as active — not both simultaneously. 
+Fix the provider toggle so selecting one 
+deactivates the other visually and functionally.
+
+APPROACH: Fix issues in this order:
+1. Fix t() to correctly read language cookie
+2. Fix "Translate all pending" to actually call 
+   the API and save results
+3. Verify translations exist in DB for all keys
+4. Then test toggle again
+
+Add extensive error_log() debugging first, check 
+logs, fix, remove debug logs. Do not guess — 
+diagnose first.
+
+After fixes: run PHPUnit, push to GitHub, update 
+RESUME.md and SESSION_LOG.md. Tell me when ready 
+to verify.

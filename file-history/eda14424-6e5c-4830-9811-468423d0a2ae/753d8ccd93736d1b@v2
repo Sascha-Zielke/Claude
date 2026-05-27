@@ -1,0 +1,313 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── CLAUDE_START.md ───────────────────────────────────────────────────────────
+files['CLAUDE_START.md'] = r"""# VeloCMS — Claude Code Start Prompt
+
+**Read this file at the start of every session. Then read RESUME.md.**
+
+---
+
+## Server
+
+| Item | Value |
+|---|---|
+| IP | 95.217.185.113 |
+| SSH port | 2222 |
+| SSH user | velocms |
+| SSH key (local) | C:\ssh\id_rsa |
+| OS | Ubuntu 26.04 LTS |
+| Codebase | /var/www/velocms |
+| Public root | /var/www/velocms/public |
+| Domain | webzite-newmedia.com |
+| Admin URL | https://webzite-newmedia.com/admin |
+
+**SSH command:**
+```
+ssh -i "C:\ssh\id_rsa" -p 2222 velocms@95.217.185.113
+```
+
+**SCP pattern (always use this to deploy scripts):**
+```
+scp -i "C:\ssh\id_rsa" -P 2222 "C:\Users\Sascha Zielke\script.py" velocms@95.217.185.113:/tmp/script.py
+ssh -i "C:\ssh\id_rsa" -p 2222 velocms@95.217.185.113 "python3 /tmp/script.py"
+```
+Scripts that need to write to /etc/ must be run as: `sudo python3 /tmp/script.py`
+
+---
+
+## GitHub
+
+| Item | Value |
+|---|---|
+| Repo | git@github.com:Sascha-Zielke/velocms.git |
+| Main branch | main |
+| CI/CD | GitHub Actions — lint → test → SSH deploy on push to main |
+
+The server's deploy key is `~/.ssh/github_deploy`. CI runs PHPUnit with a MySQL service container.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Language | PHP 8.5.4 (strict_types everywhere) |
+| Web server | Nginx 1.28 (FastCGI cache enabled) |
+| Database | MySQL 8.4 |
+| PHP runtime | PHP-FPM (php8.5-fpm), OPcache + JIT tracing |
+| Dependencies | Composer — PHPMailer 6.x, PHPUnit 12.x (dev) |
+| JS/CSS | Vanilla JS (ES2020+), plain CSS with custom properties |
+| SSL | Let's Encrypt via Certbot, auto-renewal active |
+
+**No frameworks. No jQuery. No build tools. No React.**
+
+---
+
+## Architecture Summary
+
+VeloCMS is a from-scratch modular PHP CMS with a micro-framework core.
+
+**Request lifecycle:**
+```
+Nginx → public/index.php → bootstrap.php → Router → Controller → Response → send()
+```
+
+**Key files:**
+- `core/bootstrap.php` — wires DI container, connects DB, loads config
+- `core/Application.php` — DI container + `run()` dispatcher
+- `core/Router.php` — registers and dispatches routes (singleton, registered as such)
+- `core/Auth.php` — instance-based auth (never call methods statically)
+- `core/helpers.php` — global functions: `e()`, `slug()`, `excerpt()`, `date_fmt()`, `setting()`, `nav()`
+- `admin/routes.php` — **must be required BEFORE modules** (PagesModule has a catch-all `/{slug}`)
+- `public/index.php` — front controller; admin routes first, then modules
+
+**Module structure:** `modules/{name}/{Name}Module.php` + controllers/ + models/ + views/ + migrations/
+
+**Admin controllers** extend `VeloCMS\Admin\BaseController`. Views get `$csrf` from controller.
+`Auth::csrfToken()` and `Auth::verifyCsrf()` are **instance methods** — never call statically.
+
+**PSR-4 autoloading:** lowercase dirs, but each sub-namespace needs an explicit entry in composer.json.
+
+---
+
+## Environment
+
+The live `.env` is at `/var/www/velocms/.env`. Never read or echo credentials in commands — use the file.
+
+For DB operations in scripts, read credentials from `.env`:
+```python
+env = {}
+with open('/var/www/velocms/.env') as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+```
+
+---
+
+## Critical Rules
+
+1. **Never put credentials in shell commands** — they appear in bash history.
+2. **Admin routes must be registered before PagesModule** — `/{slug}` is a catch-all.
+3. **`Auth` methods are instance-only** — `$auth->csrfToken()`, not `Auth::csrfToken()`.
+4. **CSRF token in every POST form** — pass `'csrf' => $auth->csrfToken()` from controller.
+5. **All DB queries use PDO prepared statements** — no string interpolation in SQL.
+6. **All output uses `e()`** — never echo user data raw.
+7. **Run PHPUnit after every change** — `cd /var/www/velocms && CORE_DB_PASS=... ./vendor/bin/phpunit`
+
+---
+
+## Next Step
+
+**Read RESUME.md now.** It contains the current project status and what to do next.
+"""
+
+# ── SESSION_LOG.md ────────────────────────────────────────────────────────────
+files['SESSION_LOG.md'] = r"""# VeloCMS Session Log
+
+---
+
+## Session 1 — Foundation (Phase 1)
+**Date:** 2026-05-17
+**Built:**
+- Server provisioned (Ubuntu 26.04, Nginx, PHP 8.5, MySQL 8.4, Composer)
+- Core framework: Application, Router, Request, Response, Container, Database, Config, View, Hook, Module, Cache, Logger, Migrator, helpers
+- velocms_core DB + sites table migration
+- CLI: migrate, migrate:status, site:create, site:list, cache:clear, user:create
+- Skeleton directory structure pushed to GitHub
+
+---
+
+## Session 2 — Auth & Content (Phases 2–3)
+**Date:** 2026-05-17
+**Built:**
+- Auth.php: session login, CSRF double-submit cookie, bcrypt, rate limiting
+- users + sessions migrations
+- Admin panel shell: login, dashboard, layout with sidebar
+- pages module: hierarchical CRUD, slug, 10-revision history, draft/published status
+- blog module: posts, categories, tags, frontend with pagination
+- media module: file upload, MIME validation, image library grid
+- navigation module: menu builder with drag-and-drop items
+- Rich text editor: vanilla JS execCommand + keyboard shortcuts
+
+---
+
+## Session 3 — SEO, Search, API (Phase 4)
+**Date:** 2026-05-18
+**Built:**
+- seo module: sitemap.xml, robots.txt admin, redirect manager, Open Graph tags
+- search module: MySQL FULLTEXT index, weighted results, autocomplete JSON, CLI reindex
+- api module: REST endpoints (pages, posts, search), Bearer token auth, rate limiting, key manager
+- Fixed: `Request::query()` alias added, `Request::header()` null-safety, `Response::withHeader()` alias
+
+---
+
+## Session 4 — Advanced Features (Phase 5)
+**Date:** 2026-05-18
+**Built:**
+- forms module: field builder (JSON), public submit with CSRF + honeypot, admin CRUD, CSV export
+- email module: PHPMailer SMTP wrapper + queue table + retry (max 3 attempts)
+- cron module: interval-based scheduler, system crontab entry (`* * * * *`), 4 built-in jobs
+- audit module: AuditLog::write() static method, paginated admin viewer, 90-day pruner
+- settings module: key-value store, site + email settings UI, `setting()` global helper
+- backup CLI: mysqldump + tar storage, keeps 7 most recent of each
+
+---
+
+## Session 5 — SSL, CI/CD, Domain (Phase 5 continued)
+**Date:** 2026-05-18
+**Built:**
+- Nginx updated to serve webzite-newmedia.com
+- Let's Encrypt SSL via Certbot (expires 2026-08-16, auto-renewal active)
+- GitHub Actions workflow: PHP lint → SSH deploy on push to main
+- Deploy SSH key added to server + GitHub secrets documented
+- sudoers rule: velocms can reload php8.5-fpm without password
+- Admin password reset via secure Python script (no credentials in shell history)
+
+---
+
+## Session 6 — Phase 6: Theme, Tests, Performance
+**Date:** 2026-05-19
+**Built:**
+- Phase 6a: Production theme
+  - `nav()` helper: queries main-nav menu from DB
+  - `excerpt()` helper: strip_tags + truncate
+  - `slug()` and `date_fmt()` added as global helpers (were duplicated in 5 models)
+  - Production CSS: sticky header, blog card grid, prose typography, responsive footer, mobile breakpoints
+  - All 8 layout templates rewritten (main, blog-index, blog-post, page, 404, search, welcome, form)
+  - Main nav seeded: Home / Blog / Search
+- Phase 6b: PHPUnit test suite
+  - 23 tests, 27 assertions, all passing
+  - HelpersTest (15), ResponseTest (5), AuditLogTest (3 integration)
+  - `getStatus()` + `getBody()` added to Response.php
+- Phase 6c: Performance
+  - PHP OPcache + JIT tracing enabled (confirmed active in FPM)
+  - Nginx FastCGI cache (10-minute TTL, admin/api bypassed)
+  - Cache bypass: POST requests, velocms_session cookie, /admin and /api URI prefixes
+- GitHub Actions updated: lint → PHPUnit (with MySQL service) → deploy
+- Profile / password change page added to admin panel
+**Fixed:**
+  - Admin 404 bug: admin routes now registered before PagesModule catch-all `/{slug}`
+  - `Auth::csrfToken()` / `Auth::verifyCsrf()` are instance methods — fixed static calls in ProfileController
+
+---
+
+## Session 7 — Docs, Audit & Cleanup
+**Date:** 2026-05-19
+**Built:**
+- CLAUDE_START.md, SESSION_LOG.md, RESUME.md created
+- VELOCMS_MASTERPLAN.md updated (Phase 6 marked complete, session workflow added)
+- Full codebase audit: syntax, security, database, tests, cleanup
+- See RESUME.md for audit findings
+"""
+
+# ── RESUME.md ─────────────────────────────────────────────────────────────────
+files['RESUME.md'] = r"""# VeloCMS — Resume Prompt
+
+**Read CLAUDE_START.md first if you haven't yet. This file tells you where we are now.**
+
+---
+
+## Current Status
+
+**Date of last update:** 2026-05-19
+**Phase:** 6 complete — full codebase audit in progress / complete (see below)
+
+### What's live
+- https://webzite-newmedia.com — production site, HTTPS, cached
+- https://webzite-newmedia.com/admin — admin panel (login with s.zielke84@gmail.com)
+- GitHub: Sascha-Zielke/velocms — CI/CD active (lint → PHPUnit → deploy)
+- PHPUnit: 23 tests, all passing
+
+### What was last done (Session 7)
+- Created CLAUDE_START.md, SESSION_LOG.md, RESUME.md, updated VELOCMS_MASTERPLAN.md
+- Full codebase audit (see Audit Findings below)
+
+---
+
+## Audit Findings
+*(Updated after audit runs — fill in results here)*
+
+---
+
+## Next Tasks
+
+### Priority 1 — Codebase audit (current session)
+- [x] Write docs (CLAUDE_START.md, SESSION_LOG.md, RESUME.md)
+- [ ] PHP syntax check on all files
+- [ ] Security scan (SQL injection, XSS, CSRF, hardcoded secrets)
+- [ ] Database audit (indexes, foreign keys, column types)
+- [ ] Full PHPUnit run
+- [ ] Clean up temp files / dead code / placeholders
+
+### Priority 2 — After audit
+- [ ] Password reset via email (forgot-password flow with token)
+- [ ] Users module admin UI (list, create, edit, deactivate — currently only CLI)
+- [ ] Rich text editor polish (image insertion from media library)
+- [ ] API v1 — complete remaining endpoints (PUT/DELETE pages and posts)
+- [ ] README.md for the GitHub repo
+
+### Priority 3 — Future phases
+- [ ] Multi-site: second tenant provisioning
+- [ ] Theme switcher in admin
+- [ ] Superadmin panel (manage all sites)
+- [ ] Redis cache driver
+- [ ] Full-page Nginx cache with smart invalidation on publish
+
+---
+
+## Known Issues / Gotchas
+
+- `Auth::csrfToken()` and `Auth::verifyCsrf()` are **instance methods** — call via `$auth->...`
+- Admin routes must be registered **before** modules in `public/index.php` (PagesModule has catch-all `/{slug}`)
+- `storage/webzite-newmedia.com/` dirs owned by www-data — PHP-FPM writes there, velocms user cannot
+- The Nginx FastCGI cache must be purged manually (`sudo rm -rf /var/cache/nginx/velocms/*`) if a page gets incorrectly cached
+
+---
+
+## How to Update This File
+
+At the end of every session:
+1. Update "Date of last update"
+2. Update "What was last done"
+3. Tick off completed tasks
+4. Add any new issues/gotchas discovered
+5. Add a new entry to SESSION_LOG.md
+6. Commit and push both files
+"""
+
+# Write all files
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nDocs written.')

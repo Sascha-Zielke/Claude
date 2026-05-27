@@ -1,0 +1,132 @@
+---
+tags: [veloSolutions, velocms, navigation, seiten]
+status: aktiv
+---
+
+# veloCMS — Navigation App
+
+Seiten-Management und Frontend-Menu-Struktur.
+
+---
+
+## 🎯 Zweck
+
+Hier werden Seiten (Pages) für das Frontend erstellt, gelöscht und im Menu sortiert.
+
+---
+
+## 📋 Anforderungen
+
+### 1. Neue Seite erstellen
+- Button: "+ Neue Seite"
+- Dialog: 
+  - Name eingeben (wird zu Title)
+  - Slug (automatisch aus Name, manuell editierbar)
+  - Parent Seite (Optional, für Untermenü)
+- Speichern: Seite wird erstellt
+- **Wichtig:** Neue Seite ist LEER im Visual Editor (zum Befüllen)
+
+### 2. Seiten-Liste
+- Alle existierenden Seiten anzeigen
+- Mit Parent-Child Struktur (Tree-View)
+- Für jede Seite:
+  - Edit Button (öffnet Seite zum Umbenennen)
+  - Delete Button (mit Bestätigung)
+  - Visibility Toggle (Im Menu sichtbar? JA/NEIN)
+
+### 3. Menu-Sortierung
+- Drag-and-Drop: Seiten umsortieren
+- Parent-Child Struktur möglich:
+  - "Dienstleistungen" (Parent)
+    - "Web Design" (Child)
+    - "Branding" (Child)
+- Im Frontend: Untermenü wird automatisch angezeigt
+
+### 4. Slug-Generierung
+- Automatisch aus Title: "Über uns" → "uber-uns"
+- Manuell änderbar
+- URL wird zu: `example.com/uber-uns`
+
+### 5. Sichtbarkeit
+- Toggle: "Im Frontend-Menu sichtbar?"
+- Hidden Pages sind nicht im Menu, aber noch erreichbar (direkt per URL)
+
+---
+
+## 🎨 UI/UX Mockup
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Navigation (Seiten & Menu)               [+ Neue S] │
+├──────────────────────────────────────────────────────┤
+│                                                       │
+│  Home                        [👁] [Edit] [Delete]    │
+│  ├─ Über uns                 [👁] [Edit] [Delete]    │
+│  ├─ Dienstleistungen         [👁] [Edit] [Delete]    │
+│  │  ├─ Web Design            [👁] [Edit] [Delete]    │
+│  │  └─ Branding              [👁] [Edit] [Delete]    │
+│  ├─ Portfolio                [👁] [Edit] [Delete]    │
+│  └─ Kontakt                  [👁] [Edit] [Delete]    │
+│                                                       │
+│  (Drag-to-reorder)                                    │
+│                                                       │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔄 Workflow
+
+1. Admin klickt "+ Neue Seite"
+2. Dialog: Name = "Dienstleistungen", Slug = "dienstleistungen"
+3. Speichern → Seite wird erstellt
+4. Seite taucht in der Liste auf (unten)
+5. Admin draggt Seite an richtige Position (zwischen "Über uns" und "Portfolio")
+6. Admin erstellt Child-Seite: "Web Design" unter "Dienstleistungen"
+7. Im Frontend: 
+   - Menu zeigt "Dienstleistungen" mit Untermenü
+   - "Web Design" ist Submenu-Item
+
+---
+
+## 📊 Datenbank-Struktur (Konzept)
+
+### Tabelle: velocms_pages
+```
+- id
+- title (Über uns)
+- slug (uber-uns)
+- parent_id (NULL für Top-Level)
+- menu_order (Position im Menu)
+- visible (1 = ja, 0 = nein)
+- created_at
+- updated_at
+- created_by
+```
+
+---
+
+## ✅ Success-Kriterien (Phase 1)
+
+- [ ] Neue Seite erstellen funktioniert
+- [ ] Slug wird automatisch generiert
+- [ ] Seiten-Liste wird angezeigt
+- [ ] Drag-and-Drop Sortierung funktioniert
+- [ ] Parent-Child Struktur funktioniert
+- [ ] Edit (Umbenennen) funktioniert
+- [ ] Delete funktioniert (mit Bestätigung)
+- [ ] Visibility Toggle funktioniert
+- [ ] Frontend Menu wird korrekt generiert
+
+---
+
+## 🔗 Abhängigkeiten
+
+- **Visual Editor:** Neue Seite erscheint leer
+- **Frontend:** Menu wird aus dieser App generiert
+
+---
+
+## 🔗 Übergeordnet
+
+← [[../Apps/_index|Apps Übersicht]]

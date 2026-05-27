@@ -1,0 +1,75 @@
+import os
+
+base = '/var/www/velocms'
+files = {}
+
+# ── migrations/seo/001_create_redirects_table.php ────────────────────────────
+files['migrations/seo/001_create_redirects_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS redirects (
+            id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            from_path  VARCHAR(512)   NOT NULL,
+            to_url     VARCHAR(512)   NOT NULL,
+            code       SMALLINT       NOT NULL DEFAULT 301,
+            created_at DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE INDEX idx_from (from_path(191))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS redirects'); }
+};
+"""
+
+# ── migrations/search/001_create_search_index_table.php ──────────────────────
+files['migrations/search/001_create_search_index_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS search_index (
+            id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            entity_type VARCHAR(50)     NOT NULL,
+            entity_id   BIGINT UNSIGNED NOT NULL,
+            title       VARCHAR(255)    NOT NULL,
+            body        TEXT            NOT NULL,
+            url         VARCHAR(512)    NOT NULL,
+            updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY  idx_entity (entity_type, entity_id),
+            FULLTEXT KEY ft_search (title, body)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS search_index'); }
+};
+"""
+
+# ── migrations/api/001_create_api_keys_table.php ─────────────────────────────
+files['migrations/api/001_create_api_keys_table.php'] = r"""<?php declare(strict_types=1);
+return new class {
+    public function up(\PDO $pdo): void
+    {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS api_keys (
+            id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id      BIGINT UNSIGNED NOT NULL,
+            name         VARCHAR(100)    NOT NULL,
+            key_hash     VARCHAR(64)     NOT NULL UNIQUE,
+            last_used_at DATETIME        NULL,
+            created_at   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            deleted_at   DATETIME        NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            INDEX idx_hash    (key_hash),
+            INDEX idx_deleted (deleted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+    }
+    public function down(\PDO $pdo): void { $pdo->exec('DROP TABLE IF EXISTS api_keys'); }
+};
+"""
+
+for rel_path, content in files.items():
+    full_path = base + '/' + rel_path
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content.lstrip('\n'))
+    print('OK  ' + rel_path)
+
+print('\nPhase 4a done — migrations written.')

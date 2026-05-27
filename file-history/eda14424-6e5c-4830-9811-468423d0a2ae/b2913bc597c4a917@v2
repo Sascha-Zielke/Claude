@@ -1,0 +1,312 @@
+"""
+vcms_booking_settings_tab.py
+— Adds the Booking tab to Admin → Settings.
+— Modifies SettingsAdminController::update() to handle booking module.
+— Modifies the settings view to render the booking tab.
+"""
+
+BASE = '/var/www/velocms'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Patch SettingsAdminController::update() to handle 'booking'
+# ─────────────────────────────────────────────────────────────────────────────
+ctrl_path = BASE + '/modules/settings/admin/controllers/SettingsAdminController.php'
+
+with open(ctrl_path) as f:
+    ctrl = f.read()
+
+old_update = """        $module = $params['module'] ?? '';
+        if (!isset(self::DEFINITIONS[$module])) {
+            return $this->redirect('/admin/settings');
+        }
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Setting($pdo);
+
+        foreach (self::DEFINITIONS[$module] as $field) {
+            $value = $request->post($field['key'], $field['default']);
+            $model->set($module, $field['key'], (string) $value);
+        }
+
+        $_SESSION['_flash'] = ucfirst($module) . ' settings saved.';
+        return $this->redirect('/admin/settings');"""
+
+new_update = """        $module = $params['module'] ?? '';
+
+        $pdo   = $this->app->make(Database::class)->core();
+        $model = new Setting($pdo);
+
+        if ($module === 'booking') {
+            // Scalar fields
+            $scalarKeys = [
+                'enabled', 'guest_booking', 'require_confirmation',
+                'payment_mode', 'deposit_percent',
+                'stripe_enabled', 'stripe_pk', 'stripe_sk',
+                'notification_email',
+                'customer_email_subject', 'customer_email_body',
+                'owner_email_subject',    'owner_email_body',
+                'business_hours_start',   'business_hours_end',
+                'slot_duration_mins', 'timezone', 'calendar_sync',
+            ];
+            foreach ($scalarKeys as $key) {
+                $model->set('booking', $key, (string) $request->post($key, ''));
+            }
+            // Array fields
+            $days  = array_map('intval', (array) $request->post('business_days', []));
+            $model->set('booking', 'business_days', json_encode($days));
+            $types = (array) $request->post('booking_types', []);
+            $model->set('booking', 'booking_types', json_encode($types));
+
+            $_SESSION['_flash'] = 'Booking settings saved.';
+            return $this->redirect('/admin/settings?tab=booking');
+        }
+
+        if (!isset(self::DEFINITIONS[$module])) {
+            return $this->redirect('/admin/settings');
+        }
+
+        foreach (self::DEFINITIONS[$module] as $field) {
+            $value = $request->post($field['key'], $field['default']);
+            $model->set($module, $field['key'], (string) $value);
+        }
+
+        $_SESSION['_flash'] = ucfirst($module) . ' settings saved.';
+        return $this->redirect('/admin/settings');"""
+
+if old_update in ctrl:
+    ctrl = ctrl.replace(old_update, new_update)
+    with open(ctrl_path, 'w') as f:
+        f.write(ctrl)
+    print('OK  SettingsAdminController.php — booking branch added to update()')
+else:
+    print('SKIP SettingsAdminController.php — pattern not found (already patched?)')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Patch admin/views/settings/index.php
+#    - Add 'booking' to $tabs
+#    - Add custom booking rendering block after the DEFINITIONS foreach
+# ─────────────────────────────────────────────────────────────────────────────
+view_path = BASE + '/admin/views/settings/index.php'
+
+with open(view_path) as f:
+    view = f.read()
+
+# 2a. Add 'booking' to the $tabs array
+old_tabs = "$tabs = ['site' => 'Site', 'email' => 'Email'];"
+new_tabs = "$tabs = ['site' => 'Site', 'email' => 'Email', 'booking' => 'Booking'];"
+
+if old_tabs in view:
+    view = view.replace(old_tabs, new_tabs)
+    print('OK  settings/index.php — booking tab added to $tabs')
+else:
+    print('SKIP settings/index.php — $tabs already patched')
+
+# 2b. Append the booking rendering block after the closing <?php endforeach ?>
+booking_block = r"""
+<?php if ($activeTab === 'booking'):
+    $bk = $current['booking'] ?? [];
+    $boolCheck = fn(string $k) => !empty($bk[$k]) && $bk[$k] !== '0' ? 'checked' : '';
+?>
+<form method="post" action="/admin/settings/booking">
+<input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">General</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="bk-enabled">Enable booking module</label></th>
+            <td>
+                <input type="hidden" name="enabled" value="0">
+                <input type="checkbox" id="bk-enabled" name="enabled" value="1" <?= $boolCheck('enabled') ?>>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="bk-guest">Allow guest bookings</label></th>
+            <td>
+                <input type="hidden" name="guest_booking" value="0">
+                <input type="checkbox" id="bk-guest" name="guest_booking" value="1" <?= $boolCheck('guest_booking') ?>>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="bk-confirm">Require manual confirmation</label></th>
+            <td>
+                <input type="hidden" name="require_confirmation" value="0">
+                <input type="checkbox" id="bk-confirm" name="require_confirmation" value="1" <?= $boolCheck('require_confirmation') ?>>
+            </td>
+        </tr>
+        <tr>
+            <th><label>Booking types available</label></th>
+            <td>
+                <?php
+                $bkTypes = json_decode($bk['booking_types'] ?? '["hourly","package","product"]', true) ?: [];
+                foreach (['hourly' => 'Hourly', 'package' => 'Packages', 'product' => 'Products / Services'] as $v => $l): ?>
+                <label class="vcms-checkbox" style="display:block;margin-bottom:.3rem">
+                    <input type="checkbox" name="booking_types[]" value="<?= $v ?>"
+                        <?= in_array($v, $bkTypes) ? 'checked' : '' ?>>
+                    <?= $l ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="bk-slot">Slot duration (min)</label></th>
+            <td><input type="number" id="bk-slot" name="slot_duration_mins" min="15" step="15"
+                       value="<?= (int)($bk['slot_duration_mins'] ?? 60) ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="bk-tz">Timezone</label></th>
+            <td><input type="text" id="bk-tz" name="timezone"
+                       value="<?= e($bk['timezone'] ?? 'Europe/Berlin') ?>"></td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Business Hours</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="bk-open">Opening time</label></th>
+            <td><input type="time" id="bk-open" name="business_hours_start"
+                       value="<?= e($bk['business_hours_start'] ?? '09:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="bk-close">Closing time</label></th>
+            <td><input type="time" id="bk-close" name="business_hours_end"
+                       value="<?= e($bk['business_hours_end'] ?? '21:00') ?>"></td>
+        </tr>
+        <tr>
+            <th><label>Open days</label></th>
+            <td>
+                <?php
+                $bkDays = json_decode($bk['business_days'] ?? '[1,2,3,4,5,6]', true) ?: [1,2,3,4,5,6];
+                foreach ([1=>'Mon',2=>'Tue',3=>'Wed',4=>'Thu',5=>'Fri',6=>'Sat',7=>'Sun'] as $n => $dn): ?>
+                <label class="vcms-checkbox" style="display:inline-flex;margin-right:.75rem">
+                    <input type="checkbox" name="business_days[]" value="<?= $n ?>"
+                        <?= in_array($n, $bkDays) ? 'checked' : '' ?>>
+                    <?= $dn ?>
+                </label>
+                <?php endforeach ?>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Payment</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="bk-pay">Payment mode</label></th>
+            <td>
+                <select id="bk-pay" name="payment_mode" onchange="bkTogglePayment()">
+                    <option value="none"    <?= ($bk['payment_mode'] ?? 'none') === 'none'    ? 'selected' : '' ?>>No payment (inquiry only)</option>
+                    <option value="deposit" <?= ($bk['payment_mode'] ?? '') === 'deposit' ? 'selected' : '' ?>>Deposit required</option>
+                    <option value="full"    <?= ($bk['payment_mode'] ?? '') === 'full'    ? 'selected' : '' ?>>Full payment via Stripe</option>
+                </select>
+            </td>
+        </tr>
+        <tr id="bk-dep-row">
+            <th><label for="bk-dep-pct">Deposit %</label></th>
+            <td><input type="number" id="bk-dep-pct" name="deposit_percent" min="1" max="100"
+                       value="<?= (int)($bk['deposit_percent'] ?? 30) ?>"></td>
+        </tr>
+        <tr id="bk-stripe-row">
+            <th><label>Stripe</label></th>
+            <td>
+                <input type="hidden" name="stripe_enabled" value="0">
+                <label class="vcms-checkbox" style="display:block;margin-bottom:.5rem">
+                    <input type="checkbox" name="stripe_enabled" value="1" <?= $boolCheck('stripe_enabled') ?>>
+                    Enable Stripe
+                </label>
+                <input type="text" name="stripe_pk" placeholder="Publishable key (pk_…)"
+                       value="<?= e($bk['stripe_pk'] ?? '') ?>" style="margin-bottom:.4rem">
+                <input type="password" name="stripe_sk" placeholder="Secret key — leave blank to keep">
+                <br><small style="color:#6b7280">Stripe is scaffolded, not yet live.</small>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Email Notifications</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="bk-notif">Notify owner at</label></th>
+            <td><input type="email" id="bk-notif" name="notification_email"
+                       value="<?= e($bk['notification_email'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="bk-csubj">Customer email subject</label></th>
+            <td><input type="text" id="bk-csubj" name="customer_email_subject"
+                       value="<?= e($bk['customer_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="bk-cbody">Customer email body</label></th>
+            <td>
+                <textarea id="bk-cbody" name="customer_email_body" rows="5"><?= e($bk['customer_email_body'] ?? '') ?></textarea>
+                <small style="color:#6b7280">Placeholders: {reference} {customer_name} {resource} {date} {start_time} {end_time} {status} {total}</small>
+            </td>
+        </tr>
+        <tr>
+            <th><label for="bk-osubj">Owner email subject</label></th>
+            <td><input type="text" id="bk-osubj" name="owner_email_subject"
+                       value="<?= e($bk['owner_email_subject'] ?? '') ?>"></td>
+        </tr>
+        <tr>
+            <th><label for="bk-obody">Owner email body</label></th>
+            <td><textarea id="bk-obody" name="owner_email_body" rows="4"><?= e($bk['owner_email_body'] ?? '') ?></textarea></td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-card" style="margin-bottom:1.5rem">
+    <h4 style="margin:0 0 1rem">Integrations</h4>
+    <div class="vcms-table-wrap"><table class="vcms-table vcms-table--form">
+        <tr>
+            <th><label for="bk-cal">Google Calendar sync</label></th>
+            <td>
+                <input type="hidden" name="calendar_sync" value="0">
+                <input type="checkbox" id="bk-cal" name="calendar_sync" value="1" <?= $boolCheck('calendar_sync') ?>>
+                <small style="color:#6b7280;margin-left:.5rem">Configure OAuth in site settings.</small>
+            </td>
+        </tr>
+    </table></div>
+</div>
+
+<div class="vcms-form-actions">
+    <button type="submit" class="vcms-btn vcms-btn--primary">Save Booking Settings</button>
+    <a href="/admin/booking/resources" class="vcms-btn vcms-btn--secondary">Manage Resources →</a>
+</div>
+</form>
+
+<script>
+function bkTogglePayment() {
+    const mode = document.getElementById('bk-pay').value;
+    document.getElementById('bk-dep-row').style.display    = mode === 'deposit' ? '' : 'none';
+    document.getElementById('bk-stripe-row').style.display = (mode === 'deposit' || mode === 'full') ? '' : 'none';
+}
+bkTogglePayment();
+</script>
+<?php endif ?>"""
+
+if 'activeTab === \'booking\'' not in view:
+    view = view + booking_block
+    with open(view_path, 'w') as f:
+        f.write(view)
+    print('OK  settings/index.php — booking tab rendering block appended')
+else:
+    print('SKIP settings/index.php — booking block already present')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. PHP syntax check on modified files
+# ─────────────────────────────────────────────────────────────────────────────
+import subprocess
+
+for path in [ctrl_path, view_path]:
+    result = subprocess.run(['php', '-l', path], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f'SYNTAX ERROR in {path}:')
+        print(result.stderr)
+    else:
+        print(f'OK  php -l {path.replace(BASE+"/", "")}')
+
+print('\nDone.')

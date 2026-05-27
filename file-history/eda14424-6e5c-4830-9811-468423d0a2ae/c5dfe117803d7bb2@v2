@@ -1,0 +1,1407 @@
+"""
+vcms_booking_php.py — Write all PHP source files for the Booking module.
+"""
+import os, json
+
+BASE = '/var/www/velocms'
+
+def write(path, content):
+    full = BASE + '/' + path
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, 'w') as f:
+        f.write(content)
+    print(f'  OK  {path}')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== module.json ===')
+write('modules/booking/module.json', json.dumps({
+    'name': 'Booking',
+    'version': '1.0.0',
+    'description': 'Resource booking with configurable pricing, availability, and payments'
+}, indent=2) + '\n')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingModule.php ===')
+write('modules/booking/BookingModule.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking;
+
+use VeloCMS\\Core\\Module;
+use VeloCMS\\Core\\Router;
+use VeloCMS\\Modules\\Booking\\Controllers\\BookingController;
+
+class BookingModule extends Module
+{
+    public function register(Router $router): void
+    {
+        $router->get('/booking',                              [BookingController::class, 'index']);
+        $router->get('/booking/confirmation/{reference}',    [BookingController::class, 'confirmation']);
+        $router->get('/booking/{slug}/availability',         [BookingController::class, 'availability']);
+        $router->get('/booking/{slug}/book',                 [BookingController::class, 'bookForm']);
+        $router->post('/booking/{slug}/book',                [BookingController::class, 'bookStore']);
+        $router->get('/booking/{slug}',                      [BookingController::class, 'resource']);
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingResource model ===')
+write('modules/booking/models/BookingResource.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Models;
+
+class BookingResource
+{
+    public function __construct(private readonly \\PDO $pdo) {}
+
+    public function all(bool $activeOnly = false): array
+    {
+        $sql = 'SELECT * FROM booking_resources WHERE deleted_at IS NULL';
+        if ($activeOnly) {
+            $sql .= ' AND active = 1';
+        }
+        $sql .= ' ORDER BY sort_order ASC, name ASC';
+        return $this->pdo->query($sql)->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM booking_resources WHERE id = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function findBySlug(string $slug): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM booking_resources WHERE slug = ? AND deleted_at IS NULL LIMIT 1'
+        );
+        $stmt->execute([$slug]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data): int
+    {
+        $slug = $this->uniqueSlug($data[\'slug\'] !== \'\' ? $data[\'slug\'] : $this->slugify($data[\'name\']));
+        $this->pdo->prepare(
+            \'INSERT INTO booking_resources
+              (name, slug, description, image, active, pricing_mode, hourly_rate,
+               min_duration_mins, max_duration_mins, advance_booking_hours, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\'
+        )->execute([
+            $data[\'name\'], $slug,
+            $data[\'description\'] ?? \'\',
+            $data[\'image\'] ?? \'\',
+            $data[\'active\'] ? 1 : 0,
+            $data[\'pricing_mode\'],
+            $data[\'hourly_rate\'] !== \'\' ? (float) $data[\'hourly_rate\'] : null,
+            (int) $data[\'min_duration_mins\'],
+            (int) $data[\'max_duration_mins\'],
+            (int) $data[\'advance_booking_hours\'],
+            (int) ($data[\'sort_order\'] ?? 0),
+        ]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function update(int $id, array $data): void
+    {
+        $slug = $this->uniqueSlug(
+            $data[\'slug\'] !== \'\' ? $data[\'slug\'] : $this->slugify($data[\'name\']),
+            $id
+        );
+        $this->pdo->prepare(
+            \'UPDATE booking_resources
+             SET name=?, slug=?, description=?, image=?, active=?, pricing_mode=?,
+                 hourly_rate=?, min_duration_mins=?, max_duration_mins=?,
+                 advance_booking_hours=?, sort_order=?
+             WHERE id=?\'
+        )->execute([
+            $data[\'name\'], $slug,
+            $data[\'description\'] ?? \'\',
+            $data[\'image\'] ?? \'\',
+            $data[\'active\'] ? 1 : 0,
+            $data[\'pricing_mode\'],
+            $data[\'hourly_rate\'] !== \'\' ? (float) $data[\'hourly_rate\'] : null,
+            (int) $data[\'min_duration_mins\'],
+            (int) $data[\'max_duration_mins\'],
+            (int) $data[\'advance_booking_hours\'],
+            (int) ($data[\'sort_order\'] ?? 0),
+            $id,
+        ]);
+    }
+
+    public function softDelete(int $id): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE booking_resources SET deleted_at = NOW() WHERE id = ?\'
+        )->execute([$id]);
+    }
+
+    private function slugify(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace(\'/[^a-z0-9\\\\s-]/\', \'\', $text) ?? $text;
+        return trim(preg_replace(\'/[\\\\s-]+/\', \'-\', $text) ?? $text, \'-\');
+    }
+
+    private function uniqueSlug(string $slug, int $excludeId = 0): string
+    {
+        $original = $slug;
+        $i = 1;
+        while (true) {
+            $stmt = $this->pdo->prepare(
+                \'SELECT id FROM booking_resources WHERE slug = ? AND id != ? AND deleted_at IS NULL LIMIT 1\'
+            );
+            $stmt->execute([$slug, $excludeId]);
+            if (!$stmt->fetch()) {
+                break;
+            }
+            $slug = $original . \'-\' . $i++;
+        }
+        return $slug;
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingPackage model ===')
+write('modules/booking/models/BookingPackage.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Models;
+
+class BookingPackage
+{
+    public function __construct(private readonly \\PDO $pdo) {}
+
+    public function allForResource(int $resourceId): array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT * FROM booking_packages WHERE resource_id = ? AND deleted_at IS NULL
+             ORDER BY sort_order ASC, name ASC\'
+        );
+        $stmt->execute([$resourceId]);
+        return $stmt->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT * FROM booking_packages WHERE id = ? AND deleted_at IS NULL LIMIT 1\'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data): int
+    {
+        $this->pdo->prepare(
+            \'INSERT INTO booking_packages (resource_id, name, description, duration_mins, price, active, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?)\'
+        )->execute([
+            (int) $data[\'resource_id\'],
+            $data[\'name\'],
+            $data[\'description\'] ?? \'\',
+            (int) $data[\'duration_mins\'],
+            (float) $data[\'price\'],
+            $data[\'active\'] ? 1 : 0,
+            (int) ($data[\'sort_order\'] ?? 0),
+        ]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function update(int $id, array $data): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE booking_packages
+             SET name=?, description=?, duration_mins=?, price=?, active=?, sort_order=?
+             WHERE id=?\'
+        )->execute([
+            $data[\'name\'],
+            $data[\'description\'] ?? \'\',
+            (int) $data[\'duration_mins\'],
+            (float) $data[\'price\'],
+            $data[\'active\'] ? 1 : 0,
+            (int) ($data[\'sort_order\'] ?? 0),
+            $id,
+        ]);
+    }
+
+    public function softDelete(int $id): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE booking_packages SET deleted_at = NOW() WHERE id = ?\'
+        )->execute([$id]);
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingProduct model ===')
+write('modules/booking/models/BookingProduct.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Models;
+
+class BookingProduct
+{
+    public function __construct(private readonly \\PDO $pdo) {}
+
+    public function allForResource(int $resourceId): array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT * FROM booking_products WHERE resource_id = ? AND deleted_at IS NULL
+             ORDER BY sort_order ASC, name ASC\'
+        );
+        $stmt->execute([$resourceId]);
+        return $stmt->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT * FROM booking_products WHERE id = ? AND deleted_at IS NULL LIMIT 1\'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data): int
+    {
+        $this->pdo->prepare(
+            \'INSERT INTO booking_products (resource_id, name, description, price, active, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?)\'
+        )->execute([
+            (int) $data[\'resource_id\'],
+            $data[\'name\'],
+            $data[\'description\'] ?? \'\',
+            (float) $data[\'price\'],
+            $data[\'active\'] ? 1 : 0,
+            (int) ($data[\'sort_order\'] ?? 0),
+        ]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function update(int $id, array $data): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE booking_products SET name=?, description=?, price=?, active=?, sort_order=? WHERE id=?\'
+        )->execute([
+            $data[\'name\'],
+            $data[\'description\'] ?? \'\',
+            (float) $data[\'price\'],
+            $data[\'active\'] ? 1 : 0,
+            (int) ($data[\'sort_order\'] ?? 0),
+            $id,
+        ]);
+    }
+
+    public function softDelete(int $id): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE booking_products SET deleted_at = NOW() WHERE id = ?\'
+        )->execute([$id]);
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Booking model ===')
+write('modules/booking/models/Booking.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Models;
+
+class Booking
+{
+    public function __construct(private readonly \\PDO $pdo) {}
+
+    public function all(array $filters = []): array
+    {
+        $where  = [\'b.deleted_at IS NULL\'];
+        $params = [];
+
+        if (!empty($filters[\'status\'])) {
+            $where[]  = \'b.booking_status = ?\';
+            $params[] = $filters[\'status\'];
+        }
+        if (!empty($filters[\'resource_id\'])) {
+            $where[]  = \'b.resource_id = ?\';
+            $params[] = (int) $filters[\'resource_id\'];
+        }
+        if (!empty($filters[\'date_from\'])) {
+            $where[]  = \'b.booking_date >= ?\';
+            $params[] = $filters[\'date_from\'];
+        }
+        if (!empty($filters[\'date_to\'])) {
+            $where[]  = \'b.booking_date <= ?\';
+            $params[] = $filters[\'date_to\'];
+        }
+
+        $sql = \'SELECT b.*, r.name AS resource_name
+                FROM bookings b
+                LEFT JOIN booking_resources r ON r.id = b.resource_id
+                WHERE \' . implode(\' AND \', $where) .
+               \' ORDER BY b.booking_date DESC, b.start_time DESC\';
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+
+    public function findById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT b.*, r.name AS resource_name, r.slug AS resource_slug,
+                    pkg.name AS package_name, pkg.duration_mins AS package_duration,
+                    prd.name AS product_name
+             FROM bookings b
+             LEFT JOIN booking_resources r   ON r.id   = b.resource_id
+             LEFT JOIN booking_packages  pkg ON pkg.id = b.package_id
+             LEFT JOIN booking_products  prd ON prd.id = b.product_id
+             WHERE b.id = ? AND b.deleted_at IS NULL LIMIT 1\'
+        );
+        $stmt->execute([$id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function findByReference(string $reference): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            \'SELECT b.*, r.name AS resource_name, r.slug AS resource_slug
+             FROM bookings b
+             LEFT JOIN booking_resources r ON r.id = b.resource_id
+             WHERE b.reference = ? AND b.deleted_at IS NULL LIMIT 1\'
+        );
+        $stmt->execute([$reference]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data): int
+    {
+        $ref = $this->generateReference();
+        $this->pdo->prepare(
+            \'INSERT INTO bookings
+              (reference, resource_id, package_id, product_id,
+               customer_name, customer_email, customer_phone,
+               booking_date, start_time, end_time, duration_mins,
+               pricing_type, subtotal, deposit_amount, total_amount,
+               payment_status, booking_status, notes, ip_address)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)\'
+        )->execute([
+            $ref,
+            (int) $data[\'resource_id\'],
+            isset($data[\'package_id\']) && $data[\'package_id\'] ? (int) $data[\'package_id\'] : null,
+            isset($data[\'product_id\']) && $data[\'product_id\'] ? (int) $data[\'product_id\'] : null,
+            $data[\'customer_name\'],
+            $data[\'customer_email\'],
+            $data[\'customer_phone\'] ?? null,
+            $data[\'booking_date\'],
+            $data[\'start_time\'],
+            $data[\'end_time\'],
+            (int) $data[\'duration_mins\'],
+            $data[\'pricing_type\'],
+            (float) $data[\'subtotal\'],
+            (float) ($data[\'deposit_amount\'] ?? 0),
+            (float) $data[\'total_amount\'],
+            $data[\'payment_status\'] ?? \'none\',
+            $data[\'booking_status\'] ?? \'pending\',
+            $data[\'notes\'] ?? null,
+            $data[\'ip_address\'] ?? null,
+        ]);
+        return (int) $this->pdo->lastInsertId();
+    }
+
+    public function updateStatus(int $id, string $status, string $adminNotes = \'\'): void
+    {
+        $this->pdo->prepare(
+            \'UPDATE bookings SET booking_status = ?, admin_notes = ?, updated_at = NOW() WHERE id = ?\'
+        )->execute([$status, $adminNotes, $id]);
+    }
+
+    public function countByStatus(): array
+    {
+        $rows = $this->pdo->query(
+            "SELECT booking_status, COUNT(*) AS cnt FROM bookings WHERE deleted_at IS NULL GROUP BY booking_status"
+        )->fetchAll();
+        $result = [\'pending\' => 0, \'confirmed\' => 0, \'cancelled\' => 0];
+        foreach ($rows as $r) {
+            $result[$r[\'booking_status\']] = (int) $r[\'cnt\'];
+        }
+        return $result;
+    }
+
+    public function upcomingForCalendar(int $resourceId = 0, int $days = 90): array
+    {
+        $params = [date(\'Y-m-d\'), date(\'Y-m-d\', strtotime("+{$days} days"))];
+        $extra  = \'\';
+        if ($resourceId > 0) {
+            $extra    = \' AND b.resource_id = ?\';
+            $params[] = $resourceId;
+        }
+        $stmt = $this->pdo->prepare(
+            "SELECT b.*, r.name AS resource_name
+             FROM bookings b
+             LEFT JOIN booking_resources r ON r.id = b.resource_id
+             WHERE b.booking_date BETWEEN ? AND ?
+               AND b.booking_status != \'cancelled\'
+               AND b.deleted_at IS NULL{$extra}
+             ORDER BY b.booking_date ASC, b.start_time ASC"
+        );
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+
+    public function getBookedSlots(int $resourceId, string $date): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT start_time, end_time FROM bookings
+             WHERE resource_id = ? AND booking_date = ?
+               AND booking_status != \'cancelled\'
+               AND deleted_at IS NULL"
+        );
+        $stmt->execute([$resourceId, $date]);
+        return $stmt->fetchAll();
+    }
+
+    public function generateAvailableSlots(
+        int    $resourceId,
+        string $date,
+        array  $settings,
+        int    $slotMins     = 60,
+        int    $advanceHours = 24
+    ): array {
+        $businessStart = $settings[\'business_hours_start\'] ?? \'09:00\';
+        $businessEnd   = $settings[\'business_hours_end\']   ?? \'21:00\';
+        $businessDays  = json_decode($settings[\'business_days\'] ?? \'[1,2,3,4,5,6]\', true)
+                         ?: [1, 2, 3, 4, 5, 6];
+
+        $dayOfWeek = (int) date(\'N\', strtotime($date)); // 1=Mon … 7=Sun
+        if (!in_array($dayOfWeek, $businessDays, true)) {
+            return [];
+        }
+
+        $booked   = $this->getBookedSlots($resourceId, $date);
+        $start    = strtotime("{$date} {$businessStart}");
+        $end      = strtotime("{$date} {$businessEnd}");
+        $minStart = time() + ($advanceHours * 3600);
+
+        $slots   = [];
+        $current = $start;
+
+        while ($current + ($slotMins * 60) <= $end) {
+            $slotEnd = $current + ($slotMins * 60);
+
+            if ($current < $minStart) {
+                $current += $slotMins * 60;
+                continue;
+            }
+
+            $conflict = false;
+            foreach ($booked as $b) {
+                $bookedStart = strtotime("{$date} {$b[\'start_time\']}");
+                $bookedEnd   = strtotime("{$date} {$b[\'end_time\']}");
+                if ($current < $bookedEnd && $slotEnd > $bookedStart) {
+                    $conflict = true;
+                    break;
+                }
+            }
+
+            if (!$conflict) {
+                $slots[] = [
+                    \'start\' => date(\'H:i\', $current),
+                    \'end\'   => date(\'H:i\', $slotEnd),
+                ];
+            }
+            $current += $slotMins * 60;
+        }
+        return $slots;
+    }
+
+    public function generateReference(): string
+    {
+        do {
+            $ref  = \'BK-\' . strtoupper(substr(md5(uniqid(\'\', true)), 0, 8));
+            $stmt = $this->pdo->prepare(\'SELECT id FROM bookings WHERE reference = ? LIMIT 1\');
+            $stmt->execute([$ref]);
+        } while ($stmt->fetch());
+        return $ref;
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== ResourceAdminController ===')
+write('modules/booking/admin/controllers/ResourceAdminController.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Admin;
+
+use VeloCMS\\Admin\\BaseController;
+use VeloCMS\\Core\\Database;
+use VeloCMS\\Core\\Request;
+use VeloCMS\\Core\\Response;
+use VeloCMS\\Modules\\Booking\\Models\\BookingResource;
+use VeloCMS\\Modules\\Booking\\Models\\BookingPackage;
+use VeloCMS\\Modules\\Booking\\Models\\BookingProduct;
+
+class ResourceAdminController extends BaseController
+{
+    private function pdo(): \\PDO
+    {
+        return $this->app->make(Database::class)->core();
+    }
+    private function resource(): BookingResource { return new BookingResource($this->pdo()); }
+    private function package(): BookingPackage   { return new BookingPackage($this->pdo()); }
+    private function product(): BookingProduct   { return new BookingProduct($this->pdo()); }
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        $flash = $_SESSION[\'_flash\'] ?? null;
+        unset($_SESSION[\'_flash\']);
+        return $this->layout(\'booking/resources/index.php\', [
+            \'user\'      => $this->auth()->user(),
+            \'page\'      => \'booking\',
+            \'resources\' => $this->resource()->all(),
+            \'flash\'     => $flash,
+        ]);
+    }
+
+    public function create(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        return $this->layout(\'booking/resources/form.php\', [
+            \'user\'     => $this->auth()->user(),
+            \'page\'     => \'booking\',
+            \'csrf\'     => $this->auth()->csrfToken(),
+            \'formTitle\'=> \'New Resource\',
+            \'action\'   => \'/admin/booking/resources\',
+            \'record\'   => null,
+            \'packages\' => [],
+            \'products\' => [],
+            \'flash\'    => null,
+            \'error\'    => null,
+        ]);
+    }
+
+    public function store(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $data = $this->extractData($req);
+        if ($data[\'name\'] === \'\') {
+            return $this->layout(\'booking/resources/form.php\', [
+                \'user\'     => $this->auth()->user(), \'page\' => \'booking\',
+                \'csrf\'     => $this->auth()->csrfToken(),
+                \'formTitle\'=> \'New Resource\', \'action\' => \'/admin/booking/resources\',
+                \'record\'   => $data, \'packages\' => [], \'products\' => [],
+                \'flash\'    => null, \'error\' => \'Name is required.\',
+            ]);
+        }
+        $this->resource()->create($data);
+        $_SESSION[\'_flash\'] = \'Resource created.\';
+        return $this->redirect(\'/admin/booking/resources\');
+    }
+
+    public function edit(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        $record = $this->resource()->findById((int) $params[\'id\']);
+        if (!$record) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $flash = $_SESSION[\'_flash\'] ?? null;
+        unset($_SESSION[\'_flash\']);
+        return $this->layout(\'booking/resources/form.php\', [
+            \'user\'     => $this->auth()->user(),
+            \'page\'     => \'booking\',
+            \'csrf\'     => $this->auth()->csrfToken(),
+            \'formTitle\'=> \'Edit Resource\',
+            \'action\'   => \'/admin/booking/resources/\' . $params[\'id\'],
+            \'record\'   => $record,
+            \'packages\' => $this->package()->allForResource((int) $params[\'id\']),
+            \'products\' => $this->product()->allForResource((int) $params[\'id\']),
+            \'flash\'    => $flash,
+            \'error\'    => null,
+        ]);
+    }
+
+    public function update(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $id   = (int) $params[\'id\'];
+        $data = $this->extractData($req);
+        if ($data[\'name\'] === \'\') {
+            return $this->layout(\'booking/resources/form.php\', [
+                \'user\'     => $this->auth()->user(), \'page\' => \'booking\',
+                \'csrf\'     => $this->auth()->csrfToken(),
+                \'formTitle\'=> \'Edit Resource\',
+                \'action\'   => \'/admin/booking/resources/\' . $id,
+                \'record\'   => array_merge($this->resource()->findById($id) ?? [], $data),
+                \'packages\' => $this->package()->allForResource($id),
+                \'products\' => $this->product()->allForResource($id),
+                \'flash\'    => null, \'error\' => \'Name is required.\',
+            ]);
+        }
+        $this->resource()->update($id, $data);
+        $_SESSION[\'_flash\'] = \'Resource updated.\';
+        return $this->redirect(\'/admin/booking/resources/\' . $id . \'/edit\');
+    }
+
+    public function delete(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $this->resource()->softDelete((int) $params[\'id\']);
+        $_SESSION[\'_flash\'] = \'Resource deleted.\';
+        return $this->redirect(\'/admin/booking/resources\');
+    }
+
+    // ── Package sub-routes ────────────────────────────────────────────────────
+
+    public function storePackage(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $resourceId = (int) $params[\'id\'];
+        $name       = trim($req->post(\'pkg_name\', \'\'));
+        if ($name !== \'\') {
+            $this->package()->create([
+                \'resource_id\'  => $resourceId,
+                \'name\'         => $name,
+                \'description\'  => trim($req->post(\'pkg_description\', \'\')),
+                \'duration_mins\'=> (int) $req->post(\'pkg_duration_mins\', 60),
+                \'price\'        => $req->post(\'pkg_price\', 0),
+                \'active\'       => $req->post(\'pkg_active\', \'0\') === \'1\' ? 1 : 0,
+                \'sort_order\'   => $req->post(\'pkg_sort_order\', 0),
+            ]);
+        }
+        $_SESSION[\'_flash\'] = \'Package added.\';
+        return $this->redirect(\'/admin/booking/resources/\' . $resourceId . \'/edit\');
+    }
+
+    public function deletePackage(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $this->package()->softDelete((int) $params[\'pkg_id\']);
+        $_SESSION[\'_flash\'] = \'Package removed.\';
+        return $this->redirect(\'/admin/booking/resources/\' . $params[\'id\'] . \'/edit\');
+    }
+
+    // ── Product sub-routes ────────────────────────────────────────────────────
+
+    public function storeProduct(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $resourceId = (int) $params[\'id\'];
+        $name       = trim($req->post(\'prod_name\', \'\'));
+        if ($name !== \'\') {
+            $this->product()->create([
+                \'resource_id\' => $resourceId,
+                \'name\'        => $name,
+                \'description\' => trim($req->post(\'prod_description\', \'\')),
+                \'price\'       => $req->post(\'prod_price\', 0),
+                \'active\'      => $req->post(\'prod_active\', \'0\') === \'1\' ? 1 : 0,
+                \'sort_order\'  => $req->post(\'prod_sort_order\', 0),
+            ]);
+        }
+        $_SESSION[\'_flash\'] = \'Product added.\';
+        return $this->redirect(\'/admin/booking/resources/\' . $resourceId . \'/edit\');
+    }
+
+    public function deleteProduct(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/resources\');
+        }
+        $this->product()->softDelete((int) $params[\'prod_id\']);
+        $_SESSION[\'_flash\'] = \'Product removed.\';
+        return $this->redirect(\'/admin/booking/resources/\' . $params[\'id\'] . \'/edit\');
+    }
+
+    private function extractData(Request $req): array
+    {
+        return [
+            \'name\'                  => trim($req->post(\'name\', \'\')),
+            \'slug\'                  => trim($req->post(\'slug\', \'\')),
+            \'description\'           => trim($req->post(\'description\', \'\')),
+            \'image\'                 => trim($req->post(\'image\', \'\')),
+            \'active\'                => $req->post(\'active\', \'0\') === \'1\',
+            \'pricing_mode\'          => $req->post(\'pricing_mode\', \'hourly\'),
+            \'hourly_rate\'           => $req->post(\'hourly_rate\', \'\'),
+            \'min_duration_mins\'     => $req->post(\'min_duration_mins\', 60),
+            \'max_duration_mins\'     => $req->post(\'max_duration_mins\', 480),
+            \'advance_booking_hours\' => $req->post(\'advance_booking_hours\', 24),
+            \'sort_order\'            => $req->post(\'sort_order\', 0),
+        ];
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingAdminController ===')
+write('modules/booking/admin/controllers/BookingAdminController.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Admin;
+
+use VeloCMS\\Admin\\BaseController;
+use VeloCMS\\Core\\Database;
+use VeloCMS\\Core\\Request;
+use VeloCMS\\Core\\Response;
+use VeloCMS\\Modules\\Booking\\Models\\Booking;
+use VeloCMS\\Modules\\Booking\\Models\\BookingResource;
+use VeloCMS\\Modules\\Booking\\Models\\BookingPackage;
+use VeloCMS\\Modules\\Booking\\Models\\BookingProduct;
+use VeloCMS\\Modules\\Settings\\Models\\Setting;
+
+class BookingAdminController extends BaseController
+{
+    private function pdo(): \\PDO
+    {
+        return $this->app->make(Database::class)->core();
+    }
+    private function booking(): Booking             { return new Booking($this->pdo()); }
+    private function resource(): BookingResource    { return new BookingResource($this->pdo()); }
+    private function settings(): array
+    {
+        return (new Setting($this->pdo()))->all(\'booking\');
+    }
+
+    // ── Booking list ──────────────────────────────────────────────────────────
+
+    public function index(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\', \'editor\');
+        $filters = [
+            \'status\'      => $req->get(\'status\', \'\'),
+            \'resource_id\' => $req->get(\'resource_id\', \'\'),
+            \'date_from\'   => $req->get(\'date_from\', \'\'),
+            \'date_to\'     => $req->get(\'date_to\', \'\'),
+        ];
+        $flash = $_SESSION[\'_flash\'] ?? null;
+        unset($_SESSION[\'_flash\']);
+        return $this->layout(\'booking/index.php\', [
+            \'user\'      => $this->auth()->user(),
+            \'page\'      => \'booking\',
+            \'bookings\'  => $this->booking()->all($filters),
+            \'resources\' => $this->resource()->all(),
+            \'filters\'   => $filters,
+            \'counts\'    => $this->booking()->countByStatus(),
+            \'flash\'     => $flash,
+        ]);
+    }
+
+    // ── Booking detail ────────────────────────────────────────────────────────
+
+    public function detail(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\', \'editor\');
+        $booking = $this->booking()->findById((int) $params[\'id\']);
+        if (!$booking) {
+            return $this->redirect(\'/admin/booking\');
+        }
+        $flash = $_SESSION[\'_flash\'] ?? null;
+        unset($_SESSION[\'_flash\']);
+        return $this->layout(\'booking/detail.php\', [
+            \'user\'    => $this->auth()->user(),
+            \'page\'    => \'booking\',
+            \'csrf\'    => $this->auth()->csrfToken(),
+            \'booking\' => $booking,
+            \'flash\'   => $flash,
+        ]);
+    }
+
+    // ── Status update ─────────────────────────────────────────────────────────
+
+    public function updateStatus(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\', \'editor\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking\');
+        }
+        $id     = (int) $params[\'id\'];
+        $status = $req->post(\'booking_status\', \'\');
+        $notes  = $req->post(\'admin_notes\', \'\');
+        if (in_array($status, [\'pending\', \'confirmed\', \'cancelled\'], true)) {
+            $this->booking()->updateStatus($id, $status, $notes);
+        }
+        $_SESSION[\'_flash\'] = \'Booking status updated.\';
+        return $this->redirect(\'/admin/booking/\' . $id);
+    }
+
+    // ── Manual booking create ─────────────────────────────────────────────────
+
+    public function createForm(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        return $this->layout(\'booking/create.php\', [
+            \'user\'      => $this->auth()->user(),
+            \'page\'      => \'booking\',
+            \'csrf\'      => $this->auth()->csrfToken(),
+            \'resources\' => $this->resource()->all(true),
+            \'error\'     => null,
+        ]);
+    }
+
+    public function createStore(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking\');
+        }
+
+        $resourceId  = (int) $req->post(\'resource_id\', 0);
+        $pricingType = $req->post(\'pricing_type\', \'hourly\');
+        $bookingDate = $req->post(\'booking_date\', \'\');
+        $startTime   = $req->post(\'start_time\', \'\');
+        $endTime     = $req->post(\'end_time\', \'\');
+        $name        = trim($req->post(\'customer_name\', \'\'));
+        $email       = trim($req->post(\'customer_email\', \'\'));
+
+        if (!$resourceId || !$bookingDate || !$startTime || !$endTime || !$name || !$email) {
+            return $this->layout(\'booking/create.php\', [
+                \'user\'      => $this->auth()->user(), \'page\' => \'booking\',
+                \'csrf\'      => $this->auth()->csrfToken(),
+                \'resources\' => $this->resource()->all(true),
+                \'error\'     => \'All required fields must be filled.\',
+            ]);
+        }
+
+        $startTs  = strtotime("{$bookingDate} {$startTime}");
+        $endTs    = strtotime("{$bookingDate} {$endTime}");
+        $duration = (int) (($endTs - $startTs) / 60);
+
+        $resource  = $this->resource()->findById($resourceId);
+        $subtotal  = 0.0;
+        $packageId = null;
+        $productId = null;
+
+        $pkgModel  = new BookingPackage($this->pdo());
+        $prodModel = new BookingProduct($this->pdo());
+
+        if ($pricingType === \'hourly\' && $resource) {
+            $subtotal = round((float) $resource[\'hourly_rate\'] * ($duration / 60), 2);
+        } elseif ($pricingType === \'package\') {
+            $packageId = (int) $req->post(\'package_id\', 0);
+            $pkg       = $pkgModel->findById($packageId);
+            $subtotal  = $pkg ? (float) $pkg[\'price\'] : 0.0;
+        } elseif ($pricingType === \'product\') {
+            $productId = (int) $req->post(\'product_id\', 0);
+            $prod      = $prodModel->findById($productId);
+            $subtotal  = $prod ? (float) $prod[\'price\'] : 0.0;
+        }
+
+        $settings   = $this->settings();
+        $depPct     = (float) ($settings[\'deposit_percent\'] ?? 0);
+        $deposit    = ($settings[\'payment_mode\'] ?? \'none\') === \'deposit\'
+            ? round($subtotal * $depPct / 100, 2) : 0.0;
+
+        $id = $this->booking()->create([
+            \'resource_id\'    => $resourceId,
+            \'package_id\'     => $packageId,
+            \'product_id\'     => $productId,
+            \'customer_name\'  => $name,
+            \'customer_email\' => $email,
+            \'customer_phone\' => trim($req->post(\'customer_phone\', \'\')),
+            \'booking_date\'   => $bookingDate,
+            \'start_time\'     => $startTime,
+            \'end_time\'       => $endTime,
+            \'duration_mins\'  => $duration,
+            \'pricing_type\'   => $pricingType,
+            \'subtotal\'       => $subtotal,
+            \'deposit_amount\' => $deposit,
+            \'total_amount\'   => $subtotal,
+            \'payment_status\' => \'none\',
+            \'booking_status\' => \'confirmed\',
+            \'notes\'          => trim($req->post(\'notes\', \'\')),
+            \'ip_address\'     => null,
+        ]);
+
+        $_SESSION[\'_flash\'] = \'Booking created.\';
+        return $this->redirect(\'/admin/booking/\' . $id);
+    }
+
+    // ── Booking settings ──────────────────────────────────────────────────────
+
+    public function settingsForm(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        $flash = $_SESSION[\'_flash\'] ?? null;
+        unset($_SESSION[\'_flash\']);
+        return $this->layout(\'booking/settings.php\', [
+            \'user\'    => $this->auth()->user(),
+            \'page\'    => \'booking\',
+            \'csrf\'    => $this->auth()->csrfToken(),
+            \'current\' => $this->settings(),
+            \'flash\'   => $flash,
+        ]);
+    }
+
+    public function saveSettings(Request $req, array $params): Response
+    {
+        $this->auth()->requireRole(\'superadmin\', \'site-admin\');
+        if (!$this->auth()->verifyCsrf()) {
+            return $this->redirect(\'/admin/booking/settings\');
+        }
+
+        $model = new Setting($this->pdo());
+
+        $scalar = [
+            \'enabled\', \'guest_booking\', \'require_confirmation\',
+            \'payment_mode\', \'deposit_percent\',
+            \'stripe_enabled\', \'stripe_pk\', \'stripe_sk\',
+            \'notification_email\',
+            \'customer_email_subject\', \'customer_email_body\',
+            \'owner_email_subject\',    \'owner_email_body\',
+            \'business_hours_start\',   \'business_hours_end\',
+            \'slot_duration_mins\', \'timezone\', \'calendar_sync\',
+        ];
+        foreach ($scalar as $key) {
+            $model->set(\'booking\', $key, (string) $req->post($key, \'\'));
+        }
+
+        $days  = array_map(\'intval\', (array) $req->post(\'business_days\', []));
+        $model->set(\'booking\', \'business_days\', json_encode($days));
+
+        $types = (array) $req->post(\'booking_types\', []);
+        $model->set(\'booking\', \'booking_types\', json_encode($types));
+
+        $_SESSION[\'_flash\'] = \'Booking settings saved.\';
+        return $this->redirect(\'/admin/booking/settings\');
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== BookingController (frontend) ===')
+write('modules/booking/controllers/BookingController.php', '''<?php declare(strict_types=1);
+namespace VeloCMS\\Modules\\Booking\\Controllers;
+
+use VeloCMS\\Core\\Application;
+use VeloCMS\\Core\\Database;
+use VeloCMS\\Core\\Request;
+use VeloCMS\\Core\\Response;
+use VeloCMS\\Core\\View;
+use VeloCMS\\Modules\\Booking\\Models\\Booking;
+use VeloCMS\\Modules\\Booking\\Models\\BookingResource;
+use VeloCMS\\Modules\\Booking\\Models\\BookingPackage;
+use VeloCMS\\Modules\\Booking\\Models\\BookingProduct;
+use VeloCMS\\Modules\\Settings\\Models\\Setting;
+use VeloCMS\\Modules\\Email\\Models\\EmailQueue;
+
+class BookingController
+{
+    public function __construct(private readonly Application $app) {}
+
+    private function pdo(): \\PDO
+    {
+        return $this->app->make(Database::class)->core();
+    }
+
+    private function settings(): array
+    {
+        return (new Setting($this->pdo()))->all(\'booking\');
+    }
+
+    private function render(string $tpl, array $data = []): Response
+    {
+        $view = new View($this->app->basePath(\'themes/default\'));
+        $html = $view->with($data)->render($tpl);
+        return (new Response())->html($html);
+    }
+
+    // ── Resource list ─────────────────────────────────────────────────────────
+
+    public function index(Request $req, array $params): Response
+    {
+        $settings = $this->settings();
+        if (empty($settings[\'enabled\'])) {
+            return (new Response())->redirect(\'/\');
+        }
+        $resources = (new BookingResource($this->pdo()))->all(true);
+        if (count($resources) === 1) {
+            return (new Response())->redirect(\'/booking/\' . $resources[0][\'slug\']);
+        }
+        return $this->render(\'booking/index.php\', [
+            \'resources\' => $resources,
+            \'settings\'  => $settings,
+        ]);
+    }
+
+    // ── Resource detail + date/time picker ────────────────────────────────────
+
+    public function resource(Request $req, array $params): Response
+    {
+        $settings = $this->settings();
+        if (empty($settings[\'enabled\'])) {
+            return (new Response())->redirect(\'/\');
+        }
+        $resource = (new BookingResource($this->pdo()))->findBySlug($params[\'slug\']);
+        if (!$resource || !(int) $resource[\'active\']) {
+            return (new Response())->redirect(\'/booking\');
+        }
+        $packages = (new BookingPackage($this->pdo()))->allForResource((int) $resource[\'id\']);
+        $products = (new BookingProduct($this->pdo()))->allForResource((int) $resource[\'id\']);
+
+        return $this->render(\'booking/resource.php\', [
+            \'resource\' => $resource,
+            \'packages\' => $packages,
+            \'products\' => $products,
+            \'settings\' => $settings,
+        ]);
+    }
+
+    // ── Availability JSON (AJAX) ───────────────────────────────────────────────
+
+    public function availability(Request $req, array $params): Response
+    {
+        $resource = (new BookingResource($this->pdo()))->findBySlug($params[\'slug\']);
+        if (!$resource) {
+            return (new Response())->json([\'error\' => \'Resource not found\'], 404);
+        }
+        $date = $req->get(\'date\', \'\');
+        if (!preg_match(\'/^\\d{4}-\\d{2}-\\d{2}$/\', $date)) {
+            return (new Response())->json([\'error\' => \'Invalid date\'], 400);
+        }
+        $settings = $this->settings();
+        $slots    = (new Booking($this->pdo()))->generateAvailableSlots(
+            (int) $resource[\'id\'],
+            $date,
+            $settings,
+            (int) ($settings[\'slot_duration_mins\'] ?? 60),
+            (int) $resource[\'advance_booking_hours\']
+        );
+        return (new Response())->json([\'date\' => $date, \'slots\' => $slots]);
+    }
+
+    // ── Booking form ──────────────────────────────────────────────────────────
+
+    public function bookForm(Request $req, array $params): Response
+    {
+        $settings = $this->settings();
+        if (empty($settings[\'enabled\'])) {
+            return (new Response())->redirect(\'/\');
+        }
+        $resource = (new BookingResource($this->pdo()))->findBySlug($params[\'slug\']);
+        if (!$resource || !(int) $resource[\'active\']) {
+            return (new Response())->redirect(\'/booking\');
+        }
+
+        $date      = $req->get(\'date\', \'\');
+        $startTime = $req->get(\'start\', \'\');
+        $packageId = (int) $req->get(\'package_id\', 0);
+        $productId = (int) $req->get(\'product_id\', 0);
+
+        $pkgModel  = new BookingPackage($this->pdo());
+        $prodModel = new BookingProduct($this->pdo());
+
+        return $this->render(\'booking/form.php\', [
+            \'resource\'   => $resource,
+            \'packages\'   => $pkgModel->allForResource((int) $resource[\'id\']),
+            \'products\'   => $prodModel->allForResource((int) $resource[\'id\']),
+            \'package\'    => $packageId ? $pkgModel->findById($packageId) : null,
+            \'product\'    => $productId ? $prodModel->findById($productId) : null,
+            \'date\'       => $date,
+            \'start\'      => $startTime,
+            \'settings\'   => $settings,
+            \'error\'      => null,
+        ]);
+    }
+
+    // ── Booking submission ────────────────────────────────────────────────────
+
+    public function bookStore(Request $req, array $params): Response
+    {
+        $settings = $this->settings();
+        if (empty($settings[\'enabled\'])) {
+            return (new Response())->redirect(\'/\');
+        }
+        $resource = (new BookingResource($this->pdo()))->findBySlug($params[\'slug\']);
+        if (!$resource || !(int) $resource[\'active\']) {
+            return (new Response())->redirect(\'/booking\');
+        }
+
+        $name        = trim($req->post(\'customer_name\', \'\'));
+        $email       = trim($req->post(\'customer_email\', \'\'));
+        $phone       = trim($req->post(\'customer_phone\', \'\'));
+        $date        = $req->post(\'booking_date\', \'\');
+        $startTime   = $req->post(\'start_time\', \'\');
+        $notes       = trim($req->post(\'notes\', \'\'));
+        $pricingType = $req->post(\'pricing_type\', \'hourly\');
+        $pkgId       = (int) $req->post(\'package_id\', 0);
+        $prodId      = (int) $req->post(\'product_id\', 0);
+
+        $errors = [];
+        if ($name === \'\') {
+            $errors[] = \'Name is required.\';
+        }
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = \'A valid email address is required.\';
+        }
+        if (!preg_match(\'/^\\d{4}-\\d{2}-\\d{2}$/\', $date)) {
+            $errors[] = \'Please select a date.\';
+        }
+        if (!preg_match(\'/^\\d{2}:\\d{2}$/\', $startTime)) {
+            $errors[] = \'Please select a start time.\';
+        }
+
+        $slotMins = (int) ($settings[\'slot_duration_mins\'] ?? 60);
+        $endTs    = strtotime("{$date} {$startTime}") + $slotMins * 60;
+        $endTime  = date(\'H:i\', $endTs);
+
+        $pkgModel  = new BookingPackage($this->pdo());
+        $prodModel = new BookingProduct($this->pdo());
+
+        if ($pricingType === \'package\' && $pkgId) {
+            $pkg = $pkgModel->findById($pkgId);
+            if ($pkg) {
+                $endTs    = strtotime("{$date} {$startTime}") + ((int) $pkg[\'duration_mins\'] * 60);
+                $endTime  = date(\'H:i\', $endTs);
+                $slotMins = (int) $pkg[\'duration_mins\'];
+            }
+        }
+
+        if (!empty($errors)) {
+            return $this->render(\'booking/form.php\', [
+                \'resource\' => $resource,
+                \'packages\' => $pkgModel->allForResource((int) $resource[\'id\']),
+                \'products\' => $prodModel->allForResource((int) $resource[\'id\']),
+                \'package\'  => $pkgId  ? $pkgModel->findById($pkgId)   : null,
+                \'product\'  => $prodId ? $prodModel->findById($prodId) : null,
+                \'date\'     => $date,
+                \'start\'    => $startTime,
+                \'settings\' => $settings,
+                \'error\'    => implode(\' \', $errors),
+            ]);
+        }
+
+        // Calculate price
+        $subtotal      = 0.0;
+        $actualPkgId   = null;
+        $actualProdId  = null;
+
+        if ($pricingType === \'hourly\') {
+            $subtotal = round((float) $resource[\'hourly_rate\'] * ($slotMins / 60), 2);
+        } elseif ($pricingType === \'package\' && $pkgId) {
+            $pkg         = $pkgModel->findById($pkgId);
+            $subtotal    = $pkg ? (float) $pkg[\'price\'] : 0.0;
+            $actualPkgId = $pkgId;
+        } elseif ($pricingType === \'product\' && $prodId) {
+            $prod         = $prodModel->findById($prodId);
+            $subtotal     = $prod ? (float) $prod[\'price\'] : 0.0;
+            $actualProdId = $prodId;
+        }
+
+        $depPct  = (float) ($settings[\'deposit_percent\'] ?? 0);
+        $deposit = ($settings[\'payment_mode\'] ?? \'none\') === \'deposit\'
+            ? round($subtotal * $depPct / 100, 2) : 0.0;
+
+        $needsConfirm = !empty($settings[\'require_confirmation\']);
+        $status       = $needsConfirm ? \'pending\' : \'confirmed\';
+
+        $bookingModel = new Booking($this->pdo());
+        $id = $bookingModel->create([
+            \'resource_id\'    => (int) $resource[\'id\'],
+            \'package_id\'     => $actualPkgId,
+            \'product_id\'     => $actualProdId,
+            \'customer_name\'  => $name,
+            \'customer_email\' => $email,
+            \'customer_phone\' => $phone,
+            \'booking_date\'   => $date,
+            \'start_time\'     => $startTime,
+            \'end_time\'       => $endTime,
+            \'duration_mins\'  => $slotMins,
+            \'pricing_type\'   => $pricingType,
+            \'subtotal\'       => $subtotal,
+            \'deposit_amount\' => $deposit,
+            \'total_amount\'   => $subtotal,
+            \'payment_status\' => \'none\',
+            \'booking_status\' => $status,
+            \'notes\'          => $notes,
+            \'ip_address\'     => $req->ip(),
+        ]);
+
+        $booking = $bookingModel->findById($id);
+        if ($booking) {
+            $this->sendCustomerEmail($booking, $settings);
+            $this->sendOwnerEmail($booking, $settings);
+        }
+
+        return (new Response())->redirect(\'/booking/confirmation/\' . ($booking[\'reference\'] ?? \'\'));
+    }
+
+    // ── Confirmation ──────────────────────────────────────────────────────────
+
+    public function confirmation(Request $req, array $params): Response
+    {
+        $booking = (new Booking($this->pdo()))->findByReference($params[\'reference\']);
+        if (!$booking) {
+            return (new Response())->redirect(\'/booking\');
+        }
+        return $this->render(\'booking/confirm.php\', [
+            \'booking\'  => $booking,
+            \'settings\' => $this->settings(),
+        ]);
+    }
+
+    // ── Email helpers ─────────────────────────────────────────────────────────
+
+    private function sendCustomerEmail(array $booking, array $settings): void
+    {
+        $to      = $booking[\'customer_email\'];
+        $subject = $settings[\'customer_email_subject\'] ?? \'Your Booking Confirmation\';
+        $body    = $settings[\'customer_email_body\']    ?? \'Thank you for your booking.\';
+        $body    = $this->replacePlaceholders($body, $booking);
+        try {
+            (new EmailQueue($this->pdo()))->enqueue($to, $subject, nl2br(e($body)));
+        } catch (\\Throwable) {}
+    }
+
+    private function sendOwnerEmail(array $booking, array $settings): void
+    {
+        $to = $settings[\'notification_email\'] ?? \'\';
+        if ($to === \'\') {
+            return;
+        }
+        $subject = $settings[\'owner_email_subject\'] ?? \'New Booking Received\';
+        $body    = $settings[\'owner_email_body\']    ?? \'A new booking has been made.\';
+        $body    = $this->replacePlaceholders($body, $booking);
+        try {
+            (new EmailQueue($this->pdo()))->enqueue($to, $subject, nl2br(e($body)));
+        } catch (\\Throwable) {}
+    }
+
+    private function replacePlaceholders(string $template, array $booking): string
+    {
+        $map = [
+            \'{reference}\'      => $booking[\'reference\'],
+            \'{customer_name}\'  => $booking[\'customer_name\'],
+            \'{customer_email}\' => $booking[\'customer_email\'],
+            \'{resource}\'       => $booking[\'resource_name\'] ?? \'\',
+            \'{date}\'           => $booking[\'booking_date\'],
+            \'{start_time}\'     => $booking[\'start_time\'],
+            \'{end_time}\'       => $booking[\'end_time\'],
+            \'{status}\'         => $booking[\'booking_status\'],
+            \'{total}\'          => number_format((float) $booking[\'total_amount\'], 2),
+        ];
+        return str_replace(array_keys($map), array_values($map), $template);
+    }
+}
+''')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Update composer.json ===')
+with open(BASE + '/composer.json') as f:
+    comp = json.load(f)
+
+ns = comp['autoload']['psr-4']
+ns['VeloCMS\\Modules\\Booking\\']              = 'modules/booking/'
+ns['VeloCMS\\Modules\\Booking\\Admin\\']       = 'modules/booking/admin/controllers/'
+ns['VeloCMS\\Modules\\Booking\\Models\\']      = 'modules/booking/models/'
+ns['VeloCMS\\Modules\\Booking\\Controllers\\'] = 'modules/booking/controllers/'
+
+with open(BASE + '/composer.json', 'w') as f:
+    json.dump(comp, f, indent=4)
+    f.write('\n')
+print('  OK  composer.json')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== composer dump-autoload ===')
+import subprocess
+result = subprocess.run(
+    ['composer', 'dump-autoload', '--optimize'],
+    cwd=BASE, capture_output=True, text=True
+)
+if result.returncode != 0:
+    print('  ERROR:', result.stderr)
+else:
+    print('  OK  autoload rebuilt')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Update admin/routes.php ===')
+with open(BASE + '/admin/routes.php') as f:
+    routes = f.read()
+
+booking_routes = '''
+use VeloCMS\\Modules\\Booking\\Admin\\BookingAdminController;
+use VeloCMS\\Modules\\Booking\\Admin\\ResourceAdminController;
+
+// ── Booking — Overview & Settings ─────────────────────────────────────────────
+$router->get('/admin/booking',                          [BookingAdminController::class, 'index']);
+$router->get('/admin/booking/create',                   [BookingAdminController::class, 'createForm']);
+$router->post('/admin/booking/create',                  [BookingAdminController::class, 'createStore']);
+$router->get('/admin/booking/settings',                 [BookingAdminController::class, 'settingsForm']);
+$router->post('/admin/booking/settings',                [BookingAdminController::class, 'saveSettings']);
+$router->get('/admin/booking/{id}',                     [BookingAdminController::class, 'detail']);
+$router->post('/admin/booking/{id}/status',             [BookingAdminController::class, 'updateStatus']);
+
+// ── Booking — Resources ───────────────────────────────────────────────────────
+$router->get('/admin/booking/resources',                        [ResourceAdminController::class, 'index']);
+$router->get('/admin/booking/resources/create',                 [ResourceAdminController::class, 'create']);
+$router->post('/admin/booking/resources',                       [ResourceAdminController::class, 'store']);
+$router->get('/admin/booking/resources/{id}/edit',              [ResourceAdminController::class, 'edit']);
+$router->post('/admin/booking/resources/{id}',                  [ResourceAdminController::class, 'update']);
+$router->post('/admin/booking/resources/{id}/delete',           [ResourceAdminController::class, 'delete']);
+$router->post('/admin/booking/resources/{id}/packages',         [ResourceAdminController::class, 'storePackage']);
+$router->post('/admin/booking/resources/{id}/packages/{pkg_id}/delete', [ResourceAdminController::class, 'deletePackage']);
+$router->post('/admin/booking/resources/{id}/products',         [ResourceAdminController::class, 'storeProduct']);
+$router->post('/admin/booking/resources/{id}/products/{prod_id}/delete', [ResourceAdminController::class, 'deleteProduct']);
+'''
+
+if 'BookingAdminController' not in routes:
+    # Insert before the profile route (last route)
+    profile_marker = "use VeloCMS\\Admin\\ProfileController;"
+    routes = routes.replace(profile_marker, booking_routes + profile_marker)
+    with open(BASE + '/admin/routes.php', 'w') as f:
+        f.write(routes)
+    print('  OK  admin/routes.php')
+else:
+    print('  SKIP admin/routes.php (already patched)')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Update public/index.php ===')
+with open(BASE + '/public/index.php') as f:
+    idx = f.read()
+
+if 'BookingModule' not in idx:
+    idx = idx.replace(
+        'use VeloCMS\\Modules\\Blog\\BlogModule;',
+        'use VeloCMS\\Modules\\Blog\\BlogModule;\nuse VeloCMS\\Modules\\Booking\\BookingModule;'
+    )
+    # Insert before PagesModule (which has the catch-all)
+    idx = idx.replace(
+        '    new PagesModule($app),',
+        '    new BookingModule($app),\n    new PagesModule($app),'
+    )
+    with open(BASE + '/public/index.php', 'w') as f:
+        f.write(idx)
+    print('  OK  public/index.php')
+else:
+    print('  SKIP public/index.php (already patched)')
+
+# ─────────────────────────────────────────────────────────────────────────────
+print('=== Update admin layout.php — add Booking nav link ===')
+with open(BASE + '/admin/views/layout.php') as f:
+    layout = f.read()
+
+if '/admin/booking' not in layout:
+    layout = layout.replace(
+        "            <div class=\"vcms-nav-group\">Content</div>",
+        "            <div class=\"vcms-nav-group\">Content</div>\n"
+        "            <a href=\"/admin/booking\"      class=\"<?= ($page ?? '') === 'booking'      ? 'active' : '' ?>\">Booking</a>"
+    )
+    with open(BASE + '/admin/views/layout.php', 'w') as f:
+        f.write(layout)
+    print('  OK  admin/views/layout.php')
+else:
+    print('  SKIP admin/views/layout.php (already patched)')
+
+print('\nDone.')
