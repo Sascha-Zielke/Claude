@@ -1,0 +1,1 @@
+# Skill: Performance & Web Vitals Analyzer`n- Role: Web Performance Engineer`n- Task: Analyze and optimize frontend/backend code for maximum speed and SEO-ranking metrics.`n- Focus: Core Web Vitals (LCP, INP, CLS), asset compression, caching headers, DOM depth reduction, and efficient script loading.
