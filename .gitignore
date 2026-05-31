@@ -1,0 +1,20 @@
+# Secrets & Auth — NIEMALS committen
+.credentials.json
+settings.local.json
+mcp-needs-auth-cache.json
+session-env/
+.last-cleanup
+
+# Persönliche Verläufe / Sessions
+history.jsonl
+sessions/
+projects/
+file-history/
+shell-snapshots/
+telemetry/
+paste-cache/
+cache/
+backups/
+
+# OS
+.DS_Store
