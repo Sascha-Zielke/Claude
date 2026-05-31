@@ -1,7 +1,7 @@
 {
   "theme": "dark",
   "permissions": {
-    "defaultMode": "allow",
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Read",
       "Write",
